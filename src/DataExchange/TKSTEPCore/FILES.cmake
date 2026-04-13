@@ -1,0 +1,4 @@
+# Source files for TKSTEPCore
+set(OCCT_TKSTEPCore_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
+
+set(OCCT_TKSTEPCore_FILES)

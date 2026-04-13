@@ -1,10 +1,7 @@
-# Auto-generated list of OCCT modules
-set(OCCT_LIST_OF_MODULES
+# Retained OCCT modules in the lean subset.
+set(OCCT_MODULES
   FoundationClasses
   ModelingData
   ModelingAlgorithms
-  Visualization
-  ApplicationFramework
   DataExchange
-  Draw
 )

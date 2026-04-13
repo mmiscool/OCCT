@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCCT Wasm Three.js Demo</title>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="eyebrow">OCCT + Wasm + Three.js</div>
+      <h1>Cube Minus Cylinder</h1>
+      <p>
+        The solid is generated in Open CASCADE, meshed inside WebAssembly, and handed to Three.js
+        for shaded rendering with explicit topology edges.
+      </p>
+
+      <div class="facts">
+        <div class="fact">
+          <strong>Shape</strong>
+          A centered cube with a cylindrical through-hole cut along the Z axis.
+        </div>
+        <div class="fact">
+          <strong>Faces</strong>
+          Triangulated in wasm with per-node normals for proper smooth shading on the hole wall.
+        </div>
+        <div class="fact">
+          <strong>Edges</strong>
+          Extracted from OCCT topological edges, not inferred from the triangle mesh.
+        </div>
+      </div>
+
+      <div class="status" id="status">
+        Loading the wasm module. Serve this folder over HTTP rather than opening the file directly.
+      </div>
+    </section>
+
+    <section class="viewer-shell">
+      <div class="viewer" id="viewer"></div>
+      <div class="overlay">
+        <div class="chip" id="stats">Preparing scene...</div>
+        <div class="chip">Orbit: drag to rotate, wheel to zoom, right drag to pan</div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

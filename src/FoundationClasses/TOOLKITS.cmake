@@ -1,5 +1,5 @@
-# Auto-generated list of toolkits for FoundationClasses module
-set(OCCT_FoundationClasses_LIST_OF_TOOLKITS
+# Retained toolkits for FoundationClasses.
+set(FoundationClasses_TOOLKITS
   TKernel
   TKMath
 )

@@ -54,15 +54,39 @@ Standard_GUID BRepGraph_VersionStamp::ToGUID(const Standard_GUID& theGraphGUID) 
   std::memcpy(aBuffer + anOff, &myGeneration, sizeof(myGeneration));
   anOff += sizeof(myGeneration);
 
-  // Two independent hashes fill the 128-bit GUID.
-  const size_t aHash1   = opencascade::hashBytes(aBuffer, static_cast<int>(anOff));
-  const size_t aHalfOff = sizeof(aGraphUUID);
-  const size_t aHash2 =
-    opencascade::hashBytes(aBuffer + aHalfOff, static_cast<int>(anOff - aHalfOff));
-
   Standard_UUID aResultUUID;
-  static_assert(sizeof(size_t) >= 8, "Expected 64-bit size_t");
-  std::memcpy(&aResultUUID, &aHash1, 8);
-  std::memcpy(reinterpret_cast<uint8_t*>(&aResultUUID) + 8, &aHash2, 8);
+  const size_t  aHalfOff = sizeof(aGraphUUID);
+  if constexpr (sizeof(size_t) >= 8)
+  {
+    // Two independent 64-bit hashes fill the 128-bit GUID on native 64-bit targets.
+    const size_t aHash1 = opencascade::hashBytes(aBuffer, static_cast<int>(anOff));
+    const size_t aHash2 =
+      opencascade::hashBytes(aBuffer + aHalfOff, static_cast<int>(anOff - aHalfOff));
+    std::memcpy(&aResultUUID, &aHash1, 8);
+    std::memcpy(reinterpret_cast<uint8_t*>(&aResultUUID) + 8, &aHash2, 8);
+  }
+  else
+  {
+    // WebAssembly is currently 32-bit, so pack the UUID from four salted 32-bit hashes instead.
+    const size_t aQuarterOff      = anOff / 4;
+    const size_t aThreeQuarterOff = (anOff * 3) / 4;
+    const auto   hash32 = [&](const uint32_t theSalt, const size_t theOffset) {
+      const uint32_t aPrefixHash =
+        static_cast<uint32_t>(opencascade::hashBytes(aBuffer, static_cast<int>(anOff)));
+      const uint32_t aSpanHash = static_cast<uint32_t>(
+        opencascade::hashBytes(aBuffer + theOffset, static_cast<int>(anOff - theOffset)));
+      const uint32_t aMix[3] = {theSalt, aPrefixHash, aSpanHash};
+      return static_cast<uint32_t>(opencascade::hashBytes(aMix, sizeof(aMix)));
+    };
+
+    const uint32_t aHashes[4] = {
+      hash32(0x243F6A88u, 0),
+      hash32(0x85A308D3u, aHalfOff),
+      hash32(0x13198A2Eu, aQuarterOff),
+      hash32(0x03707344u, aThreeQuarterOff)
+    };
+    static_assert(sizeof(aResultUUID) == sizeof(aHashes), "Unexpected UUID size");
+    std::memcpy(&aResultUUID, aHashes, sizeof(aHashes));
+  }
   return Standard_GUID(aResultUUID);
 }

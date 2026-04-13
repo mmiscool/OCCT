@@ -1,0 +1,44 @@
+# Reduced STEP exchange toolkit focused on direct STEPControl import/export.
+set(OCCT_TKSTEPCore_LIST_OF_PACKAGES
+  DESTEPCore
+  StepAP214
+  RWStepAP214
+  StepAP203
+  RWStepAP203
+  STEPConstructCore
+  STEPEdit
+  GeomToStep
+  StepToGeom
+  StepToTopoDS
+  TopoDSToStep
+  STEPControl
+  STEPSelections
+  StepAP209
+  RWStepAP242
+  StepAP242
+  StepElement
+  StepFEA
+  RWStepElement
+  RWStepFEA
+  StepVisual
+  RWStepVisual
+  StepDimTol
+  RWStepDimTol
+  StepKinematics
+  RWStepKinematics
+  StepBasic
+  RWStepBasic
+  StepRepr
+  RWStepRepr
+  StepGeom
+  RWStepGeom
+  StepShape
+  RWStepShape
+  StepSelect
+  StepData
+  StepFile
+  RWHeaderSection
+  APIHeaderSection
+  HeaderSection
+  StepTidy
+)

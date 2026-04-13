@@ -18,6 +18,7 @@
 !/cmake/
 !/data/
 !/dox/
+!/samples/
 !/src/
 !/tests/
 !/tools/
@@ -62,6 +63,7 @@
 # standard names of directories for objects and binaries on Windows
 win32
 win64
+node_modules
 
 # project files and artifacts
 /adm/msvc
