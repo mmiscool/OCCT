@@ -5,9 +5,9 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-struct CurveEvaluation {
-    position: [f64; 3],
-    derivative: [f64; 3],
+pub(crate) struct CurveEvaluation {
+    pub(crate) position: [f64; 3],
+    pub(crate) derivative: [f64; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +85,7 @@ impl PortedCurve {
         }
     }
 
-    fn evaluate(self, parameter: f64) -> CurveEvaluation {
+    pub(crate) fn evaluate(self, parameter: f64) -> CurveEvaluation {
         match self {
             Self::Line(payload) => CurveEvaluation {
                 position: add3(payload.origin, scale3(payload.direction, parameter)),
@@ -101,6 +101,134 @@ impl PortedCurve {
             },
         }
     }
+}
+
+pub(crate) fn extrusion_swept_area(
+    curve: PortedCurve,
+    geometry: EdgeGeometry,
+    direction: [f64; 3],
+    span: f64,
+) -> f64 {
+    let direction = normalize3(direction);
+    span.abs()
+        * length_integral(
+            geometry.start_parameter,
+            geometry.end_parameter,
+            |parameter| {
+                let evaluation = curve.evaluate(parameter);
+                norm3(cross3(evaluation.derivative, direction))
+            },
+        )
+}
+
+pub(crate) fn revolution_swept_area(
+    curve: PortedCurve,
+    geometry: EdgeGeometry,
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+    sweep_angle: f64,
+) -> f64 {
+    let axis_direction = normalize3(axis_direction);
+    sweep_angle.abs()
+        * length_integral(
+            geometry.start_parameter,
+            geometry.end_parameter,
+            |parameter| {
+                let evaluation = curve.evaluate(parameter);
+                let radius_velocity =
+                    cross3(axis_direction, subtract3(evaluation.position, axis_origin));
+                norm3(cross3(evaluation.derivative, radius_velocity))
+            },
+        )
+}
+
+pub(crate) fn sample_extrusion_surface_normalized(
+    curve: PortedCurve,
+    face_geometry: FaceGeometry,
+    basis_geometry: EdgeGeometry,
+    uv_t: [f64; 2],
+    direction: [f64; 3],
+    orientation: Orientation,
+) -> FaceSample {
+    let uv = normalized_uv_to_uv(face_geometry, uv_t);
+    let basis_on_u = basis_parameter_on_u(face_geometry, basis_geometry);
+    let (curve_parameter, sweep_parameter) =
+        swept_surface_parameters(face_geometry, basis_geometry, uv);
+    let direction = normalize3(direction);
+    let evaluation = curve.evaluate(curve_parameter);
+    let curve_derivative = evaluation.derivative;
+    let sweep_derivative = direction;
+    let mut sample = FaceSample {
+        position: add3(evaluation.position, scale3(direction, sweep_parameter)),
+        normal: normalize3(if basis_on_u {
+            cross3(curve_derivative, sweep_derivative)
+        } else {
+            cross3(sweep_derivative, curve_derivative)
+        }),
+    };
+    if matches!(orientation, Orientation::Reversed) {
+        sample.normal = scale3(sample.normal, -1.0);
+    }
+    sample
+}
+
+pub(crate) fn sample_revolution_surface_normalized(
+    curve: PortedCurve,
+    face_geometry: FaceGeometry,
+    basis_geometry: EdgeGeometry,
+    uv_t: [f64; 2],
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+    orientation: Orientation,
+) -> FaceSample {
+    let uv = normalized_uv_to_uv(face_geometry, uv_t);
+    let basis_on_u = basis_parameter_on_u(face_geometry, basis_geometry);
+    let (curve_parameter, sweep_parameter) =
+        swept_surface_parameters(face_geometry, basis_geometry, uv);
+    let axis_direction = normalize3(axis_direction);
+    let evaluation = curve.evaluate(curve_parameter);
+    let position = rotate_point_about_axis(
+        evaluation.position,
+        axis_origin,
+        axis_direction,
+        sweep_parameter,
+    );
+    let curve_derivative =
+        rotate_vector_about_axis(evaluation.derivative, axis_direction, sweep_parameter);
+    let sweep_derivative = cross3(axis_direction, subtract3(position, axis_origin));
+    let mut sample = FaceSample {
+        position,
+        normal: normalize3(if basis_on_u {
+            cross3(curve_derivative, sweep_derivative)
+        } else {
+            cross3(sweep_derivative, curve_derivative)
+        }),
+    };
+    if matches!(orientation, Orientation::Reversed) {
+        sample.normal = scale3(sample.normal, -1.0);
+    }
+    sample
+}
+
+fn swept_surface_parameters(
+    face_geometry: FaceGeometry,
+    basis_geometry: EdgeGeometry,
+    uv: [f64; 2],
+) -> (f64, f64) {
+    if basis_parameter_on_u(face_geometry, basis_geometry) {
+        (uv[0], uv[1])
+    } else {
+        (uv[1], uv[0])
+    }
+}
+
+fn basis_parameter_on_u(face_geometry: FaceGeometry, basis_geometry: EdgeGeometry) -> bool {
+    let basis_span = (basis_geometry.end_parameter - basis_geometry.start_parameter).abs();
+    let u_span = (face_geometry.u_max - face_geometry.u_min).abs();
+    let v_span = (face_geometry.v_max - face_geometry.v_min).abs();
+    let u_delta = (u_span - basis_span).abs();
+    let v_delta = (v_span - basis_span).abs();
+    u_delta <= v_delta
 }
 
 impl PortedSurface {
@@ -193,20 +321,25 @@ impl PortedSurface {
                 }
                 let relative = scale3(subtract3(point, payload.center), payload.radius.recip());
                 Some([
-                    dot3(relative, payload.y_direction)
-                        .atan2(dot3(relative, payload.x_direction)),
+                    dot3(relative, payload.y_direction).atan2(dot3(relative, payload.x_direction)),
                     clamp(dot3(relative, payload.normal), -1.0, 1.0).asin(),
                 ])
             }
             Self::Torus(payload) => {
                 let relative = subtract3(point, payload.center);
-                let u = dot3(relative, payload.y_direction)
-                    .atan2(dot3(relative, payload.x_direction));
+                let u =
+                    dot3(relative, payload.y_direction).atan2(dot3(relative, payload.x_direction));
                 let radial_direction = add3(
                     scale3(payload.x_direction, u.cos()),
                     scale3(payload.y_direction, u.sin()),
                 );
-                let tube = subtract3(point, add3(payload.center, scale3(radial_direction, payload.major_radius)));
+                let tube = subtract3(
+                    point,
+                    add3(
+                        payload.center,
+                        scale3(radial_direction, payload.major_radius),
+                    ),
+                );
                 Some([
                     u,
                     dot3(tube, payload.axis).atan2(dot3(tube, radial_direction)),
@@ -226,6 +359,56 @@ impl PortedSurface {
             Self::Torus(payload) => {
                 payload.minor_radius * payload.major_radius * v
                     + payload.minor_radius * payload.minor_radius * v.sin()
+            }
+        }
+    }
+
+    fn volume_potential(self, uv: [f64; 2]) -> f64 {
+        match self {
+            Self::Plane(payload) => dot3(payload.origin, payload.normal) * uv[0] / 3.0,
+            Self::Cylinder(payload) => {
+                let ox = dot3(payload.origin, payload.x_direction);
+                let oy = dot3(payload.origin, payload.y_direction);
+                (payload.radius * (ox * uv[0].sin() - oy * uv[0].cos())
+                    + payload.radius * payload.radius * uv[0])
+                    / 3.0
+            }
+            Self::Cone(payload) => {
+                let sin_angle = payload.semi_angle.sin();
+                let cos_angle = payload.semi_angle.cos();
+                let radius = payload.reference_radius + sin_angle * uv[1];
+                let ox = dot3(payload.origin, payload.x_direction);
+                let oy = dot3(payload.origin, payload.y_direction);
+                let oz = dot3(payload.origin, payload.axis);
+                radius
+                    * (cos_angle
+                        * (ox * uv[0].sin() - oy * uv[0].cos() + payload.reference_radius * uv[0])
+                        - sin_angle * oz * uv[0])
+                    / 3.0
+            }
+            Self::Sphere(payload) => {
+                let cx = dot3(payload.center, payload.x_direction);
+                let cy = dot3(payload.center, payload.y_direction);
+                let cz = dot3(payload.center, payload.normal);
+                let cos_v = uv[1].cos();
+                let sin_v = uv[1].sin();
+                payload.radius
+                    * payload.radius
+                    * (cx * cos_v * cos_v * uv[0].sin() - cy * cos_v * cos_v * uv[0].cos()
+                        + (cz * sin_v * cos_v + payload.radius * cos_v) * uv[0])
+                    / 3.0
+            }
+            Self::Torus(payload) => {
+                let cx = dot3(payload.center, payload.x_direction);
+                let cy = dot3(payload.center, payload.y_direction);
+                let cz = dot3(payload.center, payload.axis);
+                let cos_v = uv[1].cos();
+                let sin_v = uv[1].sin();
+                payload.minor_radius
+                    * (payload.major_radius + payload.minor_radius * cos_v)
+                    * (cos_v * (cx * uv[0].sin() - cy * uv[0].cos() + payload.major_radius * uv[0])
+                        + (cz * sin_v + payload.minor_radius) * uv[0])
+                    / 3.0
             }
         }
     }
@@ -434,6 +617,34 @@ fn normalized_uv_to_uv(geometry: FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
     ]
 }
 
+fn rotate_point_about_axis(
+    point: [f64; 3],
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+    angle: f64,
+) -> [f64; 3] {
+    add3(
+        axis_origin,
+        rotate_vector_about_axis(subtract3(point, axis_origin), axis_direction, angle),
+    )
+}
+
+fn rotate_vector_about_axis(vector: [f64; 3], axis_direction: [f64; 3], angle: f64) -> [f64; 3] {
+    let axis_direction = normalize3(axis_direction);
+    let cos_angle = angle.cos();
+    let sin_angle = angle.sin();
+    add3(
+        add3(
+            scale3(vector, cos_angle),
+            scale3(cross3(axis_direction, vector), sin_angle),
+        ),
+        scale3(
+            axis_direction,
+            dot3(axis_direction, vector) * (1.0 - cos_angle),
+        ),
+    )
+}
+
 pub(crate) fn planar_wire_signed_area(
     plane: PlanePayload,
     curve_segments: &[(PortedCurve, EdgeGeometry)],
@@ -441,15 +652,19 @@ pub(crate) fn planar_wire_signed_area(
     0.5 * curve_segments
         .iter()
         .map(|(curve, geometry)| {
-            signed_scalar_integral(geometry.start_parameter, geometry.end_parameter, |parameter| {
-                let evaluation = curve.evaluate(parameter);
-                let relative = subtract3(evaluation.position, plane.origin);
-                let x = dot3(relative, plane.x_direction);
-                let y = dot3(relative, plane.y_direction);
-                let dx = dot3(evaluation.derivative, plane.x_direction);
-                let dy = dot3(evaluation.derivative, plane.y_direction);
-                x * dy - y * dx
-            })
+            signed_scalar_integral(
+                geometry.start_parameter,
+                geometry.end_parameter,
+                |parameter| {
+                    let evaluation = curve.evaluate(parameter);
+                    let relative = subtract3(evaluation.position, plane.origin);
+                    let x = dot3(relative, plane.x_direction);
+                    let y = dot3(relative, plane.y_direction);
+                    let dx = dot3(evaluation.derivative, plane.x_direction);
+                    let dy = dot3(evaluation.derivative, plane.y_direction);
+                    x * dy - y * dx
+                },
+            )
         })
         .sum::<f64>()
 }
@@ -469,6 +684,36 @@ pub(crate) fn analytic_sampled_wire_signed_area(
     }
 
     analytic_wire_signed_area_from_uv_points(surface, face_geometry, &uv_points)
+}
+
+pub(crate) fn analytic_sampled_wire_signed_volume(
+    surface: PortedSurface,
+    face_geometry: FaceGeometry,
+    points: &[[f64; 3]],
+) -> Option<f64> {
+    let mut uv_points = Vec::with_capacity(points.len());
+    for &point in points {
+        let mut uv = surface.point_to_uv(point)?;
+        if let Some(previous) = uv_points.last().copied() {
+            uv = unwrap_uv(previous, uv, face_geometry);
+        }
+        uv_points.push(uv);
+    }
+
+    if uv_points.len() < 2 {
+        return Some(0.0);
+    }
+
+    let first = uv_points[0];
+    let closing = unwrap_uv(*uv_points.last()?, first, face_geometry);
+    let mut volume = 0.0;
+    for window in uv_points.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        volume += segment_volume_integral(surface, start, end);
+    }
+    volume += segment_volume_integral(surface, *uv_points.last()?, closing);
+    Some(volume)
 }
 
 fn analytic_wire_signed_area_from_uv_points(
@@ -524,6 +769,12 @@ fn segment_area_integral(surface: PortedSurface, start: [f64; 2], end: [f64; 2])
     -0.5 * (start_potential + end_potential) * (end[0] - start[0])
 }
 
+fn segment_volume_integral(surface: PortedSurface, start: [f64; 2], end: [f64; 2]) -> f64 {
+    let start_potential = surface.volume_potential(start);
+    let end_potential = surface.volume_potential(end);
+    0.5 * (start_potential + end_potential) * (end[1] - start[1])
+}
+
 fn unwrap_uv(previous: [f64; 2], mut current: [f64; 2], geometry: FaceGeometry) -> [f64; 2] {
     if geometry.is_u_periodic && geometry.u_period.abs() > 1.0e-12 {
         current[0] = unwrap_periodic_component(previous[0], current[0], geometry.u_period);
@@ -574,8 +825,25 @@ where
         return left + right + delta / 15.0;
     }
 
-    adaptive_simpson(integrand, a, midpoint, fa, flm, fm, 0.5 * tolerance, depth - 1)
-        + adaptive_simpson(integrand, midpoint, b, fm, frm, fb, 0.5 * tolerance, depth - 1)
+    adaptive_simpson(
+        integrand,
+        a,
+        midpoint,
+        fa,
+        flm,
+        fm,
+        0.5 * tolerance,
+        depth - 1,
+    ) + adaptive_simpson(
+        integrand,
+        midpoint,
+        b,
+        fm,
+        frm,
+        fb,
+        0.5 * tolerance,
+        depth - 1,
+    )
 }
 
 fn simpson_step(a: f64, b: f64, fa: f64, fm: f64, fb: f64) -> f64 {

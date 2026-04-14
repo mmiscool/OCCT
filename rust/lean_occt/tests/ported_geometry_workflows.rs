@@ -1,8 +1,10 @@
 mod support;
 
+use std::f64::consts::PI;
+
 use lean_occt::{
-    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, Shape,
-    ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
+    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, PrismParams,
+    RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -65,6 +67,40 @@ fn assert_vec3_close(
         ))
         .into())
     }
+}
+
+fn simpson_integral(start: f64, end: f64, steps: usize, f: impl Fn(f64) -> f64) -> f64 {
+    let steps = if steps % 2 == 0 { steps } else { steps + 1 };
+    let h = (end - start) / steps as f64;
+    let mut sum = f(start) + f(end);
+    for step in 1..steps {
+        let x = start + step as f64 * h;
+        let weight = if step % 2 == 0 { 2.0 } else { 4.0 };
+        sum += weight * f(x);
+    }
+    sum * h / 3.0
+}
+
+fn ellipse_perimeter(major_radius: f64, minor_radius: f64) -> f64 {
+    simpson_integral(0.0, 2.0 * PI, 4096, |parameter| {
+        ((major_radius * parameter.sin()).powi(2) + (minor_radius * parameter.cos()).powi(2)).sqrt()
+    })
+}
+
+fn revolved_ellipse_area(
+    center_x: f64,
+    major_radius: f64,
+    minor_radius: f64,
+    sweep_angle: f64,
+) -> f64 {
+    sweep_angle.abs()
+        * simpson_integral(0.0, 2.0 * PI, 4096, |parameter| {
+            let radius_to_axis = center_x + major_radius * parameter.cos();
+            let speed = ((major_radius * parameter.sin()).powi(2)
+                + (minor_radius * parameter.cos()).powi(2))
+            .sqrt();
+            radius_to_axis.abs() * speed
+        })
 }
 
 #[test]
@@ -227,5 +263,165 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
     assert!(cone_step.is_file());
     assert!(sphere_step.is_file());
     assert!(torus_step.is_file());
+    Ok(())
+}
+
+#[test]
+fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+
+    let prism_step = support::export_kernel_shape(
+        &kernel,
+        &prism,
+        "ported_geometry_workflows",
+        "ported_prism_sample_shell",
+    )?;
+    let revolution_step = support::export_kernel_shape(
+        &kernel,
+        &revolution,
+        "ported_geometry_workflows",
+        "ported_revolution_sample_shell",
+    )?;
+
+    for (shape, kind) in [
+        (&prism, SurfaceKind::Extrusion),
+        (&revolution, SurfaceKind::Revolution),
+    ] {
+        let brep = kernel.brep(shape)?;
+        let rust_face = brep
+            .faces
+            .iter()
+            .find(|face| face.geometry.kind == kind)
+            .ok_or_else(|| std::io::Error::other(format!("expected a {:?} face in brep", kind)))?;
+        let occt_face = find_first_face_by_kind(&kernel, shape, kind)?;
+        let occt_sample = kernel
+            .context()
+            .face_sample_normalized(&occt_face, [0.5, 0.5])?;
+
+        assert_vec3_close(
+            rust_face.sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{kind:?} sample position"),
+        )?;
+        assert_vec3_close(
+            rust_face.sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{kind:?} sample normal"),
+        )?;
+    }
+
+    assert!(prism_step.is_file());
+    assert!(revolution_step.is_file());
+    Ok(())
+}
+
+#[test]
+fn ported_sweep_face_areas_match_numeric_integrals() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+
+    let prism_step = support::export_kernel_shape(
+        &kernel,
+        &prism,
+        "ported_geometry_workflows",
+        "ported_prism_shell",
+    )?;
+    let revolution_step = support::export_kernel_shape(
+        &kernel,
+        &revolution,
+        "ported_geometry_workflows",
+        "ported_revolution_shell",
+    )?;
+
+    let prism_brep = kernel.brep(&prism)?;
+    let revolution_brep = kernel.brep(&revolution)?;
+    let prism_face = prism_brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Extrusion)
+        .ok_or_else(|| std::io::Error::other("expected an extrusion face in the prism shell"))?;
+    let revolution_face = revolution_brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Revolution)
+        .ok_or_else(|| std::io::Error::other("expected a revolution face in the revolved shell"))?;
+
+    let expected_prism_area = ellipse_perimeter(10.0, 6.0) * 24.0;
+    let expected_revolution_area = revolved_ellipse_area(30.0, 10.0, 6.0, PI);
+
+    assert!(
+        (prism_face.area - expected_prism_area).abs() <= 1.0e-3,
+        "unexpected extrusion face area: rust={} expected={}",
+        prism_face.area,
+        expected_prism_area
+    );
+    assert!(
+        (prism_brep.summary.surface_area - expected_prism_area).abs() <= 1.0e-3,
+        "unexpected prism shell area: rust={} expected={}",
+        prism_brep.summary.surface_area,
+        expected_prism_area
+    );
+    assert!(
+        (revolution_face.area - expected_revolution_area).abs() <= 1.0e-2,
+        "unexpected revolution face area: rust={} expected={}",
+        revolution_face.area,
+        expected_revolution_area
+    );
+    assert!(
+        (revolution_brep.summary.surface_area - expected_revolution_area).abs() <= 1.0e-2,
+        "unexpected revolution shell area: rust={} expected={}",
+        revolution_brep.summary.surface_area,
+        expected_revolution_area
+    );
+
+    assert!(prism_step.is_file());
+    assert!(revolution_step.is_file());
     Ok(())
 }

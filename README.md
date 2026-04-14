@@ -74,6 +74,7 @@ It now includes:
 - a first Rust-native kernel slice for analytic geometry evaluation on supported analytic curves and surfaces
 - a Rust-owned `BrepShape` snapshot for vertices, wires, edges, faces, loop roles, and adjacency
 - Rust-native analytic edge length evaluation and supported analytic face area evaluation for supported cases
+- Rust-owned shape-summary totals for counts, total edge length, and total face area
 - Rust integration tests that mirror the retained smoke coverage
 
 Build the C API first:

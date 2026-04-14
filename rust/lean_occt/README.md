@@ -13,6 +13,7 @@ It now includes:
 - a first Rust-native kernel slice for analytic geometry evaluation on line/circle/ellipse edges and plane/cylinder/cone/sphere/torus faces
 - a Rust-owned `BrepShape` snapshot that lifts vertices, wires, edges, faces, loop roles, and adjacency into Rust-side data
 - Rust-native analytic edge length evaluation plus supported analytic face area evaluation from loop integration
+- Rust-owned shape-summary totals for counts, total edge length, and total face area via `BrepShape`
 
 It does not bind C++ OCCT classes directly. Instead it uses the narrow C ABI in
 `capi/include/lean_occt_capi.h` and exposes:
@@ -114,6 +115,8 @@ capture for a holed solid, with artifacts under `test-artifacts/rust/brep_workfl
 
 The current measurement slice also now computes supported analytic edge lengths in Rust and
 computes supported analytic face area from loop integration before falling back to OCCT.
+`ModelKernel::summarize()` and `inspect_with_mesh()` now consume those Rust-owned totals through
+the BREP snapshot instead of relying on OCCT for shape-level length/area totals.
 
 The crate searches `../build` for `LeanOcctCAPI` automatically. If you keep the
 library elsewhere, set `LEAN_OCCT_CAPI_LIB_DIR` to the directory that contains it.

@@ -129,7 +129,7 @@ impl ModelKernel {
     }
 
     pub fn summarize(&self, shape: &Shape) -> Result<ShapeSummary, Error> {
-        self.context.describe_shape(shape)
+        self.brep(shape).map(|brep| brep.summary)
     }
 
     pub fn topology(&self, shape: &Shape) -> Result<TopologySnapshot, Error> {
@@ -149,10 +149,12 @@ impl ModelKernel {
         shape: &Shape,
         mesh_params: MeshParams,
     ) -> Result<ShapeReport, Error> {
+        let mesh = self.mesh(shape, mesh_params)?;
+        let brep = self.brep(shape)?;
         Ok(ShapeReport {
-            summary: self.summarize(shape)?,
-            mesh: self.mesh(shape, mesh_params)?,
-            topology: self.topology(shape)?,
+            summary: brep.summary,
+            mesh,
+            topology: brep.topology,
         })
     }
 

@@ -152,10 +152,11 @@ fn retained_authoring_operations_stay_available() -> Result<(), Box<dyn std::err
         height: 30.0,
         pitch: 10.0,
     })?;
-    let helix_summary = kernel.context().describe_shape(&helix)?;
+    let helix_summary = kernel.summarize(&helix)?;
     assert_eq!(helix_summary.primary_kind, ShapeKind::Wire);
     assert_eq!(helix_summary.wire_count, 1);
     assert_eq!(helix_summary.edge_count, 3);
+    assert!(helix_summary.linear_length > 0.0);
     assert!(fillet_step.is_file());
     assert!(offset_step.is_file());
     assert!(feature_step.is_file());
