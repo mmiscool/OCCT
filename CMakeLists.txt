@@ -26,6 +26,7 @@ else()
 endif()
 
 option(OCCT_SUBSET_USE_TBB "Enable TBB-backed parallel primitives." OFF)
+option(BUILD_LEAN_OCCT_CAPI "Build the Lean OCCT C ABI library." ON)
 option(BUILD_LEAN_EXCHANGE_SMOKE "Build the lean subset smoke harness." ON)
 option(BUILD_WASM_THREEJS_DEMO "Build the wasm Three.js viewer demo." ${EMSCRIPTEN})
 
@@ -76,6 +77,10 @@ foreach(OCCT_MODULE IN LISTS OCCT_MODULES)
     lean_occt_add_toolkit("${OCCT_MODULE}" "${OCCT_TOOLKIT}")
   endforeach()
 endforeach()
+
+if(BUILD_LEAN_OCCT_CAPI)
+  add_subdirectory(capi)
+endif()
 
 if(BUILD_LEAN_EXCHANGE_SMOKE)
   add_subdirectory(tools/reduction)

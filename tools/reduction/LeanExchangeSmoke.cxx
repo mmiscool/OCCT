@@ -34,6 +34,7 @@
 #include <gp_Pnt.hxx>
 
 #include <cstdio>
+#include <filesystem>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -293,11 +294,23 @@ static void removeIfPresent(const std::string& thePath)
 {
   std::remove(thePath.c_str());
 }
+
+static std::string artifactPath(const char* theFileName)
+{
+#ifdef LEAN_OCCT_TEST_ARTIFACTS_DIR
+  const std::filesystem::path aBaseDir(LEAN_OCCT_TEST_ARTIFACTS_DIR);
+#else
+  const std::filesystem::path aBaseDir =
+    std::filesystem::current_path() / "test-artifacts" / "ctest";
+#endif
+  std::filesystem::create_directories(aBaseDir);
+  return (aBaseDir / theFileName).string();
+}
 } // namespace
 
 int main()
 {
-  const std::string aStepPath = "LeanExchangeSmoke.step";
+  const std::string aStepPath = artifactPath("LeanExchangeSmoke.step");
 
   try
   {
@@ -325,21 +338,18 @@ int main()
               << "helix   edges=" << aHelixMetrics.edges << " length=" << aHelixMetrics.length
               << "\n"
               << "step    solids=" << aStepMetrics.solids << " faces=" << aStepMetrics.faces
-              << " triangles=" << aStepMetrics.triangles << "\n";
+              << " triangles=" << aStepMetrics.triangles << "\n"
+              << "artifact " << aStepPath << "\n";
   }
   catch (const Standard_Failure& theFailure)
   {
     std::cerr << "LeanExchangeSmoke failed: " << theFailure.what() << "\n";
-    removeIfPresent(aStepPath);
     return 1;
   }
   catch (const std::exception& theError)
   {
     std::cerr << "LeanExchangeSmoke failed: " << theError.what() << "\n";
-    removeIfPresent(aStepPath);
     return 1;
   }
-
-  removeIfPresent(aStepPath);
   return 0;
 }

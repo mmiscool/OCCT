@@ -1,115 +1,36 @@
-# ============================================================================
-# SINGLE-LEVEL RESTRICTIONS: Only accept what's already tracked in git
-# (These rules apply only at the specified level, deeper levels follow rules below)
-# ============================================================================
+# Lean OCCT repo: ignore generated build output and local tool state.
 
-# Root level: Ignore everything except tracked items
-/*
-!/.clang-format
-!/.git-blame-ignore-revs
-!/.gitattributes
-!/.gitignore
-!/.tgitconfig
-!/CMakeLists.txt
-!/LICENSE_LGPL_21.txt
-!/OCCT_LGPL_EXCEPTION.txt
-!/README.md
-!/adm/
-!/cmake/
-!/data/
-!/dox/
-!/samples/
-!/src/
-!/tests/
-!/tools/
-!/.github/
+# Build trees
+/build
+/build-*
+/build-wasm
+/build-wasm-*
 
-# data/ level: Ignore everything except tracked subdirectories
-/data/*
-!/data/iges/
-!/data/images/
-!/data/occ/
-!/data/step/
-!/data/stl/
-!/data/vrml/
-
-# src/ level: Ignore everything except tracked items
-/src/*
-!/src/MODULES.cmake
-!/src/ApplicationFramework/
-!/src/DataExchange/
-!/src/Draw/
-!/src/FoundationClasses/
-!/src/ModelingAlgorithms/
-!/src/ModelingData/
-!/src/Visualization/
-!/src/Deprecated/
-
-# ============================================================================
-# DEEPER LEVEL RULES (applied recursively within allowed directories above)
-# ============================================================================
-
-# standard directories for derived files in CASROOT
+# Local caches and tool output
 /.adm
 /.cache
+/.codex
 /.vscode
-/lin
-/mac
-/wnt
-/doc
-/inc
-/work
+/.playwright-mcp
+**/node_modules
+/rust/**/target
+/samples/wasm/three_viewer/dist
+/samples/wasm/three_viewer/.vite
 
-# standard names of directories for objects and binaries on Windows
-win32
-win64
-node_modules
+# Generated exchange/demo artifacts
+/test-artifacts/
+/LeanExchangeSmoke.step
+/LeanExchangeSmoke.stp
+/LeanOcctCapiSmoke.step
+/LeanOcctCapiSmoke.stp
 
-# project files and artifacts
-/adm/msvc
-/adm/wnt
-/adm/lin
-/adm/mac
-/adm/make
-*.vcproj*user
-*.vcxproj*user
-*.csproj*user
-*.ncb
-*.suo
-*.sdf
-*.opensdf
-*.VC.db
-*.VC.opendb
-*.ipch
-*.aps
-*.DS_Store
-
-# test results
-/results*
-
-# Emacs backup files
+# Common editor / OS artifacts
+.DS_Store
 *~
+*.swp
+*.swo
 
-# Generated files
-/*.am
-/*.m4
-/*.ac
-/*.sh
-/codeblocks.bat
-/custom.bat
-/autom4te.cache
-/build_configure
-/configure
-/make
-/config.*
-/Makefile
-/libtool
-/stamp*
-/build*
-/install*
-/tools/build*
-
-# Coding agents instructions (keep .github/copilot-instructions.md)
+# Coding agent scratch files
 /.CLAUDE.md
 /.AGENT.md
 /.GEMINI.md

@@ -1,8 +1,7 @@
-# OCCT Reduction Roadmap
+# Lean OCCT Reduction Roadmap
 
-`LeanAuthoringExchange` is the first usable reduction boundary, not the final minimum.
-Given the current goal, the next passes should keep the modeling/BREP core intact and cull
-surrounding layers first.
+The repository now contains the physically reduced OCCT tree. The next passes should
+keep the modeling/BREP core intact and continue trimming around the direct STEP path.
 
 ## Current Boundary
 
@@ -16,35 +15,23 @@ Validated by `LeanExchangeSmoke`:
 
 ## Next Reduction Targets
 
-### Visualization / Draw / Viewer Stack
-
-- keep `BUILD_MODULE_Visualization=OFF`
-- keep `BUILD_MODULE_Draw=OFF`
-- continue removing viewer-specific scripts, launchers, and assets from the reduction branch
-- keep wasm output limited to the explicit demo surface extraction path instead of OCCT viewers
-
-### Application Framework / CAF / XCAF Layers
-
-- keep `BUILD_MODULE_ApplicationFramework=OFF`
-- keep XCAF document/material/color/assembly layers out of the retained subset
-- keep STEP translation on the direct `STEPControl` path rather than CAF providers
-
 ### Data Exchange Narrowing
 
 - retain direct STEP only
 - keep IGES, glTF, VRML, OBJ, STL, XML/Bin XCAF, and related providers out
-- continue trimming CAF/provider glue from the STEP side when it does not affect direct BREP exchange
+- continue trimming helper/provider glue from the STEP side when it does not affect direct BREP exchange
+- test whether parts of `TKDE` can be collapsed further without breaking `STEPControl` round-trip
 
 ### Optional Non-BREP Toolkits
 
 - keep `TKHLR`, `TKXMesh`, and `TKExpress` out unless a concrete retained workflow proves they are required
 - treat any reintroduction of these toolkits as an exception that needs an explicit smoke case
 
-### Physical Subset Extraction
+### Modeling Boundary Discipline
 
-- once the build boundary is stable, extract the retained code into a dedicated subset tree or package
-- preserve upstream file layout long enough to keep diffing against stock OCCT practical
-- only split inside retained modeling toolkits after a broader regression suite exists for the full authoring surface
+- keep the full retained authoring stack intact: `TKGeomAlgo`, `TKTopAlgo`, `TKPrim`, `TKBO`, `TKBool`, `TKFillet`, `TKOffset`, `TKFeat`, `TKHelix`, `TKMesh`, `TKShHealing`
+- do not hollow out boolean or authoring capability just to shrink file count
+- only cut inside retained modeling toolkits after broader regression coverage exists
 
 ## Working Rule
 

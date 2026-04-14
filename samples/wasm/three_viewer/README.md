@@ -19,23 +19,23 @@ The packaging step keeps its `node_modules` cache in the CMake build tree rather
 than the source directory.
 
 ```bash
-cmake -S . -B build-wasm-demo \
+cmake -S . -B build-wasm \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE=/path/to/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
   -DBUILD_LIBRARY_TYPE=Static
 
-cmake --build build-wasm-demo --target OcctThreeDemoWeb
+cmake --build build-wasm --target OcctThreeDemoWeb
 ```
 
 OCCT keeps its normal platform-style layout for the Emscripten build. The raw
 wasm module lands in `bin`, and the packaged viewer site lands in `bin/web`:
 
 ```text
-build-wasm-demo/lin32/clang/bin/OcctThreeDemo.js
-build-wasm-demo/lin32/clang/bin/OcctThreeDemo.wasm
-build-wasm-demo/lin32/clang/bin/web/OcctThreeDemo.html
-build-wasm-demo/lin32/clang/bin/web/assets/...
+build-wasm/lin32/clang/bin/OcctThreeDemo.js
+build-wasm/lin32/clang/bin/OcctThreeDemo.wasm
+build-wasm/lin32/clang/bin/web/OcctThreeDemo.html
+build-wasm/lin32/clang/bin/web/assets/...
 ```
 
 ## Run
@@ -43,7 +43,7 @@ build-wasm-demo/lin32/clang/bin/web/assets/...
 Serve the output directory over HTTP:
 
 ```bash
-cd build-wasm-demo/lin32/clang/bin/web
+cd build-wasm/lin32/clang/bin/web
 python3 -m http.server 8000
 ```
 

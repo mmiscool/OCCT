@@ -3,6 +3,10 @@ project(LeanExchangeSmoke)
 add_executable(${PROJECT_NAME}
   LeanExchangeSmoke.cxx
 )
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  LEAN_OCCT_TEST_ARTIFACTS_DIR="${CMAKE_SOURCE_DIR}/test-artifacts/ctest"
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   TKSTEPCore

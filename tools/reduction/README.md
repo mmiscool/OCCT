@@ -1,6 +1,6 @@
-# OCCT Reduction Profile
+# Lean OCCT Reduction Notes
 
-`LeanAuthoringExchange` is a first reduction pass for OCCT focused on:
+This repository is already the reduced OCCT tree. The retained boundary is focused on:
 
 - authoring topology and geometry
 - generalized boolean operations
@@ -21,9 +21,7 @@ It deliberately excludes:
 ## Configure
 
 ```bash
-cmake -S . -B build-lean \
-  -G Ninja \
-  -DOCCT_REDUCTION_PROFILE=LeanAuthoringExchange
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ```
 
 For the wasm sample, add the Emscripten toolchain and keep `BUILD_WASM_THREEJS_DEMO=ON`.
@@ -33,8 +31,8 @@ For the wasm sample, add the Emscripten toolchain and keep `BUILD_WASM_THREEJS_D
 Build the native smoke target that exercises the intended keep set directly:
 
 ```bash
-cmake --build build-lean --target LeanExchangeSmoke -j 8
-ctest --test-dir build-lean --output-on-failure -R LeanExchangeSmoke
+cmake --build build --target LeanExchangeSmoke -j 8
+ctest --test-dir build --output-on-failure -R LeanExchangeSmoke
 ```
 
 `LeanExchangeSmoke` covers the current reduction contract:
@@ -82,26 +80,10 @@ authoring / boolean / STEP stack.
 
 Use this loop for each next reduction pass:
 
-1. Remove one candidate toolkit or package outside the retained modeling/BREP core from `adm/cmake/occt_reduction_profile.cmake`.
+1. Remove one candidate package, helper layer, or toolkit outside the retained modeling/BREP core.
 2. Reconfigure and rebuild `LeanExchangeSmoke`.
 3. Rebuild the wasm viewer if the cut might affect meshing or topology traversal.
 4. Keep the removal only if both still pass.
 
-That keeps the reduction process measurable and prevents visualization-era or document-layer
-dependencies from creeping back in without hollowing out the authoring boundary.
-
-## Export A Standalone Subset
-
-Generate a physically reduced source tree under `subsets/lean-authoring-step`:
-
-```bash
-python3 tools/reduction/export_subset.py --force
-```
-
-That export keeps the retained authoring/boolean/STEP stack, rewrites `src/MODULES.cmake`
-and module `TOOLKITS.cmake` files for the narrower tree, and carries `LeanExchangeSmoke`
-forward as the verification target inside the exported subset. The generated
-`README.md` and `subset-manifest.json` also record the retained toolkit list,
-STEP donor packages, and reduction stats so the subset can be rebuilt and
-measured outside the full OCCT tree. Generated caches such as `node_modules`
-and `__pycache__` are excluded from the export.
+That keeps the reduction process measurable and prevents non-authoring or non-STEP
+layers from creeping back in without hollowing out the intended geometry boundary.
