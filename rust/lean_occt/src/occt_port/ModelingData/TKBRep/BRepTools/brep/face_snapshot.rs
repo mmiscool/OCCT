@@ -12,22 +12,6 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-fn multi_wire_face_is_planar(
-    context: &Context,
-    face_shape: &Shape,
-    face_wire_count: usize,
-) -> Result<bool, Error> {
-    if face_wire_count <= 1 {
-        return Ok(true);
-    }
-
-    let geometry = match context.face_geometry(face_shape) {
-        Ok(geometry) => geometry,
-        Err(_) => context.face_geometry_occt(face_shape)?,
-    };
-    Ok(geometry.kind == crate::SurfaceKind::Plane)
-}
-
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -39,17 +23,41 @@ impl PreparedFaceShape {
         let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
 
         for face_shape in face_shapes {
-            let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
-            if !multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
+            let Some(prepared_face_shape) = Self::load(context, face_shape)? else {
                 return Ok(None);
-            }
-            prepared_face_shapes.push(Self {
-                face_shape,
-                face_wire_shapes,
-            });
+            };
+            prepared_face_shapes.push(prepared_face_shape);
         }
 
         Ok(Some(prepared_face_shapes))
+    }
+
+    fn load(context: &Context, face_shape: Shape) -> Result<Option<Self>, Error> {
+        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
+        if !Self::multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
+            return Ok(None);
+        }
+
+        Ok(Some(Self {
+            face_shape,
+            face_wire_shapes,
+        }))
+    }
+
+    fn multi_wire_face_is_planar(
+        context: &Context,
+        face_shape: &Shape,
+        face_wire_count: usize,
+    ) -> Result<bool, Error> {
+        if face_wire_count <= 1 {
+            return Ok(true);
+        }
+
+        let geometry = match context.face_geometry(face_shape) {
+            Ok(geometry) => geometry,
+            Err(_) => context.face_geometry_occt(face_shape)?,
+        };
+        Ok(geometry.kind == crate::SurfaceKind::Plane)
     }
 
     fn is_empty(&self) -> bool {
