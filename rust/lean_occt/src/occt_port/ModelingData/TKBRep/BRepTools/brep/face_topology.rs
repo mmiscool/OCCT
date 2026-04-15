@@ -1,4 +1,4 @@
-use super::topology::{face_loops, ported_brep_wires};
+use super::topology::ported_brep_wires;
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -102,4 +102,77 @@ fn single_face_edge(
         end_point: None,
         adjacent_face_indices: Vec::new(),
     }
+}
+
+pub(super) fn face_loops(
+    topology: &TopologySnapshot,
+    face_index: usize,
+) -> Result<Vec<BrepFaceLoop>, Error> {
+    let range = topology
+        .faces
+        .get(face_index)
+        .copied()
+        .ok_or_else(|| Error::new(format!("topology is missing face range {face_index}")))?;
+    let mut loops = Vec::with_capacity(range.count);
+    for offset in range.offset..range.offset + range.count {
+        loops.push(BrepFaceLoop {
+            wire_index: topology
+                .face_wire_indices
+                .get(offset)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(format!("topology is missing face-wire index {offset}"))
+                })?,
+            orientation: topology
+                .face_wire_orientations
+                .get(offset)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(format!(
+                        "topology is missing face-wire orientation {offset}"
+                    ))
+                })?,
+            role: topology
+                .face_wire_roles
+                .get(offset)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(format!("topology is missing face-wire role {offset}"))
+                })?,
+        });
+    }
+    Ok(loops)
+}
+
+pub(super) fn face_adjacent_face_indices(
+    topology: &TopologySnapshot,
+    wires: &[BrepWire],
+    face_index: usize,
+) -> Result<Vec<usize>, Error> {
+    let loops = face_loops(topology, face_index)?;
+    let mut adjacent = BTreeSet::new();
+    for face_loop in loops {
+        let wire = wires.get(face_loop.wire_index).ok_or_else(|| {
+            Error::new(format!(
+                "topology is missing wire index {}",
+                face_loop.wire_index
+            ))
+        })?;
+        for &edge_index in &wire.edge_indices {
+            let range = topology
+                .edge_faces
+                .get(edge_index)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(format!("topology is missing edge-face range {edge_index}"))
+                })?;
+            for &candidate in &topology.edge_face_indices[range.offset..range.offset + range.count]
+            {
+                if candidate != face_index {
+                    adjacent.insert(candidate);
+                }
+            }
+        }
+    }
+    Ok(adjacent.into_iter().collect())
 }
