@@ -18,6 +18,12 @@ struct PreparedPlanarFace {
     geometry: FaceGeometry,
 }
 
+struct MatchedFaceWire {
+    root_wire_index: usize,
+    orientation: Orientation,
+    used_edges: Vec<usize>,
+}
+
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -86,6 +92,32 @@ struct PreparedFaceTopology {
 }
 
 impl PreparedFaceTopology {
+    fn match_face_wire(
+        context: &Context,
+        face_wire_shape: &Shape,
+        root_wires: &[RootWireTopology],
+        root_edges: &[RootEdgeTopology],
+        vertex_positions: &[[f64; 3]],
+        used_root_wire_indices: &BTreeSet<usize>,
+    ) -> Result<Option<MatchedFaceWire>, Error> {
+        let Some(face_wire_topology) =
+            root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
+        else {
+            return Ok(None);
+        };
+        let Some(root_wire_index) =
+            match_root_wire_index(root_wires, &face_wire_topology, used_root_wire_indices)
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(MatchedFaceWire {
+            root_wire_index,
+            orientation: context.shape_orientation(face_wire_shape)?,
+            used_edges: face_wire_topology.edge_indices,
+        }))
+    }
+
     fn collect_matched_face_wires(
         context: &Context,
         prepared_face_shape: &PreparedFaceShape,
@@ -107,28 +139,29 @@ impl PreparedFaceTopology {
         let mut used_edges = BTreeSet::new();
 
         for face_wire_shape in face_wire_shapes {
-            let Some(face_wire_topology) =
-                root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
+            let Some(matched_face_wire) = Self::match_face_wire(
+                context,
+                face_wire_shape,
+                root_wires,
+                root_edges,
+                vertex_positions,
+                &used_root_wire_indices,
+            )?
             else {
                 return Ok(None);
             };
-            let Some(root_wire_index) =
-                match_root_wire_index(root_wires, &face_wire_topology, &used_root_wire_indices)
-            else {
-                return Ok(None);
-            };
-            used_root_wire_indices.insert(root_wire_index);
-            used_edges.extend(face_wire_topology.edge_indices.iter().copied());
+            used_root_wire_indices.insert(matched_face_wire.root_wire_index);
+            used_edges.extend(matched_face_wire.used_edges.iter().copied());
 
-            face_wire_indices.push(root_wire_index);
-            face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
+            face_wire_indices.push(matched_face_wire.root_wire_index);
+            face_wire_orientations.push(matched_face_wire.orientation);
 
             if let Some(planar_face) = planar_face {
                 let Some(wire_area) = planar_wire_area_magnitude(
                     context,
                     planar_face.plane,
                     planar_face.geometry,
-                    &root_wires[root_wire_index],
+                    &root_wires[matched_face_wire.root_wire_index],
                     edge_shapes,
                     root_edges,
                 )?
