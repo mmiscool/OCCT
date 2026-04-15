@@ -209,9 +209,16 @@ impl Context {
             .enumerate()
             .map(|(index, edge_shape)| {
                 let topology_edge = topology_edge(&topology, index)?;
-                let geometry = self.edge_geometry_occt(edge_shape)?;
-                let ported_curve =
-                    PortedCurve::from_context_with_geometry(self, edge_shape, geometry)?;
+                let geometry = match self.edge_geometry(edge_shape) {
+                    Ok(geometry) => geometry,
+                    Err(_) => self.edge_geometry_occt(edge_shape)?,
+                };
+                let ported_curve = match PortedCurve::from_context_with_ported_payloads(
+                    self, edge_shape, geometry,
+                ) {
+                    Ok(ported_curve) => ported_curve,
+                    Err(_) => PortedCurve::from_context_with_geometry(self, edge_shape, geometry)?,
+                };
                 let adjacent_face_indices = adjacent_face_indices(&topology, index)?;
                 let (start_point, end_point) = edge_points(&topology, index);
                 let length = match ported_curve {
@@ -431,9 +438,11 @@ fn ported_topology_snapshot(
     let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
     for face_shape in &face_shapes {
         let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-        if face_wire_shapes.len() > 1
-            && context.face_geometry_occt(face_shape)?.kind != crate::SurfaceKind::Plane
-        {
+        let geometry = match context.face_geometry(face_shape) {
+            Ok(geometry) => geometry,
+            Err(_) => context.face_geometry_occt(face_shape)?,
+        };
+        if face_wire_shapes.len() > 1 && geometry.kind != crate::SurfaceKind::Plane {
             return Ok(None);
         }
     }
@@ -1413,9 +1422,9 @@ fn single_face_topology_public(
         .iter()
         .enumerate()
         .map(|(index, edge_shape)| {
-            let geometry = match context.ported_edge_geometry(edge_shape) {
-                Ok(Some(geometry)) => geometry,
-                Ok(None) | Err(_) => context.edge_geometry_occt(edge_shape)?,
+            let geometry = match context.edge_geometry(edge_shape) {
+                Ok(geometry) => geometry,
+                Err(_) => context.edge_geometry_occt(edge_shape)?,
             };
             let ported_curve =
                 match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)

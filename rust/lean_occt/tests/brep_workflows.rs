@@ -92,6 +92,35 @@ fn assert_vec3_close(
     Ok(())
 }
 
+fn assert_edge_geometry_close(
+    lhs: lean_occt::EdgeGeometry,
+    rhs: lean_occt::EdgeGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind || lhs.is_closed != rhs.is_closed || lhs.is_periodic != rhs.is_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    for (field, lhs, rhs) in [
+        ("start_parameter", lhs.start_parameter, rhs.start_parameter),
+        ("end_parameter", lhs.end_parameter, rhs.end_parameter),
+        ("period", lhs.period, rhs.period),
+    ] {
+        if (lhs - rhs).abs() > tolerance {
+            return Err(std::io::Error::other(format!(
+                "{label} {field} mismatch: lhs={lhs} rhs={rhs} tol={tolerance}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 fn assert_topology_matches(
     label: &str,
     rust: &lean_occt::TopologySnapshot,
@@ -252,6 +281,40 @@ fn assert_brep_edge_lengths_match(
             ))
             .into());
         }
+    }
+
+    Ok(())
+}
+
+fn assert_brep_edge_geometries_match_public(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    brep: &lean_occt::BrepShape,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != brep.edges.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} edge inventory mismatch: public={} brep={}",
+            edge_shapes.len(),
+            brep.edges.len()
+        ))
+        .into());
+    }
+
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let expected_geometry = kernel.context().edge_geometry(edge_shape)?;
+        let actual_geometry = brep
+            .edges
+            .get(index)
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep edge {index}")))?
+            .geometry;
+        assert_edge_geometry_close(
+            actual_geometry,
+            expected_geometry,
+            1.0e-9,
+            &format!("{label} edge {index} geometry"),
+        )?;
     }
 
     Ok(())
@@ -779,6 +842,7 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
+        assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
     }
 
@@ -845,6 +909,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
+        assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
         assert_eq!(rust_topology.faces.len(), 1);
         assert_eq!(
@@ -917,6 +982,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
+        assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
         assert_eq!(rust_topology.faces.len(), expected_face_count);
         assert!(rust_topology

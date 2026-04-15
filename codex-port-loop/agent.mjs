@@ -21,11 +21,13 @@ const autoCompactTokenLimit = 120000;
 const startupDelayMs = 20000;
 const validReasoningLevels = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const eventDivider = "-".repeat(100);
+const subagentPermissionSuffix =
+  " You may use subagents, delegation, and parallel agent work when useful. Prefer bounded, non-overlapping subtasks.";
 const defaultConfig = {
   projectPath: packageRoot,
   model: "gpt-5.4",
   reasoningLevel: "xhigh",
-  loopPrompt: "Keep going porting from C++ to rust.",
+  loopPrompt: `Keep going porting from C++ to rust.${subagentPermissionSuffix}`,
   delayBetweenLoopsMs: 1000,
 };
 
@@ -263,6 +265,8 @@ function buildSharedArgs(config) {
     `model_auto_compact_token_limit=${autoCompactTokenLimit}`,
     "-c",
     `model_reasoning_effort="${config.reasoningLevel}"`,
+    "-c",
+    "features.multi_agent=true",
     "--model",
     config.model,
   ];
@@ -354,11 +358,15 @@ function normalizeConfig(config) {
     throw new Error(`Invalid config in ${configFile}: "loopPrompt" must be a non-empty string.`);
   }
 
+  const normalizedLoopPrompt = loopPrompt.includes(subagentPermissionSuffix.trim())
+    ? loopPrompt
+    : `${loopPrompt}${subagentPermissionSuffix}`;
+
   return {
     projectPath,
     model,
     reasoningLevel,
-    loopPrompt,
+    loopPrompt: normalizedLoopPrompt,
     delayBetweenLoopsMs,
   };
 }
