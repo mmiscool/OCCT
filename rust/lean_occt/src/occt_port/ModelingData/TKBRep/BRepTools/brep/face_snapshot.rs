@@ -60,14 +60,6 @@ impl PreparedFaceShape {
         Ok(geometry.kind == crate::SurfaceKind::Plane)
     }
 
-    fn is_empty(&self) -> bool {
-        self.face_wire_shapes.is_empty()
-    }
-
-    fn wire_shapes(&self) -> &[Shape] {
-        &self.face_wire_shapes
-    }
-
     fn planar_face(
         &self,
         context: &Context,
@@ -99,7 +91,7 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<Self>, Error> {
-        if root_wires.is_empty() || prepared_face_shape.is_empty() {
+        if root_wires.is_empty() || prepared_face_shape.face_wire_shapes.is_empty() {
             return Ok(None);
         }
 
@@ -121,7 +113,7 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<Self>, Error> {
-        let face_wire_shapes = prepared_face_shape.wire_shapes();
+        let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
         let planar_face = prepared_face_shape.planar_face(context)?;
         let mut used_root_wire_indices = BTreeSet::new();
         let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
