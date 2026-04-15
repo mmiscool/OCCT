@@ -12,13 +12,6 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-struct PortedFaceTopology {
-    edge_indices: BTreeSet<usize>,
-    face_wire_indices: Vec<usize>,
-    face_wire_orientations: Vec<Orientation>,
-    face_wire_roles: Vec<LoopRole>,
-}
-
 fn load_ported_face_snapshot_shapes(
     context: &Context,
     shape: &Shape,
@@ -46,14 +39,20 @@ fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Re
     Ok(true)
 }
 
-fn ported_face_topology(
+fn append_ported_face_topology(
     context: &Context,
+    face_index: usize,
     face_shape: &Shape,
     root_wires: &[RootWireTopology],
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
-) -> Result<Option<PortedFaceTopology>, Error> {
+    edge_face_lists: &mut [Vec<usize>],
+    faces: &mut Vec<crate::TopologyRange>,
+    face_wire_indices: &mut Vec<usize>,
+    face_wire_orientations: &mut Vec<Orientation>,
+    face_wire_roles: &mut Vec<LoopRole>,
+) -> Result<Option<()>, Error> {
     let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
     if root_wires.is_empty() || face_wire_shapes.is_empty() {
         return Ok(None);
@@ -61,8 +60,8 @@ fn ported_face_topology(
 
     let mut used_root_wire_indices = BTreeSet::new();
     let mut used_edges = BTreeSet::new();
-    let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
-    let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
+    let face_wire_offset = face_wire_indices.len();
+    let mut face_wire_count = 0usize;
     let mut face_wire_areas = Vec::new();
 
     let mut planar_face = None;
@@ -90,6 +89,7 @@ fn ported_face_topology(
 
         face_wire_indices.push(root_wire_index);
         face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
+        face_wire_count += 1;
 
         if let Some((plane, face_geometry)) = planar_face {
             let Some(wire_area) = planar_wire_area_magnitude(
@@ -107,7 +107,7 @@ fn ported_face_topology(
         }
     }
 
-    let face_wire_roles = match face_wire_shapes.len() {
+    let wire_roles = match face_wire_shapes.len() {
         1 => vec![LoopRole::Outer],
         _ => {
             let Some((outer_offset, outer_area)) = face_wire_areas
@@ -136,12 +136,20 @@ fn ported_face_topology(
         }
     };
 
-    Ok(Some(PortedFaceTopology {
-        edge_indices: used_edges,
-        face_wire_indices,
-        face_wire_orientations,
-        face_wire_roles,
-    }))
+    faces.push(crate::TopologyRange {
+        offset: face_wire_offset,
+        count: face_wire_count,
+    });
+    face_wire_roles.extend(wire_roles);
+
+    for edge_index in used_edges {
+        let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
+            return Ok(None);
+        };
+        edge_faces.push(face_index);
+    }
+
+    Ok(Some(()))
 }
 
 fn pack_ported_face_snapshot(
@@ -160,32 +168,23 @@ fn pack_ported_face_snapshot(
     let mut face_wire_roles = Vec::new();
 
     for (face_index, face_shape) in face_shapes.iter().enumerate() {
-        let Some(face_topology) = ported_face_topology(
+        let Some(()) = append_ported_face_topology(
             context,
+            face_index,
             face_shape,
             root_wires,
             root_edges,
             edge_shapes,
             vertex_positions,
+            &mut edge_face_lists,
+            &mut faces,
+            &mut face_wire_indices,
+            &mut face_wire_orientations,
+            &mut face_wire_roles,
         )?
         else {
             return Ok(None);
         };
-
-        faces.push(crate::TopologyRange {
-            offset: face_wire_indices.len(),
-            count: face_topology.face_wire_indices.len(),
-        });
-        face_wire_indices.extend(face_topology.face_wire_indices);
-        face_wire_orientations.extend(face_topology.face_wire_orientations);
-        face_wire_roles.extend(face_topology.face_wire_roles);
-
-        for edge_index in face_topology.edge_indices {
-            let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
-                return Ok(None);
-            };
-            edge_faces.push(face_index);
-        }
     }
 
     let mut edge_faces = Vec::with_capacity(edge_count);
