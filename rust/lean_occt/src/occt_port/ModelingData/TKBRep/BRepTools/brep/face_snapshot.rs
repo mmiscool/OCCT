@@ -274,41 +274,20 @@ impl FaceSnapshotAccumulator {
 
         Some(())
     }
-}
 
-fn append_ported_face_topology(
-    context: &Context,
-    face_index: usize,
-    face_shape: &Shape,
-    root_wires: &[RootWireTopology],
-    root_edges: &[RootEdgeTopology],
-    edge_shapes: &[Shape],
-    vertex_positions: &[[f64; 3]],
-    accumulator: &mut FaceSnapshotAccumulator,
-) -> Result<Option<()>, Error> {
-    let face_wire_offset = accumulator.face_wire_indices.len();
-    let Some(prepared_face_topology) = PreparedFaceTopology::load(
-        context,
-        face_shape,
-        root_wires,
-        root_edges,
-        edge_shapes,
-        vertex_positions,
-    )?
-    else {
-        return Ok(None);
-    };
-
-    let Some(()) = accumulator.append_face_topology_outputs(
-        face_index,
-        face_wire_offset,
-        prepared_face_topology.matched_face_wires,
-        prepared_face_topology.wire_roles,
-    ) else {
-        return Ok(None);
-    };
-
-    Ok(Some(()))
+    fn append_prepared_face_topology(
+        &mut self,
+        face_index: usize,
+        prepared_face_topology: PreparedFaceTopology,
+    ) -> Option<()> {
+        let face_wire_offset = self.face_wire_indices.len();
+        self.append_face_topology_outputs(
+            face_index,
+            face_wire_offset,
+            prepared_face_topology.matched_face_wires,
+            prepared_face_topology.wire_roles,
+        )
+    }
 }
 
 fn pack_ported_face_snapshot(
@@ -323,16 +302,19 @@ fn pack_ported_face_snapshot(
     let mut accumulator = FaceSnapshotAccumulator::new(edge_count, face_shapes.len());
 
     for (face_index, face_shape) in face_shapes.iter().enumerate() {
-        let Some(()) = append_ported_face_topology(
+        let Some(prepared_face_topology) = PreparedFaceTopology::load(
             context,
-            face_index,
             face_shape,
             root_wires,
             root_edges,
             edge_shapes,
             vertex_positions,
-            &mut accumulator,
         )?
+        else {
+            return Ok(None);
+        };
+        let Some(()) =
+            accumulator.append_prepared_face_topology(face_index, prepared_face_topology)
         else {
             return Ok(None);
         };
