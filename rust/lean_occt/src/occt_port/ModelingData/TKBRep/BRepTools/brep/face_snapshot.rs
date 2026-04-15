@@ -18,18 +18,6 @@ struct PreparedFaceShape {
 }
 
 impl PreparedFaceShape {
-    fn load(context: &Context, face_shape: Shape) -> Result<Option<Self>, Error> {
-        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
-        if !Self::multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
-            return Ok(None);
-        }
-
-        Ok(Some(Self {
-            face_shape,
-            face_wire_shapes,
-        }))
-    }
-
     fn multi_wire_face_is_planar(
         context: &Context,
         face_shape: &Shape,
@@ -282,10 +270,18 @@ pub(super) fn load_ported_face_snapshot(
     let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
     let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
     for face_shape in face_shapes {
-        let Some(prepared_face_shape) = PreparedFaceShape::load(context, face_shape)? else {
+        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
+        if !PreparedFaceShape::multi_wire_face_is_planar(
+            context,
+            &face_shape,
+            face_wire_shapes.len(),
+        )? {
             return Ok(None);
-        };
-        prepared_face_shapes.push(prepared_face_shape);
+        }
+        prepared_face_shapes.push(PreparedFaceShape {
+            face_shape,
+            face_wire_shapes,
+        });
     }
 
     pack_ported_face_snapshot(
