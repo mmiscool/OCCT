@@ -313,42 +313,62 @@ fn ported_swept_face_surface_from_topology(
 ) -> Result<Option<PortedSweptSurface>, Error> {
     match face_geometry.kind {
         crate::SurfaceKind::Extrusion => {
-            let payload = context.face_extrusion_payload_occt(face_shape)?;
-            let basis = select_swept_face_basis(
-                &topology,
-                face_geometry,
-                payload.basis_curve_kind,
-                SweptBasisSelection::Extrusion {
-                    direction: payload.direction,
-                },
-                "extrusion",
-            )?;
-            Ok(Some(PortedSweptSurface::Extrusion {
-                payload,
-                basis_curve: basis.curve,
-                basis_geometry: basis.geometry,
-            }))
+            ported_extrusion_face_surface(context, face_shape, face_geometry, &topology).map(Some)
         }
         crate::SurfaceKind::Revolution => {
-            let payload = context.face_revolution_payload_occt(face_shape)?;
-            let basis = select_swept_face_basis(
-                &topology,
-                face_geometry,
-                payload.basis_curve_kind,
-                SweptBasisSelection::Revolution {
-                    axis_origin: payload.axis_origin,
-                    axis_direction: payload.axis_direction,
-                },
-                "revolution",
-            )?;
-            Ok(Some(PortedSweptSurface::Revolution {
-                payload,
-                basis_curve: basis.curve,
-                basis_geometry: basis.geometry,
-            }))
+            ported_revolution_face_surface(context, face_shape, face_geometry, &topology).map(Some)
         }
         _ => Ok(None),
     }
+}
+
+fn ported_extrusion_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    topology: &SingleFaceTopology,
+) -> Result<PortedSweptSurface, Error> {
+    let payload = context.face_extrusion_payload_occt(face_shape)?;
+    let basis = select_swept_face_basis(
+        topology,
+        face_geometry,
+        payload.basis_curve_kind,
+        SweptBasisSelection::Extrusion {
+            direction: payload.direction,
+        },
+        "extrusion",
+    )?;
+
+    Ok(PortedSweptSurface::Extrusion {
+        payload,
+        basis_curve: basis.curve,
+        basis_geometry: basis.geometry,
+    })
+}
+
+fn ported_revolution_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    topology: &SingleFaceTopology,
+) -> Result<PortedSweptSurface, Error> {
+    let payload = context.face_revolution_payload_occt(face_shape)?;
+    let basis = select_swept_face_basis(
+        topology,
+        face_geometry,
+        payload.basis_curve_kind,
+        SweptBasisSelection::Revolution {
+            axis_origin: payload.axis_origin,
+            axis_direction: payload.axis_direction,
+        },
+        "revolution",
+    )?;
+
+    Ok(PortedSweptSurface::Revolution {
+        payload,
+        basis_curve: basis.curve,
+        basis_geometry: basis.geometry,
+    })
 }
 
 fn select_swept_face_basis(
