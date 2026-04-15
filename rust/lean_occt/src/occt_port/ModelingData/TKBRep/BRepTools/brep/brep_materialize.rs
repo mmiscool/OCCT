@@ -1,4 +1,4 @@
-use super::topology::{adjacent_face_indices, edge_points, topology_edge};
+use super::topology_access::{adjacent_face_indices, edge_points, topology_edge};
 use super::*;
 
 pub(super) fn ported_brep_vertices(topology: &TopologySnapshot) -> Vec<BrepVertex> {

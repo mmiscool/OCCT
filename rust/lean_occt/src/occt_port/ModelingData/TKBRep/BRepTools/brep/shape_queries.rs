@@ -1,4 +1,5 @@
 use super::summary::{classify_root_kind, shape_counts};
+use super::topology_access::optional_vertex_position;
 use super::*;
 
 pub(super) fn ported_vertex_point(
@@ -37,10 +38,8 @@ pub(super) fn ported_edge_endpoints(
         )));
     };
     let (Some(start), Some(end)) = (
-        edge.start_vertex
-            .and_then(|index| topology.vertex_positions.get(index).copied()),
-        edge.end_vertex
-            .and_then(|index| topology.vertex_positions.get(index).copied()),
+        optional_vertex_position(&topology, edge.start_vertex),
+        optional_vertex_position(&topology, edge.end_vertex),
     ) else {
         return Err(Error::new("Edge did not contain two endpoint vertices."));
     };
