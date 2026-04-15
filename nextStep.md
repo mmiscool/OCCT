@@ -1,15 +1,15 @@
 # Next Task
 
-Tighten the face snapshot entry path now that the internal per-face carrier has been removed.
+Deduplicate the multi-wire planar-face gating inside the face snapshot stage.
 
 ## Focus
 
-- Collapse the remaining `load_ported_face_snapshot_shapes()` preload step into the face snapshot entry if it no longer adds signal.
-- Re-evaluate whether `validate_ported_face_snapshot()` should stay separate after that collapse, while keeping `TopologySnapshotFaceFields` as the stage output boundary back to `topology.rs`.
+- Reconcile the duplicated multi-wire plane checks currently split between `validate_ported_face_snapshot()` and `append_ported_face_topology()` in `face_snapshot.rs`.
+- Keep `validate_ported_face_snapshot()` as the entry-level preflight if it still improves readability, but avoid re-encoding the same non-planar rejection rule deeper in the per-face packing path.
 - Keep the current face validation, root-wire matching, planar loop classification, and packed snapshot output unchanged.
 - Preserve the downstream `Context::ported_topology()` / `Context::ported_brep()` behavior and existing topology snapshot parity.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the cleanup.
 
 ## Why This Is Next
 
-With `PortedFaceTopology` gone, the remaining face-stage scaffolding is mostly the entry/load split before packing. The next cleanup is trimming that two-step boundary so the stage reads as one face-owned load/validate/pack flow.
+With the face entry now reading as one load/validate/pack flow, the main remaining local redundancy is the repeated multi-wire planar-face gate. Tightening that rule into one clear boundary is the next bounded cleanup in the same stage.
