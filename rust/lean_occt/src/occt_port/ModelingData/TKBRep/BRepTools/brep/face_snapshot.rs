@@ -25,6 +25,19 @@ struct MatchedFaceWire {
 }
 
 impl MatchedFaceWire {
+    fn append_to(
+        &self,
+        used_root_wire_indices: &mut BTreeSet<usize>,
+        face_wire_indices: &mut Vec<usize>,
+        face_wire_orientations: &mut Vec<Orientation>,
+        used_edges: &mut BTreeSet<usize>,
+    ) {
+        used_root_wire_indices.insert(self.root_wire_index);
+        used_edges.extend(self.used_edges.iter().copied());
+        face_wire_indices.push(self.root_wire_index);
+        face_wire_orientations.push(self.orientation);
+    }
+
     fn planar_area_magnitude(
         &self,
         context: &Context,
@@ -170,11 +183,12 @@ impl PreparedFaceTopology {
             else {
                 return Ok(None);
             };
-            used_root_wire_indices.insert(matched_face_wire.root_wire_index);
-            used_edges.extend(matched_face_wire.used_edges.iter().copied());
-
-            face_wire_indices.push(matched_face_wire.root_wire_index);
-            face_wire_orientations.push(matched_face_wire.orientation);
+            matched_face_wire.append_to(
+                &mut used_root_wire_indices,
+                &mut face_wire_indices,
+                &mut face_wire_orientations,
+                &mut used_edges,
+            );
 
             if let Some(planar_face) = planar_face {
                 let Some(wire_area) = matched_face_wire.planar_area_magnitude(
