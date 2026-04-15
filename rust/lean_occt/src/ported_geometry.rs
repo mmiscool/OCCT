@@ -655,9 +655,9 @@ impl PortedFaceSurface {
 impl Context {
     pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
         let geometry = self.edge_geometry_occt(shape)?;
+        let endpoints = self.edge_endpoints(shape)?;
 
         if geometry.kind == CurveKind::Line {
-            let endpoints = self.edge_endpoints(shape)?;
             let line_payload = ported_line_payload_from_endpoints(geometry, endpoints)
                 .or_else(|| self.edge_line_payload_occt(shape).ok());
             if let Some(payload) = line_payload {
@@ -665,7 +665,6 @@ impl Context {
             }
         }
 
-        let endpoints = self.edge_endpoints_occt(shape)?;
         let edge_length = shape.linear_length();
         let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
 
