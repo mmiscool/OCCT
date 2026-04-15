@@ -24,26 +24,6 @@ struct MatchedFaceWire {
     used_edges: Vec<usize>,
 }
 
-impl MatchedFaceWire {
-    fn planar_area_magnitude(
-        &self,
-        context: &Context,
-        planar_face: PreparedPlanarFace,
-        root_wires: &[RootWireTopology],
-        edge_shapes: &[Shape],
-        root_edges: &[RootEdgeTopology],
-    ) -> Result<Option<f64>, Error> {
-        planar_wire_area_magnitude(
-            context,
-            planar_face.plane,
-            planar_face.geometry,
-            &root_wires[self.root_wire_index],
-            edge_shapes,
-            root_edges,
-        )
-    }
-}
-
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -178,10 +158,11 @@ impl PreparedFaceTopologyBuilder {
             };
 
             let wire_area = if let Some(planar_face) = planar_face {
-                let Some(wire_area) = matched_face_wire.planar_area_magnitude(
+                let Some(wire_area) = planar_wire_area_magnitude(
                     context,
-                    planar_face,
-                    root_wires,
+                    planar_face.plane,
+                    planar_face.geometry,
+                    &root_wires[matched_face_wire.root_wire_index],
                     edge_shapes,
                     root_edges,
                 )?
