@@ -5,7 +5,7 @@ use super::summary::mesh_face_properties;
 use super::swept_face::{
     face_curve_candidates, select_swept_face_basis_curve, SweptBasisSelection,
 };
-use super::topology::{face_adjacent_face_indices, face_loops};
+use super::topology::{face_adjacent_face_indices, face_loops, ported_brep_wires};
 use super::*;
 
 struct SingleFaceTopology {
@@ -327,56 +327,32 @@ fn single_face_topology(
     context: &Context,
     face_shape: &Shape,
 ) -> Result<Option<SingleFaceTopology>, Error> {
-    let topology = match context.ported_topology(face_shape)? {
+    single_face_topology_with_edges(context, face_shape, single_face_edge_raw)
+}
+
+fn single_face_topology_public(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<SingleFaceTopology>, Error> {
+    single_face_topology_with_edges(context, face_shape, single_face_edge_public)
+}
+
+fn single_face_topology_with_edges(
+    context: &Context,
+    face_shape: &Shape,
+    edge_builder: fn(&Context, usize, &Shape) -> Result<BrepEdge, Error>,
+) -> Result<Option<SingleFaceTopology>, Error> {
+    let topology = match single_face_topology_snapshot(context, face_shape)? {
         Some(topology) => topology,
-        None => context.topology_occt(face_shape)?,
+        None => return Ok(None),
     };
-    if topology.faces.len() != 1 {
-        return Ok(None);
-    }
 
-    let wires = topology
-        .wires
-        .iter()
-        .enumerate()
-        .map(|(index, range)| {
-            let edge_indices =
-                topology.wire_edge_indices[range.offset..range.offset + range.count].to_vec();
-            let edge_orientations =
-                topology.wire_edge_orientations[range.offset..range.offset + range.count].to_vec();
-            let vertex_range = topology.wire_vertices[index];
-            let vertex_indices = topology.wire_vertex_indices
-                [vertex_range.offset..vertex_range.offset + vertex_range.count]
-                .to_vec();
-            BrepWire {
-                index,
-                edge_indices,
-                edge_orientations,
-                vertex_indices,
-            }
-        })
-        .collect::<Vec<_>>();
-
+    let wires = ported_brep_wires(&topology);
     let edge_shapes = context.subshapes_occt(face_shape, ShapeKind::Edge)?;
     let edges = edge_shapes
         .iter()
         .enumerate()
-        .map(|(index, edge_shape)| {
-            let geometry = context.edge_geometry_occt(edge_shape)?;
-            let ported_curve =
-                PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
-            Ok(BrepEdge {
-                index,
-                geometry,
-                ported_curve,
-                length: 0.0,
-                start_vertex: None,
-                end_vertex: None,
-                start_point: None,
-                end_point: None,
-                adjacent_face_indices: Vec::new(),
-            })
-        })
+        .map(|(index, edge_shape)| edge_builder(context, index, edge_shape))
         .collect::<Result<Vec<_>, Error>>()?;
 
     Ok(Some(SingleFaceTopology {
@@ -387,10 +363,10 @@ fn single_face_topology(
     }))
 }
 
-fn single_face_topology_public(
+fn single_face_topology_snapshot(
     context: &Context,
     face_shape: &Shape,
-) -> Result<Option<SingleFaceTopology>, Error> {
+) -> Result<Option<TopologySnapshot>, Error> {
     let topology = match context.ported_topology(face_shape)? {
         Some(topology) => topology,
         None => context.topology_occt(face_shape)?,
@@ -398,64 +374,52 @@ fn single_face_topology_public(
     if topology.faces.len() != 1 {
         return Ok(None);
     }
+    Ok(Some(topology))
+}
 
-    let wires = topology
-        .wires
-        .iter()
-        .enumerate()
-        .map(|(index, range)| {
-            let edge_indices =
-                topology.wire_edge_indices[range.offset..range.offset + range.count].to_vec();
-            let edge_orientations =
-                topology.wire_edge_orientations[range.offset..range.offset + range.count].to_vec();
-            let vertex_range = topology.wire_vertices[index];
-            let vertex_indices = topology.wire_vertex_indices
-                [vertex_range.offset..vertex_range.offset + vertex_range.count]
-                .to_vec();
-            BrepWire {
-                index,
-                edge_indices,
-                edge_orientations,
-                vertex_indices,
-            }
-        })
-        .collect::<Vec<_>>();
+fn single_face_edge_raw(
+    context: &Context,
+    index: usize,
+    edge_shape: &Shape,
+) -> Result<BrepEdge, Error> {
+    let geometry = context.edge_geometry_occt(edge_shape)?;
+    let ported_curve = PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
+    Ok(BrepEdge {
+        index,
+        geometry,
+        ported_curve,
+        length: 0.0,
+        start_vertex: None,
+        end_vertex: None,
+        start_point: None,
+        end_point: None,
+        adjacent_face_indices: Vec::new(),
+    })
+}
 
-    let edge_shapes = context.subshapes_occt(face_shape, ShapeKind::Edge)?;
-    let edges = edge_shapes
-        .iter()
-        .enumerate()
-        .map(|(index, edge_shape)| {
-            let geometry = match context.edge_geometry(edge_shape) {
-                Ok(geometry) => geometry,
-                Err(_) => context.edge_geometry_occt(edge_shape)?,
-            };
-            let ported_curve =
-                match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)
-                {
-                    Ok(ported_curve) => ported_curve,
-                    Err(_) => {
-                        PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?
-                    }
-                };
-            Ok(BrepEdge {
-                index,
-                geometry,
-                ported_curve,
-                length: 0.0,
-                start_vertex: None,
-                end_vertex: None,
-                start_point: None,
-                end_point: None,
-                adjacent_face_indices: Vec::new(),
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-
-    Ok(Some(SingleFaceTopology {
-        loops: face_loops(&topology, 0)?,
-        wires,
-        edges,
-        edge_shapes,
-    }))
+fn single_face_edge_public(
+    context: &Context,
+    index: usize,
+    edge_shape: &Shape,
+) -> Result<BrepEdge, Error> {
+    let geometry = match context.edge_geometry(edge_shape) {
+        Ok(geometry) => geometry,
+        Err(_) => context.edge_geometry_occt(edge_shape)?,
+    };
+    let ported_curve =
+        match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry) {
+            Ok(ported_curve) => ported_curve,
+            Err(_) => PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?,
+        };
+    Ok(BrepEdge {
+        index,
+        geometry,
+        ported_curve,
+        length: 0.0,
+        start_vertex: None,
+        end_vertex: None,
+        start_point: None,
+        end_point: None,
+        adjacent_face_indices: Vec::new(),
+    })
 }

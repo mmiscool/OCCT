@@ -1,14 +1,14 @@
 # Next Task
 
-Deduplicate the single-face topology materialization in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs`.
+Deduplicate the remaining internal/public face-surface descriptor wrappers in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs`.
 
 ## Focus
 
-- Replace the repeated wire and edge construction in `single_face_topology()` and `single_face_topology_public()` with shared helper code.
-- Reuse the topology-owned BRep materialization helpers where they fit, while preserving the internal/raw vs public/Rust-first geometry split.
-- Keep `brep.rs` as orchestration-only and avoid moving detailed face or edge materialization logic back into the parent module.
-- Leave behavior unchanged and keep `cargo check --manifest-path rust/lean_occt/Cargo.toml` and `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows` passing after the cleanup.
+- Replace the repeated control flow in `ported_face_surface_descriptor_from_surface()` and `ported_face_surface_descriptor_from_surface_public()` with a shared helper.
+- Do the same for `ported_swept_face_surface()` and `ported_swept_face_surface_public()`, reusing the shared single-face topology path added this turn.
+- Preserve the internal/raw vs public/Rust-first edge acquisition split by passing that choice through a narrow helper boundary instead of keeping duplicate wrappers.
+- Leave behavior unchanged and keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the cleanup.
 
 ## Why This Is Next
 
-`ported_brep()` is now reduced to top-level orchestration plus summary wiring, and the largest remaining local duplication in this area is inside `face_surface.rs`. The internal and public single-face topology builders both reconstruct the same wire and edge scaffolding, with only the geometry and curve acquisition path differing, so that is the next clean reduction.
+The single-face topology duplication is now gone, but `face_surface.rs` still carries paired internal and public wrappers above that shared path. Those functions differ only in which topology/curve acquisition mode they select, so they are the next clean reduction before any deeper porting work in this module.
