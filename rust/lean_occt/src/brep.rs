@@ -1128,7 +1128,12 @@ pub(crate) fn ported_face_surface_descriptor(
 ) -> Result<Option<PortedFaceSurface>, Error> {
     let ported_surface =
         PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    ported_face_surface_descriptor_from_surface(context, face_shape, face_geometry, ported_surface)
+    ported_face_surface_descriptor_from_surface_public(
+        context,
+        face_shape,
+        face_geometry,
+        ported_surface,
+    )
 }
 
 fn ported_face_surface_descriptor_from_surface(
@@ -1151,6 +1156,26 @@ fn ported_face_surface_descriptor_from_surface(
     )
 }
 
+fn ported_face_surface_descriptor_from_surface_public(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    ported_surface: Option<PortedSurface>,
+) -> Result<Option<PortedFaceSurface>, Error> {
+    if let Some(surface) = ported_surface {
+        return Ok(Some(PortedFaceSurface::Analytic(surface)));
+    }
+
+    if let Some(surface) = context.ported_offset_surface(face_shape)? {
+        return Ok(Some(PortedFaceSurface::Offset(surface)));
+    }
+
+    Ok(
+        ported_swept_face_surface_public(context, face_shape, face_geometry)?
+            .map(PortedFaceSurface::Swept),
+    )
+}
+
 pub(crate) fn ported_swept_face_surface(
     context: &Context,
     face_shape: &Shape,
@@ -1161,6 +1186,27 @@ pub(crate) fn ported_swept_face_surface(
         None => return Ok(None),
     };
 
+    ported_swept_face_surface_from_topology(context, face_shape, face_geometry, topology)
+}
+
+fn ported_swept_face_surface_public(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+) -> Result<Option<PortedSweptSurface>, Error> {
+    let topology = match single_face_topology_public(context, face_shape)? {
+        Some(topology) => topology,
+        None => return Ok(None),
+    };
+    ported_swept_face_surface_from_topology(context, face_shape, face_geometry, topology)
+}
+
+fn ported_swept_face_surface_from_topology(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    topology: SingleFaceTopology,
+) -> Result<Option<PortedSweptSurface>, Error> {
     match face_geometry.kind {
         crate::SurfaceKind::Extrusion => {
             let payload = context.face_extrusion_payload_occt(face_shape)?;
@@ -1224,14 +1270,14 @@ pub(crate) fn ported_face_area(
     face_shape: &Shape,
 ) -> Result<Option<f64>, Error> {
     let face_geometry = context.face_geometry(face_shape)?;
-    let topology = match single_face_topology(context, face_shape)? {
+    let topology = match single_face_topology_public(context, face_shape)? {
         Some(topology) => topology,
         None => return Ok(None),
     };
 
     let ported_surface =
         PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    let ported_face_surface = ported_face_surface_descriptor_from_surface(
+    let ported_face_surface = ported_face_surface_descriptor_from_surface_public(
         context,
         face_shape,
         face_geometry,
@@ -1306,6 +1352,79 @@ fn single_face_topology(
             let geometry = context.edge_geometry_occt(edge_shape)?;
             let ported_curve =
                 PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
+            Ok(BrepEdge {
+                index,
+                geometry,
+                ported_curve,
+                length: 0.0,
+                start_vertex: None,
+                end_vertex: None,
+                start_point: None,
+                end_point: None,
+                adjacent_face_indices: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    Ok(Some(SingleFaceTopology {
+        loops: face_loops(&topology, 0)?,
+        wires,
+        edges,
+        edge_shapes,
+    }))
+}
+
+fn single_face_topology_public(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<SingleFaceTopology>, Error> {
+    let topology = match context.ported_topology(face_shape)? {
+        Some(topology) => topology,
+        None => context.topology_occt(face_shape)?,
+    };
+    if topology.faces.len() != 1 {
+        return Ok(None);
+    }
+
+    let wires = topology
+        .wires
+        .iter()
+        .enumerate()
+        .map(|(index, range)| {
+            let edge_indices =
+                topology.wire_edge_indices[range.offset..range.offset + range.count].to_vec();
+            let edge_orientations =
+                topology.wire_edge_orientations[range.offset..range.offset + range.count].to_vec();
+            let vertex_range = topology.wire_vertices[index];
+            let vertex_indices = topology.wire_vertex_indices
+                [vertex_range.offset..vertex_range.offset + vertex_range.count]
+                .to_vec();
+            BrepWire {
+                index,
+                edge_indices,
+                edge_orientations,
+                vertex_indices,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let edge_shapes = context.subshapes_occt(face_shape, ShapeKind::Edge)?;
+    let edges = edge_shapes
+        .iter()
+        .enumerate()
+        .map(|(index, edge_shape)| {
+            let geometry = match context.ported_edge_geometry(edge_shape) {
+                Ok(Some(geometry)) => geometry,
+                Ok(None) | Err(_) => context.edge_geometry_occt(edge_shape)?,
+            };
+            let ported_curve =
+                match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)
+                {
+                    Ok(ported_curve) => ported_curve,
+                    Err(_) => {
+                        PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?
+                    }
+                };
             Ok(BrepEdge {
                 index,
                 geometry,

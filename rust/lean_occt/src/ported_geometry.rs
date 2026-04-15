@@ -91,7 +91,7 @@ impl PortedCurve {
         }
     }
 
-    fn from_context_with_ported_payloads(
+    pub(crate) fn from_context_with_ported_payloads(
         context: &Context,
         shape: &Shape,
         geometry: EdgeGeometry,
