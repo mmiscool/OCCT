@@ -33,6 +33,30 @@ struct PreparedFaceShape {
     face_wire_shapes: Vec<Shape>,
 }
 
+impl PreparedFaceShape {
+    fn is_empty(&self) -> bool {
+        self.face_wire_shapes.is_empty()
+    }
+
+    fn wire_shapes(&self) -> &[Shape] {
+        &self.face_wire_shapes
+    }
+
+    fn planar_face(
+        &self,
+        context: &Context,
+    ) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
+        if self.face_wire_shapes.len() <= 1 {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            context.face_plane_payload_occt(&self.face_shape)?,
+            context.face_geometry_occt(&self.face_shape)?,
+        )))
+    }
+}
+
 fn load_prepared_face_shapes(
     context: &Context,
     shape: &Shape,
@@ -70,40 +94,21 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<Self>, Error> {
-        if root_wires.is_empty() || prepared_face_shape.face_wire_shapes.is_empty() {
+        if root_wires.is_empty() || prepared_face_shape.is_empty() {
             return Ok(None);
         }
 
-        let planar_face = Self::load_planar_face(
-            context,
-            &prepared_face_shape.face_shape,
-            prepared_face_shape.face_wire_shapes.len(),
-        )?;
+        let planar_face = prepared_face_shape.planar_face(context)?;
 
         Self::collect_matched_face_wires(
             context,
-            &prepared_face_shape.face_wire_shapes,
+            prepared_face_shape.wire_shapes(),
             root_wires,
             root_edges,
             edge_shapes,
             vertex_positions,
             planar_face,
         )
-    }
-
-    fn load_planar_face(
-        context: &Context,
-        face_shape: &Shape,
-        face_wire_count: usize,
-    ) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
-        if face_wire_count <= 1 {
-            return Ok(None);
-        }
-
-        Ok(Some((
-            context.face_plane_payload_occt(face_shape)?,
-            context.face_geometry_occt(face_shape)?,
-        )))
     }
 
     fn collect_matched_face_wires(
