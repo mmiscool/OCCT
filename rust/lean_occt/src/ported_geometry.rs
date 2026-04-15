@@ -69,8 +69,8 @@ pub enum PortedFaceSurface {
 
 impl PortedCurve {
     pub fn from_context(context: &Context, shape: &Shape) -> Result<Option<Self>, Error> {
-        let geometry = context.edge_geometry(shape)?;
-        Self::from_context_with_geometry(context, shape, geometry)
+        let geometry = context.edge_geometry_occt(shape)?;
+        Self::from_context_with_ported_payloads(context, shape, geometry)
     }
 
     pub fn from_context_with_geometry(
@@ -86,6 +86,28 @@ impl PortedCurve {
             CurveKind::Circle => Ok(Some(Self::Circle(context.edge_circle_payload_occt(shape)?))),
             CurveKind::Ellipse => Ok(Some(Self::Ellipse(
                 context.edge_ellipse_payload_occt(shape)?,
+            ))),
+            _ => Ok(None),
+        }
+    }
+
+    fn from_context_with_ported_payloads(
+        context: &Context,
+        shape: &Shape,
+        geometry: EdgeGeometry,
+    ) -> Result<Option<Self>, Error> {
+        match geometry.kind {
+            CurveKind::Line => Ok(Some(Self::Line(
+                ported_line_payload(context, shape, geometry)?
+                    .unwrap_or(context.edge_line_payload_occt(shape)?),
+            ))),
+            CurveKind::Circle => Ok(Some(Self::Circle(
+                ported_circle_payload(context, shape, geometry)?
+                    .unwrap_or(context.edge_circle_payload_occt(shape)?),
+            ))),
+            CurveKind::Ellipse => Ok(Some(Self::Ellipse(
+                ported_ellipse_payload(context, shape, geometry)?
+                    .unwrap_or(context.edge_ellipse_payload_occt(shape)?),
             ))),
             _ => Ok(None),
         }
@@ -741,7 +763,7 @@ impl Context {
         let geometry = self.edge_geometry(shape)?;
         let parameter = interpolate_range(geometry.start_parameter, geometry.end_parameter, t);
         Ok(
-            PortedCurve::from_context_with_geometry(self, shape, geometry)?
+            PortedCurve::from_context_with_ported_payloads(self, shape, geometry)?
                 .map(|curve| curve.sample_with_geometry(geometry, parameter)),
         )
     }
@@ -753,7 +775,7 @@ impl Context {
     ) -> Result<Option<EdgeSample>, Error> {
         let geometry = self.edge_geometry(shape)?;
         Ok(
-            PortedCurve::from_context_with_geometry(self, shape, geometry)?
+            PortedCurve::from_context_with_ported_payloads(self, shape, geometry)?
                 .map(|curve| curve.sample_with_geometry(geometry, parameter)),
         )
     }
@@ -761,7 +783,7 @@ impl Context {
     pub fn ported_edge_length(&self, shape: &Shape) -> Result<Option<f64>, Error> {
         let geometry = self.edge_geometry(shape)?;
         Ok(
-            PortedCurve::from_context_with_geometry(self, shape, geometry)?
+            PortedCurve::from_context_with_ported_payloads(self, shape, geometry)?
                 .map(|curve| curve.length_with_geometry(geometry)),
         )
     }
@@ -1546,6 +1568,134 @@ fn ported_line_payload(
     }))
 }
 
+fn ported_circle_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: EdgeGeometry,
+) -> Result<Option<CirclePayload>, Error> {
+    if geometry.kind != CurveKind::Circle {
+        return Ok(None);
+    }
+
+    let parameters =
+        trigonometric_curve_probe_parameters(geometry.start_parameter, geometry.end_parameter);
+    let [parameter0, parameter1, parameter2] =
+        match select_trigonometric_curve_parameters(parameters) {
+            Some(selection) => selection,
+            None => return Ok(None),
+        };
+
+    let sample0 = context.edge_sample_at_parameter_occt(shape, parameter0)?;
+    let sample1 = context.edge_sample_at_parameter_occt(shape, parameter1)?;
+    let sample2 = context.edge_sample_at_parameter_occt(shape, parameter2)?;
+    let (center, x_component, y_component) = match solve_trigonometric_curve_components(
+        [parameter0, parameter1, parameter2],
+        [sample0.position, sample1.position, sample2.position],
+    ) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let radius_x = norm3(x_component);
+    let radius_y = norm3(y_component);
+    let radius = 0.5 * (radius_x + radius_y);
+    if radius.abs() <= 1.0e-12 || (radius_x - radius_y).abs() > 1.0e-7 {
+        return Ok(None);
+    }
+
+    let x_direction = normalize3(x_component);
+    let y_direction = normalize3(y_component);
+    let normal = normalize3(cross3(x_direction, y_direction));
+    if norm3(x_direction) <= 1.0e-12 || norm3(y_direction) <= 1.0e-12 || norm3(normal) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let payload = CirclePayload {
+        center,
+        normal,
+        x_direction,
+        y_direction,
+        radius,
+    };
+
+    for parameter in parameters {
+        let sample = context.edge_sample_at_parameter_occt(shape, parameter)?;
+        if !approx_points_eq(
+            sample_circle(payload, parameter).position,
+            sample.position,
+            1.0e-7,
+        ) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(payload))
+}
+
+fn ported_ellipse_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: EdgeGeometry,
+) -> Result<Option<EllipsePayload>, Error> {
+    if geometry.kind != CurveKind::Ellipse {
+        return Ok(None);
+    }
+
+    let parameters =
+        trigonometric_curve_probe_parameters(geometry.start_parameter, geometry.end_parameter);
+    let [parameter0, parameter1, parameter2] =
+        match select_trigonometric_curve_parameters(parameters) {
+            Some(selection) => selection,
+            None => return Ok(None),
+        };
+
+    let sample0 = context.edge_sample_at_parameter_occt(shape, parameter0)?;
+    let sample1 = context.edge_sample_at_parameter_occt(shape, parameter1)?;
+    let sample2 = context.edge_sample_at_parameter_occt(shape, parameter2)?;
+    let (center, x_component, y_component) = match solve_trigonometric_curve_components(
+        [parameter0, parameter1, parameter2],
+        [sample0.position, sample1.position, sample2.position],
+    ) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let major_radius = norm3(x_component);
+    let minor_radius = norm3(y_component);
+    if major_radius.abs() <= 1.0e-12 || minor_radius.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let x_direction = normalize3(x_component);
+    let y_direction = normalize3(y_component);
+    let normal = normalize3(cross3(x_direction, y_direction));
+    if norm3(x_direction) <= 1.0e-12 || norm3(y_direction) <= 1.0e-12 || norm3(normal) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let payload = EllipsePayload {
+        center,
+        normal,
+        x_direction,
+        y_direction,
+        major_radius,
+        minor_radius,
+    };
+
+    for parameter in parameters {
+        let sample = context.edge_sample_at_parameter_occt(shape, parameter)?;
+        if !approx_points_eq(
+            sample_ellipse(payload, parameter).position,
+            sample.position,
+            1.0e-7,
+        ) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(payload))
+}
+
 fn ported_plane_payload(
     context: &Context,
     shape: &Shape,
@@ -2177,6 +2327,76 @@ fn select_sphere_latitude_pair(start: f64, end: f64) -> Option<(f64, f64)> {
                 .total_cmp(&(rhs0.cos().abs() * (rhs1 - rhs0).sin().abs()))
         })
         .filter(|(v0, v1)| v0.cos().abs() * (v1 - v0).sin().abs() > 1.0e-6)
+}
+
+fn trigonometric_curve_probe_parameters(start: f64, end: f64) -> [f64; 5] {
+    [0.0, 0.25, 0.5, 0.75, 1.0].map(|fraction| start + (end - start) * fraction)
+}
+
+fn select_trigonometric_curve_parameters(candidates: [f64; 5]) -> Option<[f64; 3]> {
+    let mut best: Option<([f64; 3], f64)> = None;
+    for i in 0..candidates.len() {
+        for j in (i + 1)..candidates.len() {
+            for k in (j + 1)..candidates.len() {
+                let selection = [candidates[i], candidates[j], candidates[k]];
+                let determinant = trigonometric_curve_determinant(selection).abs();
+                if best
+                    .as_ref()
+                    .map(|(_, best_determinant)| determinant > *best_determinant)
+                    .unwrap_or(true)
+                {
+                    best = Some((selection, determinant));
+                }
+            }
+        }
+    }
+
+    best.filter(|(_, determinant)| *determinant > 1.0e-6)
+        .map(|(selection, _)| selection)
+}
+
+fn solve_trigonometric_curve_components(
+    parameters: [f64; 3],
+    positions: [[f64; 3]; 3],
+) -> Option<([f64; 3], [f64; 3], [f64; 3])> {
+    let determinant = trigonometric_curve_determinant(parameters);
+    if determinant.abs() <= 1.0e-12 {
+        return None;
+    }
+
+    let cosines = parameters.map(f64::cos);
+    let sines = parameters.map(f64::sin);
+    let delta10 = subtract3(positions[1], positions[0]);
+    let delta20 = subtract3(positions[2], positions[0]);
+    let x_component = scale3(
+        subtract3(
+            scale3(delta10, sines[2] - sines[0]),
+            scale3(delta20, sines[1] - sines[0]),
+        ),
+        1.0 / determinant,
+    );
+    let y_component = scale3(
+        add3(
+            scale3(delta10, cosines[0] - cosines[2]),
+            scale3(delta20, cosines[1] - cosines[0]),
+        ),
+        1.0 / determinant,
+    );
+    let center = subtract3(
+        positions[0],
+        add3(
+            scale3(x_component, cosines[0]),
+            scale3(y_component, sines[0]),
+        ),
+    );
+    Some((center, x_component, y_component))
+}
+
+fn trigonometric_curve_determinant(parameters: [f64; 3]) -> f64 {
+    let cosines = parameters.map(f64::cos);
+    let sines = parameters.map(f64::sin);
+    (cosines[1] - cosines[0]) * (sines[2] - sines[0])
+        - (cosines[2] - cosines[0]) * (sines[1] - sines[0])
 }
 
 fn line_parameter(payload: LinePayload, point: [f64; 3]) -> Option<f64> {

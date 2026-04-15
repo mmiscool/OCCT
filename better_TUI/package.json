@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./src/TerminalUI.js",
+  "main": "./src/index.js",
   "exports": {
-    ".": "./src/TerminalUI.js"
+    ".": "./src/index.js"
   },
   "scripts": {
     "demo": "node scripts/demo.js",
