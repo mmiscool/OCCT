@@ -19,7 +19,7 @@ use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
     polyhedral_mesh_volume, union_bbox,
 };
-use self::summary::{classify_root_kind, mesh_face_properties, ported_shape_summary};
+use self::summary::{classify_root_kind, mesh_face_properties, ported_shape_summary, shape_counts};
 use self::topology::{
     adjacent_face_indices, edge_points, face_adjacent_face_indices, face_loops,
     optional_vertex_position, ported_topology_snapshot, topology_edge,
@@ -109,25 +109,6 @@ pub struct BrepShape {
     pub wires: Vec<BrepWire>,
     pub edges: Vec<BrepEdge>,
     pub faces: Vec<BrepFace>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ExactPrimitiveSummary {
-    surface_area: f64,
-    volume: f64,
-    bbox: Option<([f64; 3], [f64; 3])>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ShapeCounts {
-    compound_count: usize,
-    compsolid_count: usize,
-    solid_count: usize,
-    shell_count: usize,
-    face_count: usize,
-    wire_count: usize,
-    edge_count: usize,
-    vertex_count: usize,
 }
 
 impl Context {
@@ -344,16 +325,7 @@ impl Context {
 
     pub fn ported_vertex_point(&self, shape: &Shape) -> Result<Option<[f64; 3]>, Error> {
         let topology = self.topology(shape)?;
-        let counts = ShapeCounts {
-            compound_count: self.subshape_count_occt(shape, ShapeKind::Compound)?,
-            compsolid_count: self.subshape_count_occt(shape, ShapeKind::CompSolid)?,
-            solid_count: self.subshape_count_occt(shape, ShapeKind::Solid)?,
-            shell_count: self.subshape_count_occt(shape, ShapeKind::Shell)?,
-            face_count: topology.faces.len(),
-            wire_count: topology.wires.len(),
-            edge_count: topology.edges.len(),
-            vertex_count: topology.vertex_positions.len(),
-        };
+        let counts = shape_counts(self, shape, &topology)?;
         if classify_root_kind(counts) != ShapeKind::Vertex {
             return Ok(None);
         }
@@ -369,16 +341,7 @@ impl Context {
 
     pub fn ported_edge_endpoints(&self, shape: &Shape) -> Result<Option<EdgeEndpoints>, Error> {
         let topology = self.topology(shape)?;
-        let counts = ShapeCounts {
-            compound_count: self.subshape_count_occt(shape, ShapeKind::Compound)?,
-            compsolid_count: self.subshape_count_occt(shape, ShapeKind::CompSolid)?,
-            solid_count: self.subshape_count_occt(shape, ShapeKind::Solid)?,
-            shell_count: self.subshape_count_occt(shape, ShapeKind::Shell)?,
-            face_count: topology.faces.len(),
-            wire_count: topology.wires.len(),
-            edge_count: topology.edges.len(),
-            vertex_count: topology.vertex_positions.len(),
-        };
+        let counts = shape_counts(self, shape, &topology)?;
         if classify_root_kind(counts) != ShapeKind::Edge {
             return Ok(None);
         }

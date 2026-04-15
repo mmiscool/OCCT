@@ -10,6 +10,25 @@ pub(super) struct MeshFaceProperties {
     pub(super) sample: FaceSample,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ExactPrimitiveSummary {
+    surface_area: f64,
+    volume: f64,
+    bbox: Option<([f64; 3], [f64; 3])>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ShapeCounts {
+    compound_count: usize,
+    compsolid_count: usize,
+    solid_count: usize,
+    shell_count: usize,
+    face_count: usize,
+    wire_count: usize,
+    edge_count: usize,
+    vertex_count: usize,
+}
+
 pub(super) fn ported_shape_summary(
     context: &Context,
     shape: &Shape,
@@ -514,7 +533,7 @@ fn ported_shape_bbox(
     topological_shape_bbox(vertices, edges, faces).or_else(|| mesh_shape_bbox(context, shape))
 }
 
-fn shape_counts(
+pub(super) fn shape_counts(
     context: &Context,
     shape: &Shape,
     topology: &TopologySnapshot,
