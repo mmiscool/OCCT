@@ -18,12 +18,6 @@ struct PreparedPlanarFace {
     geometry: FaceGeometry,
 }
 
-struct MatchedFaceWire {
-    root_wire_index: usize,
-    orientation: Orientation,
-    used_edges: Vec<usize>,
-}
-
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -151,18 +145,15 @@ impl PreparedFaceTopologyBuilder {
             ) else {
                 return Ok(None);
             };
-            let matched_face_wire = MatchedFaceWire {
-                root_wire_index,
-                orientation: context.shape_orientation(face_wire_shape)?,
-                used_edges: face_wire_topology.edge_indices,
-            };
+            let orientation = context.shape_orientation(face_wire_shape)?;
+            let used_edges = face_wire_topology.edge_indices;
 
             let wire_area = if let Some(planar_face) = planar_face {
                 let Some(wire_area) = planar_wire_area_magnitude(
                     context,
                     planar_face.plane,
                     planar_face.geometry,
-                    &root_wires[matched_face_wire.root_wire_index],
+                    &root_wires[root_wire_index],
                     edge_shapes,
                     root_edges,
                 )?
@@ -173,18 +164,10 @@ impl PreparedFaceTopologyBuilder {
             } else {
                 None
             };
-            builder
-                .used_root_wire_indices
-                .insert(matched_face_wire.root_wire_index);
-            builder
-                .used_edges
-                .extend(matched_face_wire.used_edges.iter().copied());
-            builder
-                .face_wire_indices
-                .push(matched_face_wire.root_wire_index);
-            builder
-                .face_wire_orientations
-                .push(matched_face_wire.orientation);
+            builder.used_root_wire_indices.insert(root_wire_index);
+            builder.used_edges.extend(used_edges);
+            builder.face_wire_indices.push(root_wire_index);
+            builder.face_wire_orientations.push(orientation);
             if let Some(wire_area) = wire_area {
                 builder.face_wire_areas.push(wire_area);
             }
