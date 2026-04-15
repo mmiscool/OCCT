@@ -19,10 +19,10 @@ use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
     polyhedral_mesh_volume, union_bbox,
 };
-use self::summary::{classify_root_kind, mesh_face_properties, ported_shape_summary, shape_counts};
+use self::summary::{mesh_face_properties, ported_shape_summary};
 use self::topology::{
     adjacent_face_indices, edge_points, face_adjacent_face_indices, face_loops,
-    optional_vertex_position, ported_topology_snapshot, topology_edge,
+    ported_edge_endpoints, ported_topology_snapshot, ported_vertex_point, topology_edge,
 };
 
 use crate::ported_geometry::{
@@ -324,40 +324,10 @@ impl Context {
     }
 
     pub fn ported_vertex_point(&self, shape: &Shape) -> Result<Option<[f64; 3]>, Error> {
-        let topology = self.topology(shape)?;
-        let counts = shape_counts(self, shape, &topology)?;
-        if classify_root_kind(counts) != ShapeKind::Vertex {
-            return Ok(None);
-        }
-
-        let [point] = topology.vertex_positions.as_slice() else {
-            return Err(Error::new(format!(
-                "expected exactly one vertex in vertex topology, found {}",
-                topology.vertex_positions.len()
-            )));
-        };
-        Ok(Some(*point))
+        ported_vertex_point(self, shape)
     }
 
     pub fn ported_edge_endpoints(&self, shape: &Shape) -> Result<Option<EdgeEndpoints>, Error> {
-        let topology = self.topology(shape)?;
-        let counts = shape_counts(self, shape, &topology)?;
-        if classify_root_kind(counts) != ShapeKind::Edge {
-            return Ok(None);
-        }
-
-        let [edge] = topology.edges.as_slice() else {
-            return Err(Error::new(format!(
-                "expected exactly one edge in edge topology, found {}",
-                topology.edges.len()
-            )));
-        };
-        let (Some(start), Some(end)) = (
-            optional_vertex_position(&topology, edge.start_vertex),
-            optional_vertex_position(&topology, edge.end_vertex),
-        ) else {
-            return Err(Error::new("Edge did not contain two endpoint vertices."));
-        };
-        Ok(Some(EdgeEndpoints { start, end }))
+        ported_edge_endpoints(self, shape)
     }
 }
