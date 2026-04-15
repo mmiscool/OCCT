@@ -6,13 +6,12 @@ use super::*;
 
 pub(super) fn ported_brep_faces(
     context: &Context,
-    shape: &Shape,
+    face_shapes: &[Shape],
     topology: &TopologySnapshot,
     wires: &[BrepWire],
     edges: &[BrepEdge],
     edge_shapes: &[Shape],
-) -> Result<(Vec<Shape>, Vec<BrepFace>), Error> {
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+) -> Result<Vec<BrepFace>, Error> {
     let faces = face_shapes
         .iter()
         .enumerate()
@@ -29,7 +28,7 @@ pub(super) fn ported_brep_faces(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    Ok((face_shapes, faces))
+    Ok(faces)
 }
 
 fn ported_brep_face(

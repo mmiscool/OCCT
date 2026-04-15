@@ -130,9 +130,10 @@ impl Context {
         };
         let vertices = ported_brep_vertices(&topology);
         let wires = ported_brep_wires(&topology);
-        let (edge_shapes, edges) = ported_brep_edges(self, shape, &topology)?;
-        let (face_shapes, faces) =
-            ported_brep_faces(self, shape, &topology, &wires, &edges, &edge_shapes)?;
+        let edge_shapes = self.subshapes_occt(shape, ShapeKind::Edge)?;
+        let edges = ported_brep_edges(self, &edge_shapes, &topology)?;
+        let face_shapes = self.subshapes_occt(shape, ShapeKind::Face)?;
+        let faces = ported_brep_faces(self, &face_shapes, &topology, &wires, &edges, &edge_shapes)?;
 
         let summary = ported_shape_summary(
             self,

@@ -37,10 +37,9 @@ pub(super) fn ported_brep_wires(topology: &TopologySnapshot) -> Vec<BrepWire> {
 
 pub(super) fn ported_brep_edges(
     context: &Context,
-    shape: &Shape,
+    edge_shapes: &[Shape],
     topology: &TopologySnapshot,
-) -> Result<(Vec<Shape>, Vec<BrepEdge>), Error> {
-    let edge_shapes = context.subshapes_occt(shape, ShapeKind::Edge)?;
+) -> Result<Vec<BrepEdge>, Error> {
     let edges = edge_shapes
         .iter()
         .enumerate()
@@ -79,5 +78,5 @@ pub(super) fn ported_brep_edges(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    Ok((edge_shapes, edges))
+    Ok(edges)
 }
