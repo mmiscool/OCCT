@@ -166,15 +166,22 @@ impl PreparedFaceTopologyBuilder {
         let mut builder = Self::new(face_wire_shapes.len());
 
         for face_wire_shape in face_wire_shapes {
-            let Some(matched_face_wire) = builder.match_face_wire(
-                context,
-                face_wire_shape,
-                root_wires,
-                root_edges,
-                vertex_positions,
-            )?
+            let Some(face_wire_topology) =
+                root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
             else {
                 return Ok(None);
+            };
+            let Some(root_wire_index) = match_root_wire_index(
+                root_wires,
+                &face_wire_topology,
+                &builder.used_root_wire_indices,
+            ) else {
+                return Ok(None);
+            };
+            let matched_face_wire = MatchedFaceWire {
+                root_wire_index,
+                orientation: context.shape_orientation(face_wire_shape)?,
+                used_edges: face_wire_topology.edge_indices,
             };
 
             let wire_area = if let Some(planar_face) = planar_face {
@@ -214,34 +221,6 @@ impl PreparedFaceTopologyBuilder {
             face_wire_areas: Vec::new(),
             used_edges: BTreeSet::new(),
         }
-    }
-
-    fn match_face_wire(
-        &self,
-        context: &Context,
-        face_wire_shape: &Shape,
-        root_wires: &[RootWireTopology],
-        root_edges: &[RootEdgeTopology],
-        vertex_positions: &[[f64; 3]],
-    ) -> Result<Option<MatchedFaceWire>, Error> {
-        let Some(face_wire_topology) =
-            root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
-        else {
-            return Ok(None);
-        };
-        let Some(root_wire_index) = match_root_wire_index(
-            root_wires,
-            &face_wire_topology,
-            &self.used_root_wire_indices,
-        ) else {
-            return Ok(None);
-        };
-
-        Ok(Some(MatchedFaceWire {
-            root_wire_index,
-            orientation: context.shape_orientation(face_wire_shape)?,
-            used_edges: face_wire_topology.edge_indices,
-        }))
     }
 
     fn finish(self) -> Option<PreparedFaceTopology> {
