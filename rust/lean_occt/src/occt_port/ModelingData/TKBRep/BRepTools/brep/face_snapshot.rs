@@ -148,20 +148,19 @@ fn append_ported_face_topology(
         return Ok(None);
     };
 
-    face_wire_indices.extend(matched_face_wires.face_wire_indices);
-    face_wire_orientations.extend(matched_face_wires.face_wire_orientations);
-    faces.push(crate::TopologyRange {
-        offset: face_wire_offset,
-        count: face_wire_count,
-    });
-    face_wire_roles.extend(wire_roles);
-
-    for edge_index in matched_face_wires.used_edges {
-        let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
-            return Ok(None);
-        };
-        edge_faces.push(face_index);
-    }
+    let Some(()) = append_face_topology_outputs(
+        face_index,
+        face_wire_offset,
+        matched_face_wires,
+        wire_roles,
+        edge_face_lists,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    ) else {
+        return Ok(None);
+    };
 
     Ok(Some(()))
 }
@@ -254,6 +253,34 @@ fn flatten_edge_face_lists(
     }
 
     (edge_faces, edge_face_indices)
+}
+
+fn append_face_topology_outputs(
+    face_index: usize,
+    face_wire_offset: usize,
+    matched_face_wires: MatchedFaceWires,
+    wire_roles: Vec<LoopRole>,
+    edge_face_lists: &mut [Vec<usize>],
+    faces: &mut Vec<crate::TopologyRange>,
+    face_wire_indices: &mut Vec<usize>,
+    face_wire_orientations: &mut Vec<Orientation>,
+    face_wire_roles: &mut Vec<LoopRole>,
+) -> Option<()> {
+    let face_wire_count = matched_face_wires.face_wire_indices.len();
+    face_wire_indices.extend(matched_face_wires.face_wire_indices);
+    face_wire_orientations.extend(matched_face_wires.face_wire_orientations);
+    faces.push(crate::TopologyRange {
+        offset: face_wire_offset,
+        count: face_wire_count,
+    });
+    face_wire_roles.extend(wire_roles);
+
+    for edge_index in matched_face_wires.used_edges {
+        let edge_faces = edge_face_lists.get_mut(edge_index)?;
+        edge_faces.push(face_index);
+    }
+
+    Some(())
 }
 
 fn collect_face_wire_matches(
