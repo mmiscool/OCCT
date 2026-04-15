@@ -2,22 +2,14 @@ use super::root_topology::{
     oriented_edge_geometry, root_wire_topology, RootEdgeTopology, RootWireTopology,
 };
 use super::swept_face::append_root_edge_sample_points;
+use super::topology::TopologySnapshotFaceFields;
 use super::*;
 
-pub(super) struct PortedFaceTopology {
-    pub(super) edge_indices: BTreeSet<usize>,
-    pub(super) face_wire_indices: Vec<usize>,
-    pub(super) face_wire_orientations: Vec<Orientation>,
-    pub(super) face_wire_roles: Vec<LoopRole>,
-}
-
-pub(super) struct PackedFaceTopologySnapshot {
-    pub(super) edge_faces: Vec<crate::TopologyRange>,
-    pub(super) edge_face_indices: Vec<usize>,
-    pub(super) faces: Vec<crate::TopologyRange>,
-    pub(super) face_wire_indices: Vec<usize>,
-    pub(super) face_wire_orientations: Vec<Orientation>,
-    pub(super) face_wire_roles: Vec<LoopRole>,
+struct PortedFaceTopology {
+    edge_indices: BTreeSet<usize>,
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
+    face_wire_roles: Vec<LoopRole>,
 }
 
 fn load_ported_face_snapshot_shapes(
@@ -47,7 +39,7 @@ fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Re
     Ok(true)
 }
 
-pub(super) fn ported_face_topology(
+fn ported_face_topology(
     context: &Context,
     face_shape: &Shape,
     root_wires: &[RootWireTopology],
@@ -145,7 +137,7 @@ pub(super) fn ported_face_topology(
     }))
 }
 
-pub(super) fn pack_ported_face_snapshot(
+fn pack_ported_face_snapshot(
     context: &Context,
     face_shapes: &[Shape],
     root_wires: &[RootWireTopology],
@@ -153,7 +145,7 @@ pub(super) fn pack_ported_face_snapshot(
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
-) -> Result<Option<PackedFaceTopologySnapshot>, Error> {
+) -> Result<Option<TopologySnapshotFaceFields>, Error> {
     let mut edge_face_lists = vec![Vec::new(); edge_count];
     let mut faces = Vec::with_capacity(face_shapes.len());
     let mut face_wire_indices = Vec::new();
@@ -199,7 +191,7 @@ pub(super) fn pack_ported_face_snapshot(
         edge_face_indices.extend(face_indices);
     }
 
-    Ok(Some(PackedFaceTopologySnapshot {
+    Ok(Some(TopologySnapshotFaceFields {
         edge_faces,
         edge_face_indices,
         faces,
@@ -217,7 +209,7 @@ pub(super) fn load_ported_face_snapshot(
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
-) -> Result<Option<PackedFaceTopologySnapshot>, Error> {
+) -> Result<Option<TopologySnapshotFaceFields>, Error> {
     let Some(face_shapes) = load_ported_face_snapshot_shapes(context, shape)? else {
         return Ok(None);
     };

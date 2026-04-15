@@ -1,6 +1,15 @@
-use super::face_snapshot::{load_ported_face_snapshot, PackedFaceTopologySnapshot};
+use super::face_snapshot::load_ported_face_snapshot;
 use super::root_topology::{load_root_topology_snapshot, RootTopologySnapshot};
 use super::*;
+
+pub(super) struct TopologySnapshotFaceFields {
+    pub(super) edge_faces: Vec<crate::TopologyRange>,
+    pub(super) edge_face_indices: Vec<usize>,
+    pub(super) faces: Vec<crate::TopologyRange>,
+    pub(super) face_wire_indices: Vec<usize>,
+    pub(super) face_wire_orientations: Vec<Orientation>,
+    pub(super) face_wire_roles: Vec<LoopRole>,
+}
 
 pub(super) fn ported_topology_snapshot(
     context: &Context,
@@ -30,7 +39,7 @@ pub(super) fn ported_topology_snapshot(
 
 fn build_ported_topology_snapshot(
     root_topology: RootTopologySnapshot,
-    face_topology: PackedFaceTopologySnapshot,
+    face_topology: TopologySnapshotFaceFields,
 ) -> TopologySnapshot {
     TopologySnapshot {
         vertex_positions: root_topology.vertex_positions,
