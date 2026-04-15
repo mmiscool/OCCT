@@ -193,18 +193,6 @@ impl PreparedFaceTopologyBuilder {
         }
     }
 
-    fn apply_face_wire(&mut self, matched_face_wire: &MatchedFaceWire, wire_area: Option<f64>) {
-        matched_face_wire.append_to(
-            &mut self.used_root_wire_indices,
-            &mut self.face_wire_indices,
-            &mut self.face_wire_orientations,
-            &mut self.used_edges,
-        );
-        if let Some(wire_area) = wire_area {
-            self.face_wire_areas.push(wire_area);
-        }
-    }
-
     fn collect_face_wire(
         &mut self,
         context: &Context,
@@ -240,7 +228,15 @@ impl PreparedFaceTopologyBuilder {
         } else {
             None
         };
-        self.apply_face_wire(&matched_face_wire, wire_area);
+        matched_face_wire.append_to(
+            &mut self.used_root_wire_indices,
+            &mut self.face_wire_indices,
+            &mut self.face_wire_orientations,
+            &mut self.used_edges,
+        );
+        if let Some(wire_area) = wire_area {
+            self.face_wire_areas.push(wire_area);
+        }
 
         Ok(Some(()))
     }
