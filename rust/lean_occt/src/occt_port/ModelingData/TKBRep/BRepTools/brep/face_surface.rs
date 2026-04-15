@@ -15,6 +15,11 @@ struct SingleFaceTopology {
     edge_shapes: Vec<Shape>,
 }
 
+struct PreparedPublicFaceSurface {
+    geometry: FaceGeometry,
+    ported_face_surface: Option<PortedFaceSurface>,
+}
+
 type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
 
 pub(crate) fn ported_face_surface_descriptor(
@@ -22,14 +27,7 @@ pub(crate) fn ported_face_surface_descriptor(
     face_shape: &Shape,
     face_geometry: FaceGeometry,
 ) -> Result<Option<PortedFaceSurface>, Error> {
-    let ported_surface =
-        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    ported_face_surface_descriptor_from_surface_public(
-        context,
-        face_shape,
-        face_geometry,
-        ported_surface,
-    )
+    Ok(prepare_public_face_surface(context, face_shape, face_geometry)?.ported_face_surface)
 }
 
 pub(super) fn ported_brep_faces(
@@ -283,16 +281,11 @@ fn ported_swept_face_surface_from_topology(
     }
 }
 
-pub(crate) fn ported_face_area(
+fn prepare_public_face_surface(
     context: &Context,
     face_shape: &Shape,
-) -> Result<Option<f64>, Error> {
-    let face_geometry = context.face_geometry(face_shape)?;
-    let topology = match single_face_topology_public(context, face_shape)? {
-        Some(topology) => topology,
-        None => return Ok(None),
-    };
-
+    face_geometry: FaceGeometry,
+) -> Result<PreparedPublicFaceSurface, Error> {
     let ported_surface =
         PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
     let ported_face_surface = ported_face_surface_descriptor_from_surface_public(
@@ -301,6 +294,25 @@ pub(crate) fn ported_face_area(
         face_geometry,
         ported_surface,
     )?;
+    Ok(PreparedPublicFaceSurface {
+        geometry: face_geometry,
+        ported_face_surface,
+    })
+}
+
+pub(crate) fn ported_face_area(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<f64>, Error> {
+    let topology = match single_face_topology_public(context, face_shape)? {
+        Some(topology) => topology,
+        None => return Ok(None),
+    };
+
+    let prepared =
+        prepare_public_face_surface(context, face_shape, context.face_geometry(face_shape)?)?;
+    let face_geometry = prepared.geometry;
+    let ported_face_surface = prepared.ported_face_surface;
 
     Ok(match ported_face_surface {
         Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
