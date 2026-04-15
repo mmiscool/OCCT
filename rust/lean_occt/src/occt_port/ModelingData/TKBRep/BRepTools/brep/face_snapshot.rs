@@ -133,6 +133,38 @@ struct PreparedFaceTopologyBuilder {
 }
 
 impl PreparedFaceTopologyBuilder {
+    fn build(
+        context: &Context,
+        prepared_face_shape: &PreparedFaceShape,
+        root_wires: &[RootWireTopology],
+        root_edges: &[RootEdgeTopology],
+        edge_shapes: &[Shape],
+        vertex_positions: &[[f64; 3]],
+    ) -> Result<Option<PreparedFaceTopology>, Error> {
+        if root_wires.is_empty() || prepared_face_shape.face_wire_shapes.is_empty() {
+            return Ok(None);
+        }
+
+        let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
+        let planar_face = prepared_face_shape.planar_face(context)?;
+        let mut builder = Self::new(face_wire_shapes.len());
+
+        let Some(()) = builder.collect_face_wires(
+            context,
+            face_wire_shapes,
+            planar_face,
+            root_wires,
+            root_edges,
+            edge_shapes,
+            vertex_positions,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        Ok(builder.finish())
+    }
+
     fn new(face_wire_count: usize) -> Self {
         Self {
             used_root_wire_indices: BTreeSet::new(),
@@ -283,28 +315,14 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<Self>, Error> {
-        if root_wires.is_empty() || prepared_face_shape.face_wire_shapes.is_empty() {
-            return Ok(None);
-        }
-
-        let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
-        let planar_face = prepared_face_shape.planar_face(context)?;
-        let mut builder = PreparedFaceTopologyBuilder::new(face_wire_shapes.len());
-
-        let Some(()) = builder.collect_face_wires(
+        PreparedFaceTopologyBuilder::build(
             context,
-            face_wire_shapes,
-            planar_face,
+            prepared_face_shape,
             root_wires,
             root_edges,
             edge_shapes,
             vertex_positions,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        Ok(builder.finish())
+        )
     }
 
     fn classify_wire_roles(
