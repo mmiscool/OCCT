@@ -1,14 +1,14 @@
 # Next Task
 
-Move `PreparedFaceTopology::match_face_wire()` under the builder-owned face-wire collection path in `face_snapshot.rs`.
+Move `PreparedFaceTopology::classify_wire_roles()` under the builder-owned finalization path in `face_snapshot.rs`.
 
 ## Focus
 
-- Reevaluate whether the builder should own the face-wire topology match directly or whether that logic should move onto `MatchedFaceWire` as a constructor-style helper.
+- Reevaluate whether the role classification helper should become a builder-owned method or a `PreparedFaceTopology` constructor-style helper.
 - Keep `PreparedFaceTopology` as the final assembled result and preserve the direct snapshot accumulator handoff.
-- Preserve the shared planar-face validation rule, per-wire root-wire matching behavior, planar wire area computation, wire-role classification, face range offsets, edge-face ordering, and packed snapshot output unchanged.
+- Preserve the shared planar-face validation rule, per-wire root-wire matching behavior, planar wire area computation, face range offsets, edge-face ordering, and packed snapshot output unchanged.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the cleanup.
 
 ## Why This Is Next
 
-With builder setup, per-wire collection, and finalization folded into one entry point, the remaining non-builder helper in this path is `match_face_wire()`. Moving that logic under the builder-owned face-wire collection path is the next bounded cleanup toward a single-owner implementation.
+With builder setup, per-wire collection, and root-wire matching now folded into one owner, the remaining non-builder helper on this path is `classify_wire_roles()`, which is only used during builder finalization. Moving that role-selection logic under the finalization path is the next bounded cleanup toward a single-owner implementation.
