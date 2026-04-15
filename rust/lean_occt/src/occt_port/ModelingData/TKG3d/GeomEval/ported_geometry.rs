@@ -320,10 +320,12 @@ impl PortedSurface {
         geometry: FaceGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            SurfaceKind::Plane => Ok(Some(Self::Plane(
-                ported_plane_payload(context, shape, geometry)?
-                    .unwrap_or(context.face_plane_payload_occt(shape)?),
-            ))),
+            SurfaceKind::Plane => {
+                if let Some(payload) = ported_plane_payload(context, shape, geometry)? {
+                    return Ok(Some(Self::Plane(payload)));
+                }
+                Ok(context.face_plane_payload_occt(shape).ok().map(Self::Plane))
+            }
             SurfaceKind::Cylinder => Ok(Some(Self::Cylinder(
                 ported_cylinder_payload(context, shape, geometry)?
                     .unwrap_or(context.face_cylinder_payload_occt(shape)?),

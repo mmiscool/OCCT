@@ -13,7 +13,7 @@ pub(super) struct TopologySnapshotFaceFields {
 }
 
 pub(super) struct PreparedFaceShape {
-    pub(super) face_shape: Shape,
+    pub(super) face_index: usize,
     pub(super) face_wire_shapes: Vec<PreparedRootWireShape>,
 }
 
@@ -36,6 +36,7 @@ impl PreparedFaceTopologyBuilder {
     fn build(
         context: &Context,
         prepared_face_shape: &PreparedFaceShape,
+        face_shapes: &[Shape],
         root_wires: &[RootWireTopology],
         root_edges: &[RootEdgeTopology],
         edge_shapes: &[Shape],
@@ -46,16 +47,30 @@ impl PreparedFaceTopologyBuilder {
         }
 
         let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
+        let face_shape = face_shapes
+            .get(prepared_face_shape.face_index)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "prepared face index {} was outside the root face inventory",
+                    prepared_face_shape.face_index
+                ))
+            })?;
         let planar_face = if face_wire_shapes.len() <= 1 {
             None
         } else {
-            let face_geometry = match context.face_geometry(&prepared_face_shape.face_shape) {
+            let face_geometry = match context.face_geometry(face_shape) {
                 Ok(geometry) => geometry,
-                Err(_) => context.face_geometry_occt(&prepared_face_shape.face_shape)?,
+                Err(_) => context.face_geometry_occt(face_shape)?,
             };
-            let plane = match context.face_plane_payload(&prepared_face_shape.face_shape) {
+            if face_geometry.kind != crate::SurfaceKind::Plane {
+                return Ok(None);
+            }
+            let plane = match context.face_plane_payload(face_shape) {
                 Ok(payload) => payload,
-                Err(_) => context.face_plane_payload_occt(&prepared_face_shape.face_shape)?,
+                Err(_) => match context.face_plane_payload_occt(face_shape) {
+                    Ok(payload) => payload,
+                    Err(_) => return Ok(None),
+                },
             };
             Some((plane, face_geometry))
         };
@@ -209,6 +224,7 @@ struct FaceSnapshotAccumulator {
 fn pack_ported_face_snapshot(
     context: &Context,
     prepared_face_shapes: &[PreparedFaceShape],
+    face_shapes: &[Shape],
     root_wires: &[RootWireTopology],
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
@@ -227,6 +243,7 @@ fn pack_ported_face_snapshot(
         let Some(prepared_face_topology) = PreparedFaceTopologyBuilder::build(
             context,
             prepared_face_shape,
+            face_shapes,
             root_wires,
             root_edges,
             edge_shapes,
@@ -293,6 +310,7 @@ fn pack_ported_face_snapshot(
 pub(super) fn load_ported_face_snapshot(
     context: &Context,
     prepared_face_shapes: &[PreparedFaceShape],
+    face_shapes: &[Shape],
     root_wires: &[RootWireTopology],
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
@@ -301,11 +319,24 @@ pub(super) fn load_ported_face_snapshot(
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
     for prepared_face_shape in prepared_face_shapes {
         if prepared_face_shape.face_wire_shapes.len() > 1 {
-            let geometry = match context.face_geometry(&prepared_face_shape.face_shape) {
+            let face_shape = face_shapes
+                .get(prepared_face_shape.face_index)
+                .ok_or_else(|| {
+                    Error::new(format!(
+                        "prepared face index {} was outside the root face inventory",
+                        prepared_face_shape.face_index
+                    ))
+                })?;
+            let geometry = match context.face_geometry(face_shape) {
                 Ok(geometry) => geometry,
-                Err(_) => context.face_geometry_occt(&prepared_face_shape.face_shape)?,
+                Err(_) => context.face_geometry_occt(face_shape)?,
             };
             if geometry.kind != crate::SurfaceKind::Plane {
+                return Ok(None);
+            }
+            if context.face_plane_payload(face_shape).is_err()
+                && context.face_plane_payload_occt(face_shape).is_err()
+            {
                 return Ok(None);
             }
         }
@@ -314,6 +345,7 @@ pub(super) fn load_ported_face_snapshot(
     pack_ported_face_snapshot(
         context,
         prepared_face_shapes,
+        face_shapes,
         root_wires,
         root_edges,
         edge_shapes,

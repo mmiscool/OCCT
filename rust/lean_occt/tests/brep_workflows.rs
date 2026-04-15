@@ -121,6 +121,175 @@ fn assert_edge_geometry_close(
     Ok(())
 }
 
+fn assert_face_geometry_close(
+    lhs: lean_occt::FaceGeometry,
+    rhs: lean_occt::FaceGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind
+        || lhs.is_u_closed != rhs.is_u_closed
+        || lhs.is_v_closed != rhs.is_v_closed
+        || lhs.is_u_periodic != rhs.is_u_periodic
+        || lhs.is_v_periodic != rhs.is_v_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    for (field, lhs, rhs) in [
+        ("u_min", lhs.u_min, rhs.u_min),
+        ("u_max", lhs.u_max, rhs.u_max),
+        ("v_min", lhs.v_min, rhs.v_min),
+        ("v_max", lhs.v_max, rhs.v_max),
+        ("u_period", lhs.u_period, rhs.u_period),
+        ("v_period", lhs.v_period, rhs.v_period),
+    ] {
+        if (lhs - rhs).abs() > tolerance {
+            return Err(std::io::Error::other(format!(
+                "{label} {field} mismatch: lhs={lhs} rhs={rhs} tol={tolerance}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_same_variant<T: std::fmt::Debug>(
+    lhs: &T,
+    rhs: &T,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if std::mem::discriminant(lhs) != std::mem::discriminant(rhs) {
+        return Err(std::io::Error::other(format!(
+            "{label} variant mismatch: lhs={lhs:?} rhs={rhs:?}"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn assert_ported_face_surface_matches_public(
+    label: &str,
+    actual: Option<PortedFaceSurface>,
+    expected: Option<PortedFaceSurface>,
+    actual_geometry: lean_occt::FaceGeometry,
+    expected_geometry: lean_occt::FaceGeometry,
+    orientation: lean_occt::Orientation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (actual, expected) {
+        (None, None) => Ok(()),
+        (Some(actual), Some(expected)) => {
+            assert_same_variant(&actual, &expected, label)?;
+            match (actual, expected) {
+                (
+                    PortedFaceSurface::Analytic(actual_surface),
+                    PortedFaceSurface::Analytic(expected_surface),
+                ) => {
+                    assert_same_variant(&actual_surface, &expected_surface, label)?;
+                }
+                (
+                    PortedFaceSurface::Swept(PortedSweptSurface::Extrusion {
+                        payload: actual_payload,
+                        basis_curve: actual_curve,
+                        basis_geometry: actual_basis_geometry,
+                    }),
+                    PortedFaceSurface::Swept(PortedSweptSurface::Extrusion {
+                        payload: expected_payload,
+                        basis_curve: expected_curve,
+                        basis_geometry: expected_basis_geometry,
+                    }),
+                ) => {
+                    if actual_payload.basis_curve_kind != expected_payload.basis_curve_kind {
+                        return Err(std::io::Error::other(format!(
+                            "{label} extrusion basis kind mismatch: actual={:?} expected={:?}",
+                            actual_payload.basis_curve_kind, expected_payload.basis_curve_kind
+                        ))
+                        .into());
+                    }
+                    assert_same_variant(&actual_curve, &expected_curve, label)?;
+                    assert_edge_geometry_close(
+                        actual_basis_geometry,
+                        expected_basis_geometry,
+                        1.0e-9,
+                        label,
+                    )?;
+                }
+                (
+                    PortedFaceSurface::Swept(PortedSweptSurface::Revolution {
+                        payload: actual_payload,
+                        basis_curve: actual_curve,
+                        basis_geometry: actual_basis_geometry,
+                    }),
+                    PortedFaceSurface::Swept(PortedSweptSurface::Revolution {
+                        payload: expected_payload,
+                        basis_curve: expected_curve,
+                        basis_geometry: expected_basis_geometry,
+                    }),
+                ) => {
+                    if actual_payload.basis_curve_kind != expected_payload.basis_curve_kind {
+                        return Err(std::io::Error::other(format!(
+                            "{label} revolution basis kind mismatch: actual={:?} expected={:?}",
+                            actual_payload.basis_curve_kind, expected_payload.basis_curve_kind
+                        ))
+                        .into());
+                    }
+                    assert_same_variant(&actual_curve, &expected_curve, label)?;
+                    assert_edge_geometry_close(
+                        actual_basis_geometry,
+                        expected_basis_geometry,
+                        1.0e-9,
+                        label,
+                    )?;
+                }
+                (
+                    PortedFaceSurface::Offset(actual_surface),
+                    PortedFaceSurface::Offset(expected_surface),
+                ) => {
+                    assert_face_geometry_close(
+                        actual_surface.basis_geometry,
+                        expected_surface.basis_geometry,
+                        1.0e-9,
+                        label,
+                    )?;
+                    assert_same_variant(&actual_surface.basis, &expected_surface.basis, label)?;
+                }
+                _ => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} descriptor mismatch: actual={actual:?} expected={expected:?}"
+                    ))
+                    .into());
+                }
+            }
+
+            let uv_t = [0.37, 0.61];
+            let actual_sample =
+                actual.sample_normalized_with_orientation(actual_geometry, uv_t, orientation);
+            let expected_sample =
+                expected.sample_normalized_with_orientation(expected_geometry, uv_t, orientation);
+            assert_vec3_close(
+                actual_sample.position,
+                expected_sample.position,
+                1.0e-8,
+                &format!("{label} sample position"),
+            )?;
+            assert_vec3_close(
+                actual_sample.normal,
+                expected_sample.normal,
+                1.0e-8,
+                &format!("{label} sample normal"),
+            )?;
+            Ok(())
+        }
+        (actual, expected) => Err(std::io::Error::other(format!(
+            "{label} descriptor presence mismatch: actual={actual:?} expected={expected:?}"
+        ))
+        .into()),
+    }
+}
+
 fn assert_topology_matches(
     label: &str,
     rust: &lean_occt::TopologySnapshot,
@@ -361,6 +530,71 @@ fn assert_brep_edge_geometries_match_public(
             1.0e-9,
             &format!("{label} edge {index} geometry"),
         )?;
+    }
+
+    Ok(())
+}
+
+fn assert_brep_faces_match_public(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    brep: &lean_occt::BrepShape,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let face_shapes = kernel.context().subshapes(shape, ShapeKind::Face)?;
+    if face_shapes.len() != brep.faces.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} face inventory mismatch: public={} brep={}",
+            face_shapes.len(),
+            brep.faces.len()
+        ))
+        .into());
+    }
+
+    for (index, face_shape) in face_shapes.iter().enumerate() {
+        let expected_geometry = kernel.context().face_geometry(face_shape)?;
+        let expected_descriptor = kernel
+            .context()
+            .ported_face_surface_descriptor(face_shape)?;
+        let expected_area = kernel.context().ported_face_area(face_shape)?;
+        let expected_orientation = kernel.context().shape_orientation(face_shape)?;
+        let actual_face = brep
+            .faces
+            .get(index)
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep face {index}")))?;
+
+        if actual_face.orientation != expected_orientation {
+            return Err(std::io::Error::other(format!(
+                "{label} face {index} orientation mismatch: actual={:?} expected={:?}",
+                actual_face.orientation, expected_orientation
+            ))
+            .into());
+        }
+
+        assert_face_geometry_close(
+            actual_face.geometry,
+            expected_geometry,
+            1.0e-9,
+            &format!("{label} face {index} geometry"),
+        )?;
+        assert_ported_face_surface_matches_public(
+            &format!("{label} face {index} descriptor"),
+            actual_face.ported_face_surface,
+            expected_descriptor,
+            actual_face.geometry,
+            expected_geometry,
+            expected_orientation,
+        )?;
+
+        if let Some(expected_area) = expected_area {
+            if (actual_face.area - expected_area).abs() > 1.0e-8 {
+                return Err(std::io::Error::other(format!(
+                    "{label} face {index} area mismatch: brep={} public={expected_area}",
+                    actual_face.area
+                ))
+                .into());
+            }
+        }
     }
 
     Ok(())
@@ -890,6 +1124,7 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
+        assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
     }
 
@@ -958,6 +1193,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
+        assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
         assert_eq!(rust_topology.faces.len(), 1);
         assert_eq!(
@@ -1032,6 +1268,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
+        assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
         assert_eq!(rust_topology.faces.len(), expected_face_count);
         assert!(rust_topology

@@ -21,6 +21,7 @@ mod wire_topology;
 use self::brep_materialize::{ported_brep_edges, ported_brep_vertices, ported_brep_wires};
 pub(crate) use self::face_queries::{ported_face_area, ported_face_surface_descriptor};
 use self::face_surface::ported_brep_faces;
+use self::face_topology::FaceSurfaceRoute;
 use self::math::{add3, approx_eq, cross3, dot3, norm3, normalize3, scale3, subtract3};
 use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
@@ -30,7 +31,7 @@ use self::shape_queries::{
     ported_edge_endpoints, ported_subshape, ported_subshapes, ported_vertex_point,
 };
 use self::summary::ported_shape_summary;
-use self::topology::ported_topology_snapshot;
+use self::topology::{load_ported_topology, ported_topology_snapshot};
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
@@ -124,16 +125,48 @@ impl Context {
     }
 
     pub fn ported_brep(&self, shape: &Shape) -> Result<BrepShape, Error> {
-        let topology = match self.ported_topology(shape)? {
-            Some(topology) => topology,
-            None => self.topology_occt(shape)?,
-        };
+        let (topology, edge_shapes, face_shapes, face_route) =
+            match load_ported_topology(self, shape)? {
+                Some(loaded) => (
+                    loaded.topology,
+                    loaded.edge_shapes,
+                    loaded.face_shapes,
+                    FaceSurfaceRoute::Public,
+                ),
+                None => (
+                    self.topology_occt(shape)?,
+                    self.subshapes_occt(shape, ShapeKind::Edge)?,
+                    self.subshapes_occt(shape, ShapeKind::Face)?,
+                    FaceSurfaceRoute::Raw,
+                ),
+            };
         let vertices = ported_brep_vertices(&topology);
         let wires = ported_brep_wires(&topology);
-        let edge_shapes = self.subshapes_occt(shape, ShapeKind::Edge)?;
         let edges = ported_brep_edges(self, &edge_shapes, &topology)?;
-        let face_shapes = self.subshapes_occt(shape, ShapeKind::Face)?;
-        let faces = ported_brep_faces(self, &face_shapes, &topology, &wires, &edges, &edge_shapes)?;
+        let faces = ported_brep_faces(
+            self,
+            &face_shapes,
+            &topology,
+            &wires,
+            &edges,
+            &edge_shapes,
+            face_route,
+        )?;
+        // Keep the public BRep face inventory on the Rust-first route, but pin summary
+        // derivation to the raw-stable face descriptors until the swept summary path
+        // is ported further.
+        let summary_faces = match face_route {
+            FaceSurfaceRoute::Raw => faces.clone(),
+            FaceSurfaceRoute::Public => ported_brep_faces(
+                self,
+                &face_shapes,
+                &topology,
+                &wires,
+                &edges,
+                &edge_shapes,
+                FaceSurfaceRoute::Raw,
+            )?,
+        };
 
         let summary = ported_shape_summary(
             self,
@@ -142,7 +175,7 @@ impl Context {
             &topology,
             &wires,
             &edges,
-            &faces,
+            &summary_faces,
             &face_shapes,
             &edge_shapes,
         )?;

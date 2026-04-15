@@ -11,6 +11,7 @@ pub(super) fn ported_brep_faces(
     wires: &[BrepWire],
     edges: &[BrepEdge],
     edge_shapes: &[Shape],
+    route: FaceSurfaceRoute,
 ) -> Result<Vec<BrepFace>, Error> {
     let faces = face_shapes
         .iter()
@@ -24,6 +25,7 @@ pub(super) fn ported_brep_faces(
                 edge_shapes,
                 index,
                 face_shape,
+                route,
             )
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -39,8 +41,9 @@ fn ported_brep_face(
     edge_shapes: &[Shape],
     index: usize,
     face_shape: &Shape,
+    route: FaceSurfaceRoute,
 ) -> Result<BrepFace, Error> {
-    let prepared = prepare_face_surface_with_route(context, face_shape, FaceSurfaceRoute::Raw)?;
+    let prepared = prepare_face_surface_with_route(context, face_shape, route)?;
     let geometry = prepared.geometry;
     let ported_surface = prepared.ported_surface;
     let ported_face_surface = prepared.ported_face_surface;

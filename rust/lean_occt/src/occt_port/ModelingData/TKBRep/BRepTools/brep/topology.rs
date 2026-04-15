@@ -8,6 +8,7 @@ use super::*;
 struct TopologySnapshotRootFields {
     vertex_positions: Vec<[f64; 3]>,
     edge_shapes: Vec<Shape>,
+    face_shapes: Vec<Shape>,
     prepared_face_shapes: Vec<PreparedFaceShape>,
     edges: Vec<crate::TopologyEdge>,
     root_edges: Vec<super::edge_topology::RootEdgeTopology>,
@@ -17,6 +18,12 @@ struct TopologySnapshotRootFields {
     wire_edge_orientations: Vec<Orientation>,
     wire_vertices: Vec<crate::TopologyRange>,
     wire_vertex_indices: Vec<usize>,
+}
+
+pub(super) struct LoadedPortedTopology {
+    pub(super) topology: TopologySnapshot,
+    pub(super) edge_shapes: Vec<Shape>,
+    pub(super) face_shapes: Vec<Shape>,
 }
 
 fn load_root_topology_snapshot(
@@ -64,13 +71,15 @@ fn load_root_topology_snapshot(
     }
     let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
         pack_wire_topology(&root_wires);
-    let prepared_face_shapes = context
-        .subshapes_occt(shape, ShapeKind::Face)?
-        .into_iter()
-        .map(|face_shape| {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    let prepared_face_shapes = face_shapes
+        .iter()
+        .enumerate()
+        .map(|(face_index, face_shape)| {
             Ok(PreparedFaceShape {
+                face_index,
                 face_wire_shapes: context
-                    .subshapes_occt(&face_shape, ShapeKind::Wire)?
+                    .subshapes_occt(face_shape, ShapeKind::Wire)?
                     .into_iter()
                     .map(|face_wire_shape| {
                         Ok(PreparedRootWireShape {
@@ -80,7 +89,6 @@ fn load_root_topology_snapshot(
                         })
                     })
                     .collect::<Result<Vec<_>, Error>>()?,
-                face_shape,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -88,6 +96,7 @@ fn load_root_topology_snapshot(
     Ok(Some(TopologySnapshotRootFields {
         vertex_positions,
         edge_shapes,
+        face_shapes,
         prepared_face_shapes,
         edges,
         root_edges,
@@ -100,13 +109,14 @@ fn load_root_topology_snapshot(
     }))
 }
 
-pub(super) fn ported_topology_snapshot(
+pub(super) fn load_ported_topology(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<TopologySnapshot>, Error> {
+) -> Result<Option<LoadedPortedTopology>, Error> {
     let Some(TopologySnapshotRootFields {
         vertex_positions,
         edge_shapes,
+        face_shapes,
         prepared_face_shapes,
         edges,
         root_edges,
@@ -130,6 +140,7 @@ pub(super) fn ported_topology_snapshot(
     }) = load_ported_face_snapshot(
         context,
         &prepared_face_shapes,
+        &face_shapes,
         &root_wires,
         &root_edges,
         &edge_shapes,
@@ -140,19 +151,30 @@ pub(super) fn ported_topology_snapshot(
         return Ok(None);
     };
 
-    Ok(Some(TopologySnapshot {
-        vertex_positions,
-        edges,
-        edge_faces,
-        edge_face_indices,
-        wires,
-        wire_edge_indices,
-        wire_edge_orientations,
-        wire_vertices,
-        wire_vertex_indices,
-        faces,
-        face_wire_indices,
-        face_wire_orientations,
-        face_wire_roles,
+    Ok(Some(LoadedPortedTopology {
+        topology: TopologySnapshot {
+            vertex_positions,
+            edges,
+            edge_faces,
+            edge_face_indices,
+            wires,
+            wire_edge_indices,
+            wire_edge_orientations,
+            wire_vertices,
+            wire_vertex_indices,
+            faces,
+            face_wire_indices,
+            face_wire_orientations,
+            face_wire_roles,
+        },
+        edge_shapes,
+        face_shapes,
     }))
+}
+
+pub(super) fn ported_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshot>, Error> {
+    Ok(load_ported_topology(context, shape)?.map(|loaded| loaded.topology))
 }
