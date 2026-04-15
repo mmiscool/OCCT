@@ -17,6 +17,7 @@ mod summary;
 mod swept_face;
 mod topology;
 mod topology_access;
+mod wire_topology;
 
 use self::brep_materialize::{ported_brep_edges, ported_brep_vertices, ported_brep_wires};
 pub(crate) use self::face_queries::{ported_face_area, ported_face_surface_descriptor};
