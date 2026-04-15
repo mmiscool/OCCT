@@ -124,6 +124,62 @@ struct PreparedFaceTopology {
     used_edges: BTreeSet<usize>,
 }
 
+struct PreparedFaceTopologyBuilder {
+    used_root_wire_indices: BTreeSet<usize>,
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
+    face_wire_areas: Vec<f64>,
+    used_edges: BTreeSet<usize>,
+}
+
+impl PreparedFaceTopologyBuilder {
+    fn new(face_wire_count: usize) -> Self {
+        Self {
+            used_root_wire_indices: BTreeSet::new(),
+            face_wire_indices: Vec::with_capacity(face_wire_count),
+            face_wire_orientations: Vec::with_capacity(face_wire_count),
+            face_wire_areas: Vec::new(),
+            used_edges: BTreeSet::new(),
+        }
+    }
+
+    fn used_root_wire_indices(&self) -> &BTreeSet<usize> {
+        &self.used_root_wire_indices
+    }
+
+    fn append_matched_face_wire(&mut self, matched_face_wire: &MatchedFaceWire) {
+        matched_face_wire.append_to(
+            &mut self.used_root_wire_indices,
+            &mut self.face_wire_indices,
+            &mut self.face_wire_orientations,
+            &mut self.used_edges,
+        );
+    }
+
+    fn push_face_wire_area(&mut self, wire_area: f64) {
+        self.face_wire_areas.push(wire_area);
+    }
+
+    fn finish(self) -> Option<PreparedFaceTopology> {
+        let Self {
+            face_wire_indices,
+            face_wire_orientations,
+            face_wire_areas,
+            used_edges,
+            ..
+        } = self;
+        let wire_roles =
+            PreparedFaceTopology::classify_wire_roles(face_wire_indices.len(), &face_wire_areas)?;
+
+        Some(PreparedFaceTopology {
+            face_wire_indices,
+            face_wire_orientations,
+            wire_roles,
+            used_edges,
+        })
+    }
+}
+
 impl PreparedFaceTopology {
     fn match_face_wire(
         context: &Context,
@@ -165,11 +221,7 @@ impl PreparedFaceTopology {
 
         let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
         let planar_face = prepared_face_shape.planar_face(context)?;
-        let mut used_root_wire_indices = BTreeSet::new();
-        let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
-        let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
-        let mut face_wire_areas = Vec::new();
-        let mut used_edges = BTreeSet::new();
+        let mut builder = PreparedFaceTopologyBuilder::new(face_wire_shapes.len());
 
         for face_wire_shape in face_wire_shapes {
             let Some(matched_face_wire) = Self::match_face_wire(
@@ -178,17 +230,12 @@ impl PreparedFaceTopology {
                 root_wires,
                 root_edges,
                 vertex_positions,
-                &used_root_wire_indices,
+                builder.used_root_wire_indices(),
             )?
             else {
                 return Ok(None);
             };
-            matched_face_wire.append_to(
-                &mut used_root_wire_indices,
-                &mut face_wire_indices,
-                &mut face_wire_orientations,
-                &mut used_edges,
-            );
+            builder.append_matched_face_wire(&matched_face_wire);
 
             if let Some(planar_face) = planar_face {
                 let Some(wire_area) = matched_face_wire.planar_area_magnitude(
@@ -201,21 +248,11 @@ impl PreparedFaceTopology {
                 else {
                     return Ok(None);
                 };
-                face_wire_areas.push(wire_area);
+                builder.push_face_wire_area(wire_area);
             }
         }
 
-        let Some(wire_roles) = Self::classify_wire_roles(face_wire_indices.len(), &face_wire_areas)
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self {
-            face_wire_indices,
-            face_wire_orientations,
-            wire_roles,
-            used_edges,
-        }))
+        Ok(builder.finish())
     }
 
     fn classify_wire_roles(
