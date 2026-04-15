@@ -28,21 +28,35 @@ fn multi_wire_face_is_planar(
     Ok(geometry.kind == crate::SurfaceKind::Plane)
 }
 
-fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Result<bool, Error> {
-    for face_shape in face_shapes {
-        let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-        if !multi_wire_face_is_planar(context, face_shape, face_wire_shapes.len())? {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
-}
-
 enum PreparedPlanarFace {
     NotRequired,
     Loaded(PlanePayload, FaceGeometry),
-    Unsupported,
+}
+
+struct PreparedFaceShape {
+    face_shape: Shape,
+    face_wire_shapes: Vec<Shape>,
+}
+
+fn load_prepared_face_shapes(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<Vec<PreparedFaceShape>>, Error> {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
+
+    for face_shape in face_shapes {
+        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
+        if !multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
+            return Ok(None);
+        }
+        prepared_face_shapes.push(PreparedFaceShape {
+            face_shape,
+            face_wire_shapes,
+        });
+    }
+
+    Ok(Some(prepared_face_shapes))
 }
 
 struct PreparedFaceTopology {
@@ -55,27 +69,28 @@ struct PreparedFaceTopology {
 impl PreparedFaceTopology {
     fn load(
         context: &Context,
-        face_shape: &Shape,
+        prepared_face_shape: &PreparedFaceShape,
         root_wires: &[RootWireTopology],
         root_edges: &[RootEdgeTopology],
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<Self>, Error> {
-        let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-        if root_wires.is_empty() || face_wire_shapes.is_empty() {
+        if root_wires.is_empty() || prepared_face_shape.face_wire_shapes.is_empty() {
             return Ok(None);
         }
 
-        let planar_face = match Self::load_planar_face(context, face_shape, face_wire_shapes.len())?
-        {
+        let planar_face = match Self::load_planar_face(
+            context,
+            &prepared_face_shape.face_shape,
+            prepared_face_shape.face_wire_shapes.len(),
+        )? {
             PreparedPlanarFace::NotRequired => None,
             PreparedPlanarFace::Loaded(plane, geometry) => Some((plane, geometry)),
-            PreparedPlanarFace::Unsupported => return Ok(None),
         };
 
         Self::collect_matched_face_wires(
             context,
-            &face_wire_shapes,
+            &prepared_face_shape.face_wire_shapes,
             root_wires,
             root_edges,
             edge_shapes,
@@ -91,9 +106,6 @@ impl PreparedFaceTopology {
     ) -> Result<PreparedPlanarFace, Error> {
         if face_wire_count <= 1 {
             return Ok(PreparedPlanarFace::NotRequired);
-        }
-        if !multi_wire_face_is_planar(context, face_shape, face_wire_count)? {
-            return Ok(PreparedPlanarFace::Unsupported);
         }
 
         Ok(PreparedPlanarFace::Loaded(
@@ -291,19 +303,19 @@ impl FaceSnapshotAccumulator {
 
 fn pack_ported_face_snapshot(
     context: &Context,
-    face_shapes: &[Shape],
+    prepared_face_shapes: &[PreparedFaceShape],
     root_wires: &[RootWireTopology],
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let mut accumulator = FaceSnapshotAccumulator::new(edge_count, face_shapes.len());
+    let mut accumulator = FaceSnapshotAccumulator::new(edge_count, prepared_face_shapes.len());
 
-    for (face_index, face_shape) in face_shapes.iter().enumerate() {
+    for (face_index, prepared_face_shape) in prepared_face_shapes.iter().enumerate() {
         let Some(prepared_face_topology) = PreparedFaceTopology::load(
             context,
-            face_shape,
+            prepared_face_shape,
             root_wires,
             root_edges,
             edge_shapes,
@@ -331,14 +343,13 @@ pub(super) fn load_ported_face_snapshot(
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
-    if !validate_ported_face_snapshot(context, &face_shapes)? {
+    let Some(prepared_face_shapes) = load_prepared_face_shapes(context, shape)? else {
         return Ok(None);
-    }
+    };
 
     pack_ported_face_snapshot(
         context,
-        &face_shapes,
+        &prepared_face_shapes,
         root_wires,
         root_edges,
         edge_shapes,
