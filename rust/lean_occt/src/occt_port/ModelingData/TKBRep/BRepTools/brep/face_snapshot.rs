@@ -124,6 +124,22 @@ struct PreparedFaceTopology {
     used_edges: BTreeSet<usize>,
 }
 
+impl PreparedFaceTopology {
+    fn new(
+        face_wire_indices: Vec<usize>,
+        face_wire_orientations: Vec<Orientation>,
+        wire_roles: Vec<LoopRole>,
+        used_edges: BTreeSet<usize>,
+    ) -> Self {
+        Self {
+            face_wire_indices,
+            face_wire_orientations,
+            wire_roles,
+            used_edges,
+        }
+    }
+}
+
 struct PreparedFaceTopologyBuilder {
     used_root_wire_indices: BTreeSet<usize>,
     face_wire_indices: Vec<usize>,
@@ -295,12 +311,12 @@ impl PreparedFaceTopologyBuilder {
             ..
         } = self;
 
-        Some(PreparedFaceTopology {
+        Some(PreparedFaceTopology::new(
             face_wire_indices,
             face_wire_orientations,
             wire_roles,
             used_edges,
-        })
+        ))
     }
 
     fn classify_wire_roles(&self) -> Option<Vec<LoopRole>> {
