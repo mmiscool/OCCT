@@ -90,6 +90,13 @@ fn load_planar_multi_wire_face(
     )))
 }
 
+struct MatchedFaceWires {
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
+    face_wire_areas: Vec<f64>,
+    used_edges: BTreeSet<usize>,
+}
+
 fn append_ported_face_topology(
     context: &Context,
     face_index: usize,
@@ -109,12 +116,7 @@ fn append_ported_face_topology(
         return Ok(None);
     }
 
-    let mut used_root_wire_indices = BTreeSet::new();
-    let mut used_edges = BTreeSet::new();
     let face_wire_offset = face_wire_indices.len();
-    let mut face_wire_count = 0usize;
-    let mut face_wire_areas = Vec::new();
-
     let planar_face = if face_wire_shapes.len() > 1 {
         let Some(planar_face) =
             load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
@@ -126,51 +128,35 @@ fn append_ported_face_topology(
         None
     };
 
-    for face_wire_shape in &face_wire_shapes {
-        let Some(face_wire_topology) =
-            root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
-        else {
-            return Ok(None);
-        };
-        let Some(root_wire_index) =
-            match_root_wire_index(root_wires, &face_wire_topology, &used_root_wire_indices)
-        else {
-            return Ok(None);
-        };
-        used_root_wire_indices.insert(root_wire_index);
-        used_edges.extend(face_wire_topology.edge_indices.iter().copied());
+    let Some(matched_face_wires) = collect_face_wire_matches(
+        context,
+        &face_wire_shapes,
+        root_wires,
+        root_edges,
+        edge_shapes,
+        vertex_positions,
+        planar_face,
+    )?
+    else {
+        return Ok(None);
+    };
+    let face_wire_count = matched_face_wires.face_wire_indices.len();
 
-        face_wire_indices.push(root_wire_index);
-        face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
-        face_wire_count += 1;
-
-        if let Some((plane, face_geometry)) = planar_face {
-            let Some(wire_area) = planar_wire_area_magnitude(
-                context,
-                plane,
-                face_geometry,
-                &root_wires[root_wire_index],
-                edge_shapes,
-                root_edges,
-            )?
-            else {
-                return Ok(None);
-            };
-            face_wire_areas.push(wire_area);
-        }
-    }
-
-    let Some(wire_roles) = classify_face_wire_roles(face_wire_count, &face_wire_areas) else {
+    let Some(wire_roles) =
+        classify_face_wire_roles(face_wire_count, &matched_face_wires.face_wire_areas)
+    else {
         return Ok(None);
     };
 
+    face_wire_indices.extend(matched_face_wires.face_wire_indices);
+    face_wire_orientations.extend(matched_face_wires.face_wire_orientations);
     faces.push(crate::TopologyRange {
         offset: face_wire_offset,
         count: face_wire_count,
     });
     face_wire_roles.extend(wire_roles);
 
-    for edge_index in used_edges {
+    for edge_index in matched_face_wires.used_edges {
         let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
             return Ok(None);
         };
@@ -258,6 +244,62 @@ pub(super) fn load_ported_face_snapshot(
         vertex_positions,
         edge_count,
     )
+}
+
+fn collect_face_wire_matches(
+    context: &Context,
+    face_wire_shapes: &[Shape],
+    root_wires: &[RootWireTopology],
+    root_edges: &[RootEdgeTopology],
+    edge_shapes: &[Shape],
+    vertex_positions: &[[f64; 3]],
+    planar_face: Option<(PlanePayload, FaceGeometry)>,
+) -> Result<Option<MatchedFaceWires>, Error> {
+    let mut used_root_wire_indices = BTreeSet::new();
+    let mut used_edges = BTreeSet::new();
+    let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
+    let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
+    let mut face_wire_areas = Vec::new();
+
+    for face_wire_shape in face_wire_shapes {
+        let Some(face_wire_topology) =
+            root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
+        else {
+            return Ok(None);
+        };
+        let Some(root_wire_index) =
+            match_root_wire_index(root_wires, &face_wire_topology, &used_root_wire_indices)
+        else {
+            return Ok(None);
+        };
+        used_root_wire_indices.insert(root_wire_index);
+        used_edges.extend(face_wire_topology.edge_indices.iter().copied());
+
+        face_wire_indices.push(root_wire_index);
+        face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
+
+        if let Some((plane, face_geometry)) = planar_face {
+            let Some(wire_area) = planar_wire_area_magnitude(
+                context,
+                plane,
+                face_geometry,
+                &root_wires[root_wire_index],
+                edge_shapes,
+                root_edges,
+            )?
+            else {
+                return Ok(None);
+            };
+            face_wire_areas.push(wire_area);
+        }
+    }
+
+    Ok(Some(MatchedFaceWires {
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_areas,
+        used_edges,
+    }))
 }
 
 fn match_root_wire_index(
