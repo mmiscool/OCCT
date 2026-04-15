@@ -15,6 +15,8 @@ struct SingleFaceTopology {
     edge_shapes: Vec<Shape>,
 }
 
+type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
+
 pub(crate) fn ported_face_surface_descriptor(
     context: &Context,
     face_shape: &Shape,
@@ -155,17 +157,12 @@ pub(super) fn ported_face_surface_descriptor_from_surface(
     face_geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
 ) -> Result<Option<PortedFaceSurface>, Error> {
-    if let Some(surface) = ported_surface {
-        return Ok(Some(PortedFaceSurface::Analytic(surface)));
-    }
-
-    if let Some(surface) = context.ported_offset_surface(face_shape)? {
-        return Ok(Some(PortedFaceSurface::Offset(surface)));
-    }
-
-    Ok(
-        ported_swept_face_surface(context, face_shape, face_geometry)?
-            .map(PortedFaceSurface::Swept),
+    ported_face_surface_descriptor_from_surface_with_topology(
+        context,
+        face_shape,
+        face_geometry,
+        ported_surface,
+        single_face_topology,
     )
 }
 
@@ -175,6 +172,22 @@ fn ported_face_surface_descriptor_from_surface_public(
     face_geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
 ) -> Result<Option<PortedFaceSurface>, Error> {
+    ported_face_surface_descriptor_from_surface_with_topology(
+        context,
+        face_shape,
+        face_geometry,
+        ported_surface,
+        single_face_topology_public,
+    )
+}
+
+fn ported_face_surface_descriptor_from_surface_with_topology(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    ported_surface: Option<PortedSurface>,
+    topology_builder: SingleFaceTopologyBuilder,
+) -> Result<Option<PortedFaceSurface>, Error> {
     if let Some(surface) = ported_surface {
         return Ok(Some(PortedFaceSurface::Analytic(surface)));
     }
@@ -183,34 +196,26 @@ fn ported_face_surface_descriptor_from_surface_public(
         return Ok(Some(PortedFaceSurface::Offset(surface)));
     }
 
-    Ok(
-        ported_swept_face_surface_public(context, face_shape, face_geometry)?
-            .map(PortedFaceSurface::Swept),
-    )
+    Ok(ported_swept_face_surface_with_topology(
+        context,
+        face_shape,
+        face_geometry,
+        topology_builder,
+    )?
+    .map(PortedFaceSurface::Swept))
 }
 
-fn ported_swept_face_surface(
+fn ported_swept_face_surface_with_topology(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
+    topology_builder: SingleFaceTopologyBuilder,
 ) -> Result<Option<PortedSweptSurface>, Error> {
-    let topology = match single_face_topology(context, face_shape)? {
+    let topology = match topology_builder(context, face_shape)? {
         Some(topology) => topology,
         None => return Ok(None),
     };
 
-    ported_swept_face_surface_from_topology(context, face_shape, face_geometry, topology)
-}
-
-fn ported_swept_face_surface_public(
-    context: &Context,
-    face_shape: &Shape,
-    face_geometry: FaceGeometry,
-) -> Result<Option<PortedSweptSurface>, Error> {
-    let topology = match single_face_topology_public(context, face_shape)? {
-        Some(topology) => topology,
-        None => return Ok(None),
-    };
     ported_swept_face_surface_from_topology(context, face_shape, face_geometry, topology)
 }
 
