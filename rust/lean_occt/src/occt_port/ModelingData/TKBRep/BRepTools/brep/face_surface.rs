@@ -15,12 +15,7 @@ struct SingleFaceTopology {
     edge_shapes: Vec<Shape>,
 }
 
-struct PreparedPublicFaceSurface {
-    geometry: FaceGeometry,
-    ported_face_surface: Option<PortedFaceSurface>,
-}
-
-struct PreparedRawFaceSurface {
+struct PreparedFaceSurface {
     geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
     ported_face_surface: Option<PortedFaceSurface>,
@@ -35,6 +30,12 @@ struct LazyMeshFaceFallback<'a> {
 }
 
 type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
+type FaceSurfaceDescriptorBuilder = fn(
+    &Context,
+    &Shape,
+    FaceGeometry,
+    Option<PortedSurface>,
+) -> Result<Option<PortedFaceSurface>, Error>;
 
 impl<'a> LazyMeshFaceFallback<'a> {
     fn new(
@@ -191,17 +192,14 @@ fn ported_brep_face(
 fn prepare_raw_face_surface(
     context: &Context,
     face_shape: &Shape,
-) -> Result<PreparedRawFaceSurface, Error> {
+) -> Result<PreparedFaceSurface, Error> {
     let geometry = context.face_geometry_occt(face_shape)?;
-    let ported_surface = PortedSurface::from_context_with_geometry(context, face_shape, geometry)?;
-    let ported_face_surface =
-        ported_face_surface_descriptor_from_surface(context, face_shape, geometry, ported_surface)?;
-
-    Ok(PreparedRawFaceSurface {
+    prepare_face_surface(
+        context,
+        face_shape,
         geometry,
-        ported_surface,
-        ported_face_surface,
-    })
+        ported_face_surface_descriptor_from_surface,
+    )
 }
 
 fn ported_face_area_from_surface(
@@ -375,17 +373,29 @@ fn prepare_public_face_surface(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
-) -> Result<PreparedPublicFaceSurface, Error> {
-    let ported_surface =
-        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    let ported_face_surface = ported_face_surface_descriptor_from_surface_public(
+) -> Result<PreparedFaceSurface, Error> {
+    prepare_face_surface(
         context,
         face_shape,
         face_geometry,
-        ported_surface,
-    )?;
-    Ok(PreparedPublicFaceSurface {
+        ported_face_surface_descriptor_from_surface_public,
+    )
+}
+
+fn prepare_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    descriptor_builder: FaceSurfaceDescriptorBuilder,
+) -> Result<PreparedFaceSurface, Error> {
+    let ported_surface =
+        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
+    let ported_face_surface =
+        descriptor_builder(context, face_shape, face_geometry, ported_surface)?;
+
+    Ok(PreparedFaceSurface {
         geometry: face_geometry,
+        ported_surface,
         ported_face_surface,
     })
 }
