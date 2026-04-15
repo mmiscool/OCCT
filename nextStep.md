@@ -1,15 +1,15 @@
 # Next Task
 
-Split the remaining public face query wrappers out of `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs` into a dedicated sibling module.
+Split the face-specific single-face topology routing block out of `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` into a dedicated sibling module.
 
 ## Focus
 
-- Move `ported_face_surface_descriptor()` and `ported_face_area()` out of `face_surface.rs` into a new focused helper module such as `brep/face_queries.rs`.
-- Keep those public wrappers reusing the shared `face_prepare` helpers, `ported_face_area_from_surface()`, and `single_face_topology_with_route()`; this is a code-ownership extraction, not a behavior change.
-- Leave `ported_brep_faces()` and `ported_brep_face()` in `face_surface.rs` so that file becomes purely about internal BRep face assembly.
-- Preserve the current public routing behavior for `FaceSurfaceRoute::Public`, including the public topology path in `ported_face_area()`.
+- Move `FaceSurfaceRoute`, `SingleFaceTopology`, `single_face_topology_with_route()`, `single_face_topology_snapshot()`, `single_face_edge_with_route()`, and `single_face_edge()` out of `brep/topology.rs` into a new focused helper module such as `brep/face_topology.rs`.
+- Keep `ported_face_area()` and the swept/public face preparation path reusing those helpers through the new module without changing behavior.
+- Leave the root topology snapshot and root BRep materialization helpers in `topology.rs` so that file trends back toward shape-level topology ownership only.
+- Preserve the current raw/public route split for edge geometry and curve reconstruction in the single-face path.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the extraction.
 
 ## Why This Is Next
 
-With the route-aware preparation cluster now living in `brep/face_prepare.rs`, `face_surface.rs` is down to one internal assembly path plus two public face query wrappers. Pulling those wrappers into their own sibling module is the next clean split that leaves `face_surface.rs` focused on BRep face materialization only.
+With the public face query wrappers now isolated in `brep/face_queries.rs`, the biggest remaining face-specific routing cluster still sitting in the shared topology module is the single-face route-aware helper set. Pulling that into its own sibling module is the next bounded split that keeps `topology.rs` focused on root topology snapshotting and BRep materialization.

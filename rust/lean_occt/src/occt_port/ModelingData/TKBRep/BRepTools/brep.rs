@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 
 mod face_metrics;
 mod face_prepare;
+mod face_queries;
 mod face_surface;
 mod math;
 mod mesh;
@@ -10,8 +11,8 @@ mod summary;
 mod swept_face;
 mod topology;
 
+pub(crate) use self::face_queries::{ported_face_area, ported_face_surface_descriptor};
 use self::face_surface::ported_brep_faces;
-pub(crate) use self::face_surface::{ported_face_area, ported_face_surface_descriptor};
 use self::math::{add3, approx_eq, cross3, dot3, norm3, normalize3, scale3, subtract3};
 use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
