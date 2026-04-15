@@ -225,6 +225,52 @@ fn assert_topology_backed_subshape_counts_match(
     Ok(())
 }
 
+fn assert_topology_backed_subshapes_match(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (kind, expected_count) in [
+        (ShapeKind::Face, topology.faces.len()),
+        (ShapeKind::Wire, topology.wires.len()),
+        (ShapeKind::Edge, topology.edges.len()),
+        (ShapeKind::Vertex, topology.vertex_positions.len()),
+    ] {
+        let public_shapes = kernel.context().subshapes(shape, kind)?;
+        let occt_shapes = kernel.context().subshapes_occt(shape, kind)?;
+        if public_shapes.len() != expected_count || public_shapes.len() != occt_shapes.len() {
+            return Err(std::io::Error::other(format!(
+                "{label} {kind:?} inventory mismatch: public={} rust_topology={expected_count} occt={}",
+                public_shapes.len(),
+                occt_shapes.len()
+            ))
+            .into());
+        }
+
+        for (index, (public_shape, occt_shape)) in
+            public_shapes.iter().zip(&occt_shapes).enumerate()
+        {
+            let indexed_shape = kernel.context().subshape(shape, kind, index)?;
+            let public_topology = kernel.context().topology_occt(public_shape)?;
+            let indexed_topology = kernel.context().topology_occt(&indexed_shape)?;
+            let occt_topology = kernel.context().topology_occt(occt_shape)?;
+            assert_topology_matches(
+                &format!("{label} {kind:?} public subshapes[{index}]"),
+                &public_topology,
+                &occt_topology,
+            )?;
+            assert_topology_matches(
+                &format!("{label} {kind:?} public subshape({index})"),
+                &indexed_topology,
+                &occt_topology,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn assert_summary_backed_subshape_counts_match(
     kernel: &ModelKernel,
     label: &str,
@@ -840,6 +886,7 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
@@ -907,6 +954,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
@@ -980,6 +1028,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;

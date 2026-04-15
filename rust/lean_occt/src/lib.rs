@@ -3048,7 +3048,10 @@ impl Context {
     }
 
     pub fn subshape(&self, shape: &Shape, kind: ShapeKind, index: usize) -> Result<Shape, Error> {
-        self.subshape_occt(shape, kind, index)
+        match self.ported_subshape(shape, kind, index)? {
+            Some(subshape) => Ok(subshape),
+            None => self.subshape_occt(shape, kind, index),
+        }
     }
 
     pub fn subshape_occt(
@@ -3069,12 +3072,10 @@ impl Context {
     }
 
     pub fn subshapes(&self, shape: &Shape, kind: ShapeKind) -> Result<Vec<Shape>, Error> {
-        let count = self.subshape_count(shape, kind)?;
-        let mut shapes = Vec::with_capacity(count);
-        for index in 0..count {
-            shapes.push(self.subshape(shape, kind, index)?);
+        match self.ported_subshapes(shape, kind)? {
+            Some(shapes) => Ok(shapes),
+            None => self.subshapes_occt(shape, kind),
         }
-        Ok(shapes)
     }
 
     pub fn subshapes_occt(&self, shape: &Shape, kind: ShapeKind) -> Result<Vec<Shape>, Error> {

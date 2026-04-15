@@ -26,7 +26,9 @@ use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
     polyhedral_mesh_volume, union_bbox,
 };
-use self::shape_queries::{ported_edge_endpoints, ported_vertex_point};
+use self::shape_queries::{
+    ported_edge_endpoints, ported_subshape, ported_subshapes, ported_vertex_point,
+};
 use self::summary::ported_shape_summary;
 use self::topology::ported_topology_snapshot;
 
@@ -160,5 +162,22 @@ impl Context {
 
     pub fn ported_edge_endpoints(&self, shape: &Shape) -> Result<Option<EdgeEndpoints>, Error> {
         ported_edge_endpoints(self, shape)
+    }
+
+    pub(crate) fn ported_subshape(
+        &self,
+        shape: &Shape,
+        kind: ShapeKind,
+        index: usize,
+    ) -> Result<Option<Shape>, Error> {
+        ported_subshape(self, shape, kind, index)
+    }
+
+    pub(crate) fn ported_subshapes(
+        &self,
+        shape: &Shape,
+        kind: ShapeKind,
+    ) -> Result<Option<Vec<Shape>>, Error> {
+        ported_subshapes(self, shape, kind)
     }
 }
