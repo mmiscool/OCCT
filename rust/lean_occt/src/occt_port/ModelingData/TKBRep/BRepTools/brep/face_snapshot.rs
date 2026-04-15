@@ -216,24 +216,22 @@ impl PreparedFaceTopologyBuilder {
             }
         }
 
-        Ok(builder.finish())
-    }
-
-    fn finish(self) -> Option<PreparedFaceTopology> {
-        let wire_roles = self.classify_wire_roles()?;
+        let Some(wire_roles) = builder.classify_wire_roles() else {
+            return Ok(None);
+        };
         let Self {
             face_wire_indices,
             face_wire_orientations,
             used_edges,
             ..
-        } = self;
+        } = builder;
 
-        Some(PreparedFaceTopology::new(
+        Ok(Some(PreparedFaceTopology::new(
             face_wire_indices,
             face_wire_orientations,
             wire_roles,
             used_edges,
-        ))
+        )))
     }
 
     fn classify_wire_roles(&self) -> Option<Vec<LoopRole>> {
