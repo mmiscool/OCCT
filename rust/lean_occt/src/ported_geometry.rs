@@ -301,8 +301,14 @@ impl PortedSurface {
                 ported_cone_payload(context, shape, geometry)?
                     .unwrap_or(context.face_cone_payload_occt(shape)?),
             ))),
-            SurfaceKind::Sphere => Ok(Some(Self::Sphere(context.face_sphere_payload_occt(shape)?))),
-            SurfaceKind::Torus => Ok(Some(Self::Torus(context.face_torus_payload_occt(shape)?))),
+            SurfaceKind::Sphere => Ok(Some(Self::Sphere(
+                ported_sphere_payload(context, shape, geometry)?
+                    .unwrap_or(context.face_sphere_payload_occt(shape)?),
+            ))),
+            SurfaceKind::Torus => Ok(Some(Self::Torus(
+                ported_torus_payload(context, shape, geometry)?
+                    .unwrap_or(context.face_torus_payload_occt(shape)?),
+            ))),
             _ => Ok(None),
         }
     }
@@ -1834,6 +1840,286 @@ fn ported_cone_payload(
     Ok(Some(payload))
 }
 
+fn ported_sphere_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<SpherePayload>, Error> {
+    if geometry.kind != SurfaceKind::Sphere {
+        return Ok(None);
+    }
+
+    let u0 = geometry.u_min;
+    let u1 = match select_periodic_probe_parameter(geometry.u_min, geometry.u_max) {
+        Some(parameter) => parameter,
+        None => return Ok(None),
+    };
+    let denominator_u = (u1 - u0).sin();
+    if denominator_u.abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let (v0, v1) = match select_sphere_latitude_pair(geometry.v_min, geometry.v_max) {
+        Some(pair) => pair,
+        None => return Ok(None),
+    };
+    let denominator_v = (v1 - v0).sin();
+    if denominator_v.abs() <= 1.0e-6 || v0.cos().abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let orientation = context.shape_orientation(shape)?;
+    let normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+
+    let base_sample = context.face_sample_occt(shape, [u0, v0])?;
+    let longitude_sample = context.face_sample_occt(shape, [u1, v0])?;
+    let latitude_sample = context.face_sample_occt(shape, [u0, v1])?;
+    let latitude_longitude_sample = context.face_sample_occt(shape, [u1, v1])?;
+    let normal00 = scale3(base_sample.normal, normal_sign);
+    let normal10 = scale3(longitude_sample.normal, normal_sign);
+    let normal01 = scale3(latitude_sample.normal, normal_sign);
+
+    let normal_delta = subtract3(normal01, normal00);
+    let normal_delta_norm2 = dot3(normal_delta, normal_delta);
+    if normal_delta_norm2 <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let radius = dot3(
+        subtract3(latitude_sample.position, base_sample.position),
+        normal_delta,
+    ) / normal_delta_norm2;
+    if radius.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let normal = normalize3(scale3(
+        subtract3(scale3(normal01, v0.cos()), scale3(normal00, v1.cos())),
+        1.0 / denominator_v,
+    ));
+    let radial0 = scale3(
+        subtract3(normal00, scale3(normal, v0.sin())),
+        1.0 / v0.cos(),
+    );
+    let radial1 = scale3(
+        subtract3(normal10, scale3(normal, v0.sin())),
+        1.0 / v0.cos(),
+    );
+    let x_direction = normalize3(scale3(
+        subtract3(scale3(radial0, u1.sin()), scale3(radial1, u0.sin())),
+        1.0 / denominator_u,
+    ));
+    let y_direction = normalize3(scale3(
+        subtract3(scale3(radial1, u0.cos()), scale3(radial0, u1.cos())),
+        1.0 / denominator_u,
+    ));
+    if norm3(normal) <= 1.0e-12 || norm3(x_direction) <= 1.0e-12 || norm3(y_direction) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let payload = SpherePayload {
+        center: subtract3(base_sample.position, scale3(normal00, radius)),
+        normal,
+        x_direction,
+        y_direction,
+        radius,
+    };
+
+    if !approx_points_eq(
+        sample_sphere(payload, [u0, v0]).position,
+        base_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_sphere(payload, [u1, v0]).position,
+        longitude_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_sphere(payload, [u0, v1]).position,
+        latitude_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_sphere(payload, [u1, v1]).position,
+        latitude_longitude_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(sample_sphere(payload, [u0, v0]).normal, normal00, 1.0e-7)
+        || !approx_points_eq(sample_sphere(payload, [u1, v0]).normal, normal10, 1.0e-7)
+        || !approx_points_eq(sample_sphere(payload, [u0, v1]).normal, normal01, 1.0e-7)
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(payload))
+}
+
+fn ported_torus_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<TorusPayload>, Error> {
+    if geometry.kind != SurfaceKind::Torus {
+        return Ok(None);
+    }
+
+    let u0 = geometry.u_min;
+    let u1 = match select_periodic_probe_parameter(geometry.u_min, geometry.u_max) {
+        Some(parameter) => parameter,
+        None => return Ok(None),
+    };
+    let denominator_u = (u1 - u0).sin();
+    if denominator_u.abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let v0 = geometry.v_min;
+    let v1 = match select_periodic_probe_parameter(geometry.v_min, geometry.v_max) {
+        Some(parameter) => parameter,
+        None => return Ok(None),
+    };
+    let denominator_v = (v1 - v0).sin();
+    if denominator_v.abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let orientation = context.shape_orientation(shape)?;
+    let normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+
+    let sample00 = context.face_sample_occt(shape, [u0, v0])?;
+    let sample01 = context.face_sample_occt(shape, [u0, v1])?;
+    let sample10 = context.face_sample_occt(shape, [u1, v0])?;
+    let sample11 = context.face_sample_occt(shape, [u1, v1])?;
+    let normal00 = scale3(sample00.normal, normal_sign);
+    let normal01 = scale3(sample01.normal, normal_sign);
+    let normal10 = scale3(sample10.normal, normal_sign);
+    let normal11 = scale3(sample11.normal, normal_sign);
+
+    let radial0 = normalize3(scale3(
+        subtract3(scale3(normal00, v1.sin()), scale3(normal01, v0.sin())),
+        1.0 / denominator_v,
+    ));
+    let radial1 = normalize3(scale3(
+        subtract3(scale3(normal10, v1.sin()), scale3(normal11, v0.sin())),
+        1.0 / denominator_v,
+    ));
+    let axis0 = normalize3(scale3(
+        subtract3(scale3(normal01, v0.cos()), scale3(normal00, v1.cos())),
+        1.0 / denominator_v,
+    ));
+    let axis1 = normalize3(scale3(
+        subtract3(scale3(normal11, v0.cos()), scale3(normal10, v1.cos())),
+        1.0 / denominator_v,
+    ));
+    if norm3(radial0) <= 1.0e-12
+        || norm3(radial1) <= 1.0e-12
+        || norm3(axis0) <= 1.0e-12
+        || norm3(axis1) <= 1.0e-12
+        || !approx_points_eq(axis0, axis1, 1.0e-7)
+    {
+        return Ok(None);
+    }
+
+    let normal_delta0 = subtract3(normal01, normal00);
+    let normal_delta1 = subtract3(normal11, normal10);
+    let normal_delta0_norm2 = dot3(normal_delta0, normal_delta0);
+    let normal_delta1_norm2 = dot3(normal_delta1, normal_delta1);
+    if normal_delta0_norm2 <= 1.0e-12 || normal_delta1_norm2 <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let minor_radius0 = dot3(
+        subtract3(sample01.position, sample00.position),
+        normal_delta0,
+    ) / normal_delta0_norm2;
+    let minor_radius1 = dot3(
+        subtract3(sample11.position, sample10.position),
+        normal_delta1,
+    ) / normal_delta1_norm2;
+    let minor_radius = 0.5 * (minor_radius0 + minor_radius1);
+    if minor_radius.abs() <= 1.0e-12 || (minor_radius0 - minor_radius1).abs() > 1.0e-7 {
+        return Ok(None);
+    }
+
+    let tube_center00 = subtract3(sample00.position, scale3(normal00, minor_radius));
+    let tube_center01 = subtract3(sample01.position, scale3(normal01, minor_radius));
+    let tube_center10 = subtract3(sample10.position, scale3(normal10, minor_radius));
+    let tube_center11 = subtract3(sample11.position, scale3(normal11, minor_radius));
+    if !approx_points_eq(tube_center00, tube_center01, 1.0e-7)
+        || !approx_points_eq(tube_center10, tube_center11, 1.0e-7)
+    {
+        return Ok(None);
+    }
+
+    let radial_delta = subtract3(radial1, radial0);
+    let radial_delta_norm2 = dot3(radial_delta, radial_delta);
+    if radial_delta_norm2 <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let major_radius0 =
+        dot3(subtract3(tube_center10, tube_center00), radial_delta) / radial_delta_norm2;
+    let major_radius1 =
+        dot3(subtract3(tube_center11, tube_center01), radial_delta) / radial_delta_norm2;
+    let major_radius = 0.5 * (major_radius0 + major_radius1);
+    if major_radius.abs() <= 1.0e-12 || (major_radius0 - major_radius1).abs() > 1.0e-7 {
+        return Ok(None);
+    }
+
+    let axis = axis0;
+    let x_direction = normalize3(scale3(
+        subtract3(scale3(radial0, u1.sin()), scale3(radial1, u0.sin())),
+        1.0 / denominator_u,
+    ));
+    let y_direction = normalize3(scale3(
+        subtract3(scale3(radial1, u0.cos()), scale3(radial0, u1.cos())),
+        1.0 / denominator_u,
+    ));
+    if norm3(x_direction) <= 1.0e-12 || norm3(y_direction) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let payload = TorusPayload {
+        center: subtract3(tube_center00, scale3(radial0, major_radius)),
+        axis,
+        x_direction,
+        y_direction,
+        major_radius,
+        minor_radius,
+    };
+
+    if !approx_points_eq(
+        sample_torus(payload, [u0, v0]).position,
+        sample00.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_torus(payload, [u0, v1]).position,
+        sample01.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_torus(payload, [u1, v0]).position,
+        sample10.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_torus(payload, [u1, v1]).position,
+        sample11.position,
+        1.0e-7,
+    ) || !approx_points_eq(sample_torus(payload, [u0, v0]).normal, normal00, 1.0e-7)
+        || !approx_points_eq(sample_torus(payload, [u0, v1]).normal, normal01, 1.0e-7)
+        || !approx_points_eq(sample_torus(payload, [u1, v0]).normal, normal10, 1.0e-7)
+        || !approx_points_eq(sample_torus(payload, [u1, v1]).normal, normal11, 1.0e-7)
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(payload))
+}
+
 fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
     let period = period.abs();
     if period <= 1.0e-12 {
@@ -1874,6 +2160,23 @@ fn select_periodic_probe_parameter(start: f64, end: f64) -> Option<f64> {
                 .total_cmp(&(rhs - start).sin().abs())
         })
         .filter(|candidate| ((*candidate - start).sin()).abs() > 1.0e-6)
+}
+
+fn select_sphere_latitude_pair(start: f64, end: f64) -> Option<(f64, f64)> {
+    let candidates = [0.0, 0.25, 0.5, 0.75, 1.0].map(|fraction| start + (end - start) * fraction);
+    candidates
+        .into_iter()
+        .flat_map(|v0| {
+            candidates
+                .into_iter()
+                .filter(move |&v1| (v1 - v0).abs() > 1.0e-12)
+                .map(move |v1| (v0, v1))
+        })
+        .max_by(|(lhs0, lhs1), (rhs0, rhs1)| {
+            (lhs0.cos().abs() * (lhs1 - lhs0).sin().abs())
+                .total_cmp(&(rhs0.cos().abs() * (rhs1 - rhs0).sin().abs()))
+        })
+        .filter(|(v0, v1)| v0.cos().abs() * (v1 - v0).sin().abs() > 1.0e-6)
 }
 
 fn line_parameter(payload: LinePayload, point: [f64; 3]) -> Option<f64> {
