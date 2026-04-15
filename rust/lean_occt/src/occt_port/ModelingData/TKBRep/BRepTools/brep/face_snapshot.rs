@@ -200,37 +200,6 @@ struct FaceSnapshotAccumulator {
     face_wire_roles: Vec<LoopRole>,
 }
 
-impl FaceSnapshotAccumulator {
-    fn append_face_topology_outputs(
-        &mut self,
-        face_index: usize,
-        prepared_face_topology: PreparedFaceTopology,
-    ) -> Option<()> {
-        let face_wire_offset = self.face_wire_indices.len();
-        let PreparedFaceTopology {
-            face_wire_indices,
-            face_wire_orientations,
-            wire_roles,
-            used_edges,
-        } = prepared_face_topology;
-        let face_wire_count = face_wire_indices.len();
-        self.face_wire_indices.extend(face_wire_indices);
-        self.face_wire_orientations.extend(face_wire_orientations);
-        self.faces.push(crate::TopologyRange {
-            offset: face_wire_offset,
-            count: face_wire_count,
-        });
-        self.face_wire_roles.extend(wire_roles);
-
-        for edge_index in used_edges {
-            let edge_faces = self.edge_face_lists.get_mut(edge_index)?;
-            edge_faces.push(face_index);
-        }
-
-        Some(())
-    }
-}
-
 fn pack_ported_face_snapshot(
     context: &Context,
     prepared_face_shapes: &[PreparedFaceShape],
@@ -260,10 +229,30 @@ fn pack_ported_face_snapshot(
         else {
             return Ok(None);
         };
-        let Some(()) = accumulator.append_face_topology_outputs(face_index, prepared_face_topology)
-        else {
-            return Ok(None);
-        };
+        let face_wire_offset = accumulator.face_wire_indices.len();
+        let PreparedFaceTopology {
+            face_wire_indices,
+            face_wire_orientations,
+            wire_roles,
+            used_edges,
+        } = prepared_face_topology;
+        let face_wire_count = face_wire_indices.len();
+        accumulator.face_wire_indices.extend(face_wire_indices);
+        accumulator
+            .face_wire_orientations
+            .extend(face_wire_orientations);
+        accumulator.faces.push(crate::TopologyRange {
+            offset: face_wire_offset,
+            count: face_wire_count,
+        });
+        accumulator.face_wire_roles.extend(wire_roles);
+
+        for edge_index in used_edges {
+            let Some(edge_faces) = accumulator.edge_face_lists.get_mut(edge_index) else {
+                return Ok(None);
+            };
+            edge_faces.push(face_index);
+        }
     }
 
     let FaceSnapshotAccumulator {
