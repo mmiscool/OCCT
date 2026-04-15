@@ -335,26 +335,6 @@ impl PreparedFaceTopologyBuilder {
     }
 }
 
-impl PreparedFaceTopology {
-    fn collect_matched_face_wires(
-        context: &Context,
-        prepared_face_shape: &PreparedFaceShape,
-        root_wires: &[RootWireTopology],
-        root_edges: &[RootEdgeTopology],
-        edge_shapes: &[Shape],
-        vertex_positions: &[[f64; 3]],
-    ) -> Result<Option<Self>, Error> {
-        PreparedFaceTopologyBuilder::build(
-            context,
-            prepared_face_shape,
-            root_wires,
-            root_edges,
-            edge_shapes,
-            vertex_positions,
-        )
-    }
-}
-
 struct FaceSnapshotAccumulator {
     edge_face_lists: Vec<Vec<usize>>,
     faces: Vec<crate::TopologyRange>,
@@ -446,7 +426,7 @@ fn pack_ported_face_snapshot(
     let mut accumulator = FaceSnapshotAccumulator::new(edge_count, prepared_face_shapes.len());
 
     for (face_index, prepared_face_shape) in prepared_face_shapes.iter().enumerate() {
-        let Some(prepared_face_topology) = PreparedFaceTopology::collect_matched_face_wires(
+        let Some(prepared_face_topology) = PreparedFaceTopologyBuilder::build(
             context,
             prepared_face_shape,
             root_wires,

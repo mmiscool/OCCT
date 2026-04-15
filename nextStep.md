@@ -1,14 +1,14 @@
 # Next Task
 
-Collapse the thin `PreparedFaceTopology::collect_matched_face_wires()` wrapper in `face_snapshot.rs`.
+Introduce a constructor-style helper for the final `PreparedFaceTopology` assembly in `face_snapshot.rs`.
 
 ## Focus
 
-- Reevaluate whether callers should invoke the builder directly or whether `PreparedFaceTopology` should gain a constructor-style entry point that replaces the delegating wrapper.
+- Reevaluate whether `PreparedFaceTopologyBuilder::finish()` should call a new `PreparedFaceTopology` constructor or whether the final struct assembly should stay builder-owned with a clearer helper boundary.
 - Keep `PreparedFaceTopology` as the final assembled result and preserve the direct snapshot accumulator handoff.
 - Preserve the shared planar-face validation rule, per-wire root-wire matching behavior, planar wire area computation, face range offsets, edge-face ordering, and packed snapshot output unchanged.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the cleanup.
 
 ## Why This Is Next
 
-With setup, per-wire collection, matching, and role classification now folded into the builder, the remaining extra layer on this path is the delegating `PreparedFaceTopology::collect_matched_face_wires()` wrapper. Collapsing that boundary is the next bounded cleanup toward a single-owner construction path.
+With the delegating wrapper removed, `PreparedFaceTopology` is now a pure output carrier and the remaining direct ownership question is the final struct assembly in `PreparedFaceTopologyBuilder::finish()`. Introducing a constructor-style helper is the next bounded cleanup to make the final boundary explicit without changing the packed snapshot behavior.
