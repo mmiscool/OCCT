@@ -1,4 +1,4 @@
-use super::topology::TopologySnapshotRootFields;
+use super::snapshot_build::TopologySnapshotRootFields;
 use super::*;
 
 #[derive(Clone, Copy, Debug)]

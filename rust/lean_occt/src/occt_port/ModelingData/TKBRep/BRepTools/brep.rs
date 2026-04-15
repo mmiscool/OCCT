@@ -12,6 +12,7 @@ mod math;
 mod mesh;
 mod root_topology;
 mod shape_queries;
+mod snapshot_build;
 mod summary;
 mod swept_face;
 mod topology;
