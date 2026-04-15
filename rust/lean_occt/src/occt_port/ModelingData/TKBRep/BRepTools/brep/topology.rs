@@ -1,4 +1,4 @@
-use super::face_snapshot::ported_face_topology;
+use super::face_snapshot::{ported_face_topology, validate_ported_face_snapshot};
 use super::root_topology::{pack_wire_topology, root_edge_topology, root_wire_topology};
 use super::*;
 
@@ -7,15 +7,8 @@ pub(super) fn ported_topology_snapshot(
     shape: &Shape,
 ) -> Result<Option<TopologySnapshot>, Error> {
     let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
-    for face_shape in &face_shapes {
-        let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-        let geometry = match context.face_geometry(face_shape) {
-            Ok(geometry) => geometry,
-            Err(_) => context.face_geometry_occt(face_shape)?,
-        };
-        if face_wire_shapes.len() > 1 && geometry.kind != crate::SurfaceKind::Plane {
-            return Ok(None);
-        }
+    if !validate_ported_face_snapshot(context, &face_shapes)? {
+        return Ok(None);
     }
 
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;

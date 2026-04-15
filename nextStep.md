@@ -1,15 +1,15 @@
 # Next Task
 
-Extract the face preflight validation loop out of `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` so the snapshot entry point stays narrowly focused on orchestration.
+Extract the remaining face-packing accumulation block out of `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` so the snapshot entry point becomes a thin coordinator over root loading and face-owned packing helpers.
 
 ## Focus
 
-- Move the leading face preflight loop in `ported_topology_snapshot()` into `brep/face_snapshot.rs` or a small sibling helper owned by that face-snapshot stage.
-- Keep the current behavior for multi-wire non-planar rejection, including the public `face_geometry()` with explicit OCCT fallback.
-- Leave `ported_topology_snapshot()` in `topology.rs`, but trim it down to root-shape loading plus final snapshot assembly over the already-split helpers.
+- Move the block that builds `edge_face_lists`, `faces`, `face_wire_indices`, `face_wire_orientations`, `face_wire_roles`, and final `edge_faces` / `edge_face_indices` into `brep/face_snapshot.rs` or a tiny sibling helper owned by the face-packing stage.
+- Keep the current behavior for `ported_face_topology()` failure handling, edge-to-face adjacency packing, and face wire range/layout assembly.
+- Leave `ported_topology_snapshot()` in `topology.rs`, but trim it down to root-shape loading, a call into the face-packing helper, and final `TopologySnapshot` assembly.
 - Preserve the downstream `Context::ported_topology()` / `Context::ported_brep()` behavior and existing topology snapshot parity.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the extraction.
 
 ## Why This Is Next
 
-With the root wire packing helper moved out, `topology.rs` is now a single snapshot function whose first chunk is still face-specific validation logic. Pulling that preflight into the face-owned stage is the smallest bounded cleanup that makes the snapshot entry point read as orchestration over root loading, face matching, and final packing.
+With the preflight validation now owned by the face-snapshot stage, the remaining face-specific logic in `topology.rs` is the accumulation and packing block that turns per-face matches into the final face and edge-face ranges. Pulling that next keeps the snapshot entry point converging on pure orchestration over already-split topology stages.

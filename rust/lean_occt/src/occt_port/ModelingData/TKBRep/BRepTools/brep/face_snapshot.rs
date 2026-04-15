@@ -11,6 +11,24 @@ pub(super) struct PortedFaceTopology {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
+pub(super) fn validate_ported_face_snapshot(
+    context: &Context,
+    face_shapes: &[Shape],
+) -> Result<bool, Error> {
+    for face_shape in face_shapes {
+        let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
+        let geometry = match context.face_geometry(face_shape) {
+            Ok(geometry) => geometry,
+            Err(_) => context.face_geometry_occt(face_shape)?,
+        };
+        if face_wire_shapes.len() > 1 && geometry.kind != crate::SurfaceKind::Plane {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 pub(super) fn ported_face_topology(
     context: &Context,
     face_shape: &Shape,
