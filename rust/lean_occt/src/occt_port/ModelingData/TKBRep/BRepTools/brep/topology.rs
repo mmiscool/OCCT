@@ -1,4 +1,4 @@
-use super::face_snapshot::{ported_face_topology, validate_ported_face_snapshot};
+use super::face_snapshot::{pack_ported_face_snapshot, validate_ported_face_snapshot};
 use super::root_topology::{pack_wire_topology, root_edge_topology, root_wire_topology};
 use super::*;
 
@@ -43,64 +43,32 @@ pub(super) fn ported_topology_snapshot(
     }
     let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
         pack_wire_topology(&root_wires);
-    let mut edge_face_lists = vec![Vec::new(); edges.len()];
-    let mut faces = Vec::with_capacity(face_shapes.len());
-    let mut face_wire_indices = Vec::new();
-    let mut face_wire_orientations = Vec::new();
-    let mut face_wire_roles = Vec::new();
-
-    for (face_index, face_shape) in face_shapes.iter().enumerate() {
-        let Some(face_topology) = ported_face_topology(
-            context,
-            face_shape,
-            &root_wires,
-            &root_edges,
-            &edge_shapes,
-            &vertex_positions,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        faces.push(crate::TopologyRange {
-            offset: face_wire_indices.len(),
-            count: face_topology.face_wire_indices.len(),
-        });
-        face_wire_indices.extend(face_topology.face_wire_indices);
-        face_wire_orientations.extend(face_topology.face_wire_orientations);
-        face_wire_roles.extend(face_topology.face_wire_roles);
-
-        for edge_index in face_topology.edge_indices {
-            let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
-                return Ok(None);
-            };
-            edge_faces.push(face_index);
-        }
-    }
-
-    let mut edge_faces = Vec::with_capacity(edges.len());
-    let mut edge_face_indices = Vec::new();
-    for face_indices in edge_face_lists {
-        edge_faces.push(crate::TopologyRange {
-            offset: edge_face_indices.len(),
-            count: face_indices.len(),
-        });
-        edge_face_indices.extend(face_indices);
-    }
+    let Some(face_topology) = pack_ported_face_snapshot(
+        context,
+        &face_shapes,
+        &root_wires,
+        &root_edges,
+        &edge_shapes,
+        &vertex_positions,
+        edges.len(),
+    )?
+    else {
+        return Ok(None);
+    };
 
     Ok(Some(TopologySnapshot {
         vertex_positions,
         edges,
-        edge_faces,
-        edge_face_indices,
+        edge_faces: face_topology.edge_faces,
+        edge_face_indices: face_topology.edge_face_indices,
         wires,
         wire_edge_indices,
         wire_edge_orientations,
         wire_vertices,
         wire_vertex_indices,
-        faces,
-        face_wire_indices,
-        face_wire_orientations,
-        face_wire_roles,
+        faces: face_topology.faces,
+        face_wire_indices: face_topology.face_wire_indices,
+        face_wire_orientations: face_topology.face_wire_orientations,
+        face_wire_roles: face_topology.face_wire_roles,
     }))
 }

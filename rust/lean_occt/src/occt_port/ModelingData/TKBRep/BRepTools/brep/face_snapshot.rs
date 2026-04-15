@@ -11,6 +11,15 @@ pub(super) struct PortedFaceTopology {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
+pub(super) struct PackedFaceTopologySnapshot {
+    pub(super) edge_faces: Vec<crate::TopologyRange>,
+    pub(super) edge_face_indices: Vec<usize>,
+    pub(super) faces: Vec<crate::TopologyRange>,
+    pub(super) face_wire_indices: Vec<usize>,
+    pub(super) face_wire_orientations: Vec<Orientation>,
+    pub(super) face_wire_roles: Vec<LoopRole>,
+}
+
 pub(super) fn validate_ported_face_snapshot(
     context: &Context,
     face_shapes: &[Shape],
@@ -121,6 +130,70 @@ pub(super) fn ported_face_topology(
 
     Ok(Some(PortedFaceTopology {
         edge_indices: used_edges,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }))
+}
+
+pub(super) fn pack_ported_face_snapshot(
+    context: &Context,
+    face_shapes: &[Shape],
+    root_wires: &[RootWireTopology],
+    root_edges: &[RootEdgeTopology],
+    edge_shapes: &[Shape],
+    vertex_positions: &[[f64; 3]],
+    edge_count: usize,
+) -> Result<Option<PackedFaceTopologySnapshot>, Error> {
+    let mut edge_face_lists = vec![Vec::new(); edge_count];
+    let mut faces = Vec::with_capacity(face_shapes.len());
+    let mut face_wire_indices = Vec::new();
+    let mut face_wire_orientations = Vec::new();
+    let mut face_wire_roles = Vec::new();
+
+    for (face_index, face_shape) in face_shapes.iter().enumerate() {
+        let Some(face_topology) = ported_face_topology(
+            context,
+            face_shape,
+            root_wires,
+            root_edges,
+            edge_shapes,
+            vertex_positions,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        faces.push(crate::TopologyRange {
+            offset: face_wire_indices.len(),
+            count: face_topology.face_wire_indices.len(),
+        });
+        face_wire_indices.extend(face_topology.face_wire_indices);
+        face_wire_orientations.extend(face_topology.face_wire_orientations);
+        face_wire_roles.extend(face_topology.face_wire_roles);
+
+        for edge_index in face_topology.edge_indices {
+            let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
+                return Ok(None);
+            };
+            edge_faces.push(face_index);
+        }
+    }
+
+    let mut edge_faces = Vec::with_capacity(edge_count);
+    let mut edge_face_indices = Vec::new();
+    for face_indices in edge_face_lists {
+        edge_faces.push(crate::TopologyRange {
+            offset: edge_face_indices.len(),
+            count: face_indices.len(),
+        });
+        edge_face_indices.extend(face_indices);
+    }
+
+    Ok(Some(PackedFaceTopologySnapshot {
+        edge_faces,
+        edge_face_indices,
+        faces,
         face_wire_indices,
         face_wire_orientations,
         face_wire_roles,
