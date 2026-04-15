@@ -45,13 +45,6 @@ enum PreparedPlanarFace {
     Unsupported,
 }
 
-struct CollectedFaceWires {
-    face_wire_indices: Vec<usize>,
-    face_wire_orientations: Vec<Orientation>,
-    face_wire_areas: Vec<f64>,
-    used_edges: BTreeSet<usize>,
-}
-
 struct PreparedFaceTopology {
     face_wire_indices: Vec<usize>,
     face_wire_orientations: Vec<Orientation>,
@@ -80,7 +73,7 @@ impl PreparedFaceTopology {
             PreparedPlanarFace::Unsupported => return Ok(None),
         };
 
-        let Some(collected_face_wires) = Self::collect_matched_face_wires(
+        Self::collect_matched_face_wires(
             context,
             &face_wire_shapes,
             root_wires,
@@ -88,23 +81,7 @@ impl PreparedFaceTopology {
             edge_shapes,
             vertex_positions,
             planar_face,
-        )?
-        else {
-            return Ok(None);
-        };
-        let Some(wire_roles) = Self::classify_wire_roles(
-            collected_face_wires.face_wire_indices.len(),
-            &collected_face_wires.face_wire_areas,
-        ) else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self {
-            face_wire_indices: collected_face_wires.face_wire_indices,
-            face_wire_orientations: collected_face_wires.face_wire_orientations,
-            wire_roles,
-            used_edges: collected_face_wires.used_edges,
-        }))
+        )
     }
 
     fn load_planar_face(
@@ -133,7 +110,7 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
         planar_face: Option<(PlanePayload, FaceGeometry)>,
-    ) -> Result<Option<CollectedFaceWires>, Error> {
+    ) -> Result<Option<Self>, Error> {
         let mut used_root_wire_indices = BTreeSet::new();
         let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
         let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
@@ -173,10 +150,15 @@ impl PreparedFaceTopology {
             }
         }
 
-        Ok(Some(CollectedFaceWires {
+        let Some(wire_roles) = Self::classify_wire_roles(face_wire_indices.len(), &face_wire_areas)
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
             face_wire_indices,
             face_wire_orientations,
-            face_wire_areas,
+            wire_roles,
             used_edges,
         }))
     }

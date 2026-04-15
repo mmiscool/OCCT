@@ -1,10 +1,10 @@
 # Next Task
 
-Tighten the remaining split between `CollectedFaceWires` and `PreparedFaceTopology`.
+Tighten the duplicated face-wire preload and planar gate in `face_snapshot.rs`.
 
 ## Focus
 
-- Now that collection is back to local ownership, reevaluate whether `CollectedFaceWires` should keep its current role or hand off more directly into `PreparedFaceTopology`.
+- Reevaluate the repeated `subshapes_occt(..., ShapeKind::Wire)` / wire-count load and planar multi-wire decision that currently happens in both `validate_ported_face_snapshot()` and `PreparedFaceTopology::load()`.
 - Keep `PreparedFaceTopology` as the owner of per-face setup and preserve the direct accumulator handoff.
 - Preserve the shared planar-face validation rule, face-wire matching behavior, planar wire area computation, face range offsets, edge-face ordering, and packed snapshot output unchanged.
 - Preserve the downstream `Context::ported_topology()` / `Context::ported_brep()` behavior and existing topology snapshot parity.
@@ -12,4 +12,4 @@ Tighten the remaining split between `CollectedFaceWires` and `PreparedFaceTopolo
 
 ## Why This Is Next
 
-The mutable out-parameter path is gone, but there is still a small two-step transition from `CollectedFaceWires` into `PreparedFaceTopology`. Tightening that boundary is the next small cleanup that should simplify the load path without changing behavior.
+The temporary `CollectedFaceWires` boundary is gone, but the module still reloads face wires and re-derives the same planar preflight facts in both the snapshot validator and the per-face loader. Tightening that shared entry condition is the next small cleanup that should simplify the face snapshot path without changing behavior.
