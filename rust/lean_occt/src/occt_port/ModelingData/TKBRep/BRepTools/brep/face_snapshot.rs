@@ -12,12 +12,6 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-#[derive(Clone, Copy)]
-struct PreparedPlanarFace {
-    plane: PlanePayload,
-    geometry: FaceGeometry,
-}
-
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -64,17 +58,6 @@ impl PreparedFaceShape {
             Err(_) => context.face_geometry_occt(face_shape)?,
         };
         Ok(geometry.kind == crate::SurfaceKind::Plane)
-    }
-
-    fn planar_face(&self, context: &Context) -> Result<Option<PreparedPlanarFace>, Error> {
-        if self.face_wire_shapes.len() <= 1 {
-            return Ok(None);
-        }
-
-        Ok(Some(PreparedPlanarFace {
-            plane: context.face_plane_payload_occt(&self.face_shape)?,
-            geometry: context.face_geometry_occt(&self.face_shape)?,
-        }))
     }
 }
 
@@ -123,7 +106,14 @@ impl PreparedFaceTopologyBuilder {
         }
 
         let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
-        let planar_face = prepared_face_shape.planar_face(context)?;
+        let planar_face = if face_wire_shapes.len() <= 1 {
+            None
+        } else {
+            Some((
+                context.face_plane_payload_occt(&prepared_face_shape.face_shape)?,
+                context.face_geometry_occt(&prepared_face_shape.face_shape)?,
+            ))
+        };
         let mut builder = Self {
             used_root_wire_indices: BTreeSet::new(),
             face_wire_indices: Vec::with_capacity(face_wire_shapes.len()),
@@ -148,11 +138,11 @@ impl PreparedFaceTopologyBuilder {
             let orientation = context.shape_orientation(face_wire_shape)?;
             let used_edges = face_wire_topology.edge_indices;
 
-            let wire_area = if let Some(planar_face) = planar_face {
+            let wire_area = if let Some((plane, geometry)) = planar_face {
                 let Some(wire_area) = planar_wire_area_magnitude(
                     context,
-                    planar_face.plane,
-                    planar_face.geometry,
+                    plane,
+                    geometry,
                     &root_wires[root_wire_index],
                     edge_shapes,
                     root_edges,
