@@ -163,7 +163,13 @@ impl PreparedFaceTopologyBuilder {
 
         let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
         let planar_face = prepared_face_shape.planar_face(context)?;
-        let mut builder = Self::new(face_wire_shapes.len());
+        let mut builder = Self {
+            used_root_wire_indices: BTreeSet::new(),
+            face_wire_indices: Vec::with_capacity(face_wire_shapes.len()),
+            face_wire_orientations: Vec::with_capacity(face_wire_shapes.len()),
+            face_wire_areas: Vec::new(),
+            used_edges: BTreeSet::new(),
+        };
 
         for face_wire_shape in face_wire_shapes {
             let Some(face_wire_topology) =
@@ -211,16 +217,6 @@ impl PreparedFaceTopologyBuilder {
         }
 
         Ok(builder.finish())
-    }
-
-    fn new(face_wire_count: usize) -> Self {
-        Self {
-            used_root_wire_indices: BTreeSet::new(),
-            face_wire_indices: Vec::with_capacity(face_wire_count),
-            face_wire_orientations: Vec::with_capacity(face_wire_count),
-            face_wire_areas: Vec::new(),
-            used_edges: BTreeSet::new(),
-        }
     }
 
     fn finish(self) -> Option<PreparedFaceTopology> {
