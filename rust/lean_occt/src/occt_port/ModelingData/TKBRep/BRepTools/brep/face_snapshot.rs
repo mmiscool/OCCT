@@ -12,6 +12,12 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
+#[derive(Clone, Copy)]
+struct PreparedPlanarFace {
+    plane: PlanePayload,
+    geometry: FaceGeometry,
+}
+
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -60,18 +66,15 @@ impl PreparedFaceShape {
         Ok(geometry.kind == crate::SurfaceKind::Plane)
     }
 
-    fn planar_face(
-        &self,
-        context: &Context,
-    ) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
+    fn planar_face(&self, context: &Context) -> Result<Option<PreparedPlanarFace>, Error> {
         if self.face_wire_shapes.len() <= 1 {
             return Ok(None);
         }
 
-        Ok(Some((
-            context.face_plane_payload_occt(&self.face_shape)?,
-            context.face_geometry_occt(&self.face_shape)?,
-        )))
+        Ok(Some(PreparedPlanarFace {
+            plane: context.face_plane_payload_occt(&self.face_shape)?,
+            geometry: context.face_geometry_occt(&self.face_shape)?,
+        }))
     }
 }
 
@@ -120,11 +123,11 @@ impl PreparedFaceTopology {
             face_wire_indices.push(root_wire_index);
             face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
 
-            if let Some((plane, face_geometry)) = planar_face {
+            if let Some(planar_face) = planar_face {
                 let Some(wire_area) = planar_wire_area_magnitude(
                     context,
-                    plane,
-                    face_geometry,
+                    planar_face.plane,
+                    planar_face.geometry,
                     &root_wires[root_wire_index],
                     edge_shapes,
                     root_edges,
