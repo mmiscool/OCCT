@@ -1,4 +1,5 @@
-use super::root_topology::{oriented_edge_geometry, RootEdgeTopology, RootWireTopology};
+use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
+use super::root_topology::RootWireTopology;
 use super::*;
 
 #[derive(Clone, Copy, Debug)]

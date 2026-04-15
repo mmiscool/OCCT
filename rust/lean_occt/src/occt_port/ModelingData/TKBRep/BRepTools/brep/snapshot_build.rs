@@ -4,7 +4,7 @@ pub(super) struct TopologySnapshotRootFields {
     pub(super) vertex_positions: Vec<[f64; 3]>,
     pub(super) edge_shapes: Vec<Shape>,
     pub(super) edges: Vec<crate::TopologyEdge>,
-    pub(super) root_edges: Vec<super::root_topology::RootEdgeTopology>,
+    pub(super) root_edges: Vec<super::edge_topology::RootEdgeTopology>,
     pub(super) root_wires: Vec<super::root_topology::RootWireTopology>,
     pub(super) wires: Vec<crate::TopologyRange>,
     pub(super) wire_edge_indices: Vec<usize>,

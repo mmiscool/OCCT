@@ -1,5 +1,5 @@
+use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
 use super::face_topology::{single_face_topology_with_route, FaceSurfaceRoute, SingleFaceTopology};
-use super::root_topology::{oriented_edge_geometry, RootEdgeTopology};
 use super::*;
 
 #[derive(Clone, Copy, Debug)]

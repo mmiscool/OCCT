@@ -1,6 +1,5 @@
-use super::root_topology::{
-    oriented_edge_geometry, root_wire_topology, RootEdgeTopology, RootWireTopology,
-};
+use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
+use super::root_topology::{root_wire_topology, RootWireTopology};
 use super::snapshot_build::TopologySnapshotFaceFields;
 use super::swept_face::append_root_edge_sample_points;
 use super::*;

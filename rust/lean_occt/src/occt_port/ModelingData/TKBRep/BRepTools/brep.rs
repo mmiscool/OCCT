@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
 mod brep_materialize;
+mod edge_topology;
 mod face_metrics;
 mod face_prepare;
 mod face_queries;
