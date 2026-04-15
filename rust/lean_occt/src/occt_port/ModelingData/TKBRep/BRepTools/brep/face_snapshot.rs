@@ -191,21 +191,16 @@ impl PreparedFaceTopologyBuilder {
         }
     }
 
-    fn used_root_wire_indices(&self) -> &BTreeSet<usize> {
-        &self.used_root_wire_indices
-    }
-
-    fn append_matched_face_wire(&mut self, matched_face_wire: &MatchedFaceWire) {
+    fn apply_face_wire(&mut self, matched_face_wire: &MatchedFaceWire, wire_area: Option<f64>) {
         matched_face_wire.append_to(
             &mut self.used_root_wire_indices,
             &mut self.face_wire_indices,
             &mut self.face_wire_orientations,
             &mut self.used_edges,
         );
-    }
-
-    fn push_face_wire_area(&mut self, wire_area: f64) {
-        self.face_wire_areas.push(wire_area);
+        if let Some(wire_area) = wire_area {
+            self.face_wire_areas.push(wire_area);
+        }
     }
 
     fn collect_face_wire(
@@ -218,20 +213,17 @@ impl PreparedFaceTopologyBuilder {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
     ) -> Result<Option<()>, Error> {
-        let Some(matched_face_wire) = Self::match_face_wire(
+        let Some(matched_face_wire) = self.match_face_wire(
             context,
             face_wire_shape,
             root_wires,
             root_edges,
             vertex_positions,
-            self.used_root_wire_indices(),
         )?
         else {
             return Ok(None);
         };
-        self.append_matched_face_wire(&matched_face_wire);
-
-        if let Some(planar_face) = planar_face {
+        let wire_area = if let Some(planar_face) = planar_face {
             let Some(wire_area) = matched_face_wire.planar_area_magnitude(
                 context,
                 planar_face,
@@ -242,28 +234,33 @@ impl PreparedFaceTopologyBuilder {
             else {
                 return Ok(None);
             };
-            self.push_face_wire_area(wire_area);
-        }
+            Some(wire_area)
+        } else {
+            None
+        };
+        self.apply_face_wire(&matched_face_wire, wire_area);
 
         Ok(Some(()))
     }
 
     fn match_face_wire(
+        &self,
         context: &Context,
         face_wire_shape: &Shape,
         root_wires: &[RootWireTopology],
         root_edges: &[RootEdgeTopology],
         vertex_positions: &[[f64; 3]],
-        used_root_wire_indices: &BTreeSet<usize>,
     ) -> Result<Option<MatchedFaceWire>, Error> {
         let Some(face_wire_topology) =
             root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
         else {
             return Ok(None);
         };
-        let Some(root_wire_index) =
-            match_root_wire_index(root_wires, &face_wire_topology, used_root_wire_indices)
-        else {
+        let Some(root_wire_index) = match_root_wire_index(
+            root_wires,
+            &face_wire_topology,
+            &self.used_root_wire_indices,
+        ) else {
             return Ok(None);
         };
 
