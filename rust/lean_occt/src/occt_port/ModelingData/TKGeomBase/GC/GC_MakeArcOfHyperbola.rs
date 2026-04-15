@@ -1,0 +1,2 @@
+// Placeholder for the Rust port of the OCCT `GC_MakeArcOfHyperbola` component in
+// `src/ModelingData/TKGeomBase/GC`, sourced from `GC_MakeArcOfHyperbola.cxx`, `GC_MakeArcOfHyperbola.hxx`.

@@ -1,0 +1,2 @@
+// Placeholder for the Rust port of the OCCT `StepRepr_PropertyDefinitionRepresentation` component in
+// `src/DataExchange/TKSTEPCore/StepRepr`, sourced from `StepRepr_PropertyDefinitionRepresentation.cxx`, `StepRepr_PropertyDefinitionRepresentation.hxx`.

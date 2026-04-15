@@ -1,0 +1,2 @@
+// Placeholder for the Rust port of the OCCT `IntWalk_TheFunctionOfTheInt2S_0` component in
+// `src/ModelingAlgorithms/TKGeomAlgo/IntWalk`, sourced from `IntWalk_TheFunctionOfTheInt2S_0.cxx`.

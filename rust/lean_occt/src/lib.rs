@@ -6,6 +6,7 @@ use std::ptr::NonNull;
 
 use serde::{Deserialize, Serialize};
 
+mod occt_port;
 mod brep;
 mod document;
 mod high_level;
