@@ -5,21 +5,20 @@ mod wire_metrics;
 
 use self::wire_metrics::length_integral;
 pub(crate) use self::wire_metrics::{
-    analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume,
-    planar_wire_signed_area,
+    analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, planar_wire_signed_area,
 };
 
+use self::payloads::*;
 use crate::brep::{
     ported_face_area as ported_face_area_value,
     ported_face_surface_descriptor as ported_face_surface_descriptor_value,
 };
 use crate::{
-    CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry,
-    EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample,
-    LinePayload, OffsetSurfacePayload, Orientation, PlanePayload,
-    RevolutionSurfacePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
+    CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry, EdgeSample,
+    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, LinePayload,
+    OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
+    SpherePayload, SurfaceKind, TorusPayload,
 };
-use self::payloads::*;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CurveEvaluation {

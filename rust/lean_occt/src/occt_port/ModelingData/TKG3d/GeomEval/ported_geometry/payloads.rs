@@ -7,11 +7,14 @@ use crate::{
 };
 
 use super::{
-    sample_circle, sample_cone, sample_cylinder, sample_ellipse, sample_sphere, sample_torus,
-    Atan2Components, add3, cross3, dot3, norm3, normalize3, scale3, subtract3,
+    add3, cross3, dot3, norm3, normalize3, sample_circle, sample_cone, sample_cylinder,
+    sample_ellipse, sample_sphere, sample_torus, scale3, subtract3, Atan2Components,
 };
 
-pub(super) fn ported_line_geometry(payload: LinePayload, endpoints: EdgeEndpoints) -> Option<EdgeGeometry> {
+pub(super) fn ported_line_geometry(
+    payload: LinePayload,
+    endpoints: EdgeEndpoints,
+) -> Option<EdgeGeometry> {
     let start_parameter = line_parameter(payload, endpoints.start)?;
     let end_parameter = line_parameter(payload, endpoints.end)?;
     Some(EdgeGeometry {
@@ -148,7 +151,10 @@ fn canonicalize_periodic_parameters(
     )
 }
 
-pub(super) fn ported_analytic_face_geometry(kind: SurfaceKind, bounds: FaceUvBounds) -> FaceGeometry {
+pub(super) fn ported_analytic_face_geometry(
+    kind: SurfaceKind,
+    bounds: FaceUvBounds,
+) -> FaceGeometry {
     let (is_u_closed, is_v_closed, is_u_periodic, is_v_periodic, u_period, v_period) = match kind {
         SurfaceKind::Plane => (false, false, false, false, 0.0, 0.0),
         SurfaceKind::Cylinder | SurfaceKind::Cone | SurfaceKind::Sphere => {

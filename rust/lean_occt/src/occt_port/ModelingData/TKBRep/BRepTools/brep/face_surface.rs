@@ -1,3 +1,7 @@
+use super::swept_face::{
+    face_curve_candidates, select_swept_face_basis_curve, SweptBasisSelection,
+};
+use super::topology::face_loops;
 use super::*;
 
 pub(crate) fn ported_face_surface_descriptor(
