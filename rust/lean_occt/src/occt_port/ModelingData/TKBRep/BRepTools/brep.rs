@@ -8,6 +8,7 @@ mod face_surface;
 mod face_topology;
 mod math;
 mod mesh;
+mod shape_queries;
 mod summary;
 mod swept_face;
 mod topology;
@@ -19,10 +20,10 @@ use self::mesh::{
     bbox_from_points, mesh_bbox, polyhedral_mesh_area, polyhedral_mesh_sample,
     polyhedral_mesh_volume, union_bbox,
 };
+use self::shape_queries::{ported_edge_endpoints, ported_vertex_point};
 use self::summary::ported_shape_summary;
 use self::topology::{
-    ported_brep_edges, ported_brep_vertices, ported_brep_wires, ported_edge_endpoints,
-    ported_topology_snapshot, ported_vertex_point,
+    ported_brep_edges, ported_brep_vertices, ported_brep_wires, ported_topology_snapshot,
 };
 
 use crate::ported_geometry::{
