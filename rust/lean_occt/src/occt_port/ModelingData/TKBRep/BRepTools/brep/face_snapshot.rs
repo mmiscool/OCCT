@@ -201,18 +201,6 @@ struct FaceSnapshotAccumulator {
 }
 
 impl FaceSnapshotAccumulator {
-    fn into_fields(self) -> TopologySnapshotFaceFields {
-        let (edge_faces, edge_face_indices) = Self::flatten_edge_face_lists(self.edge_face_lists);
-        TopologySnapshotFaceFields {
-            edge_faces,
-            edge_face_indices,
-            faces: self.faces,
-            face_wire_indices: self.face_wire_indices,
-            face_wire_orientations: self.face_wire_orientations,
-            face_wire_roles: self.face_wire_roles,
-        }
-    }
-
     fn flatten_edge_face_lists(
         edge_face_lists: Vec<Vec<usize>>,
     ) -> (Vec<crate::TopologyRange>, Vec<usize>) {
@@ -296,7 +284,24 @@ fn pack_ported_face_snapshot(
         };
     }
 
-    Ok(Some(accumulator.into_fields()))
+    let FaceSnapshotAccumulator {
+        edge_face_lists,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    } = accumulator;
+    let (edge_faces, edge_face_indices) =
+        FaceSnapshotAccumulator::flatten_edge_face_lists(edge_face_lists);
+
+    Ok(Some(TopologySnapshotFaceFields {
+        edge_faces,
+        edge_face_indices,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }))
 }
 
 pub(super) fn load_ported_face_snapshot(
