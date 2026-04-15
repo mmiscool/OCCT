@@ -68,11 +68,15 @@ impl PreparedFaceTopologyBuilder {
             else {
                 return Ok(None);
             };
-            let Some(root_wire_index) = match_root_wire_index(
-                root_wires,
-                &face_wire_topology,
-                &builder.used_root_wire_indices,
-            ) else {
+            let Some(root_wire_index) = root_wires
+                .iter()
+                .enumerate()
+                .find(|(index, root_wire)| {
+                    !builder.used_root_wire_indices.contains(index)
+                        && *root_wire == &face_wire_topology
+                })
+                .map(|(index, _)| index)
+            else {
                 return Ok(None);
             };
             let orientation = context.shape_orientation(face_wire_shape)?;
@@ -277,20 +281,6 @@ pub(super) fn load_ported_face_snapshot(
         vertex_positions,
         edge_count,
     )
-}
-
-fn match_root_wire_index(
-    root_wires: &[RootWireTopology],
-    face_wire_topology: &RootWireTopology,
-    used_root_wire_indices: &BTreeSet<usize>,
-) -> Option<usize> {
-    root_wires
-        .iter()
-        .enumerate()
-        .find(|(index, root_wire)| {
-            !used_root_wire_indices.contains(index) && *root_wire == face_wire_topology
-        })
-        .map(|(index, _)| index)
 }
 
 fn planar_wire_area_magnitude(
