@@ -20,10 +20,19 @@ pub(super) struct PackedFaceTopologySnapshot {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-pub(super) fn validate_ported_face_snapshot(
+pub(super) fn load_ported_face_snapshot_shapes(
     context: &Context,
-    face_shapes: &[Shape],
-) -> Result<bool, Error> {
+    shape: &Shape,
+) -> Result<Option<Vec<Shape>>, Error> {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    if !validate_ported_face_snapshot(context, &face_shapes)? {
+        return Ok(None);
+    }
+
+    Ok(Some(face_shapes))
+}
+
+fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Result<bool, Error> {
     for face_shape in face_shapes {
         let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
         let geometry = match context.face_geometry(face_shape) {

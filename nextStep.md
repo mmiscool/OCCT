@@ -1,15 +1,15 @@
 # Next Task
 
-Extract the remaining face-shape loading and validation entry out of `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` so the snapshot entry point becomes a thin coordinator over fully-owned root and face snapshot helpers.
+Collapse the remaining two-step face snapshot entry in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` into a single face-owned helper so the snapshot entry point is just root load, face load, and final assembly.
 
 ## Focus
 
-- Move the `subshapes_occt(..., ShapeKind::Face)` load plus validation entry path into `brep/face_snapshot.rs`, ideally as a helper that returns the validated face-shape list needed by the face packer.
-- Keep the current behavior for multi-wire non-planar rejection, the public `face_geometry()` with explicit OCCT fallback, and the face-shape ordering consumed by `pack_ported_face_snapshot()`.
-- Leave `ported_topology_snapshot()` in `topology.rs`, but trim it down to a call into the face snapshot input helper, a call into the root snapshot helper, a call into the face packing helper, and final `TopologySnapshot` assembly.
+- Combine the validated face-shape load and the call to `pack_ported_face_snapshot()` behind one face-owned helper in `brep/face_snapshot.rs`.
+- Keep the current behavior for face ordering, multi-wire non-planar rejection, and `ported_face_topology()` failure handling.
+- Leave `ported_topology_snapshot()` in `topology.rs`, but trim it down to a call into the face snapshot helper, a call into the root snapshot helper, and final `TopologySnapshot` assembly.
 - Preserve the downstream `Context::ported_topology()` / `Context::ported_brep()` behavior and existing topology snapshot parity.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the extraction.
 
 ## Why This Is Next
 
-With the root-loading prelude now owned by `brep/root_topology.rs`, the remaining stage-specific logic in `topology.rs` is the front-door face-shape load and validation call. Pulling that next leaves the snapshot entry point as a thin coordinator over one face input helper, one root input helper, one face packing helper, and final assembly.
+With face-shape loading now owned by `brep/face_snapshot.rs`, the remaining face-specific work visible in `topology.rs` is the separate call into `pack_ported_face_snapshot()`. Folding those two face-stage calls together is the smallest cleanup that leaves the snapshot entry point reading as root load, face load, and final `TopologySnapshot` assembly.
