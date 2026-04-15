@@ -297,7 +297,10 @@ impl PortedSurface {
                 ported_cylinder_payload(context, shape, geometry)?
                     .unwrap_or(context.face_cylinder_payload_occt(shape)?),
             ))),
-            SurfaceKind::Cone => Ok(Some(Self::Cone(context.face_cone_payload_occt(shape)?))),
+            SurfaceKind::Cone => Ok(Some(Self::Cone(
+                ported_cone_payload(context, shape, geometry)?
+                    .unwrap_or(context.face_cone_payload_occt(shape)?),
+            ))),
             SurfaceKind::Sphere => Ok(Some(Self::Sphere(context.face_sphere_payload_occt(shape)?))),
             SurfaceKind::Torus => Ok(Some(Self::Torus(context.face_torus_payload_occt(shape)?))),
             _ => Ok(None),
@@ -1671,6 +1674,158 @@ fn ported_cylinder_payload(
     ) || !approx_points_eq(
         sample_cylinder(payload, [u0, geometry.v_max]).position,
         axis_sample.position,
+        1.0e-7,
+    ) {
+        return Ok(None);
+    }
+
+    Ok(Some(payload))
+}
+
+fn ported_cone_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<ConePayload>, Error> {
+    if geometry.kind != SurfaceKind::Cone {
+        return Ok(None);
+    }
+
+    let v_span = geometry.v_max - geometry.v_min;
+    if v_span.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let u0 = geometry.u_min;
+    let u1 = match select_periodic_probe_parameter(geometry.u_min, geometry.u_max) {
+        Some(parameter) => parameter,
+        None => return Ok(None),
+    };
+    let denominator = (u1 - u0).sin();
+    if denominator.abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let orientation = context.shape_orientation(shape)?;
+    let normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+
+    let base_sample = context.face_sample_occt(shape, [u0, geometry.v_min])?;
+    let base_top_sample = context.face_sample_occt(shape, [u0, geometry.v_max])?;
+    let probe_sample = context.face_sample_occt(shape, [u1, geometry.v_min])?;
+    let probe_top_sample = context.face_sample_occt(shape, [u1, geometry.v_max])?;
+    let normal0 = scale3(base_sample.normal, normal_sign);
+    let normal1 = scale3(probe_sample.normal, normal_sign);
+    let generatrix0 = normalize3(scale3(
+        subtract3(base_top_sample.position, base_sample.position),
+        1.0 / v_span,
+    ));
+    let generatrix1 = normalize3(scale3(
+        subtract3(probe_top_sample.position, probe_sample.position),
+        1.0 / v_span,
+    ));
+    let generatrix_delta = subtract3(generatrix1, generatrix0);
+    let normal_delta = subtract3(normal1, normal0);
+    let generatrix_delta_norm = norm3(generatrix_delta);
+    let normal_delta_norm = norm3(normal_delta);
+    if norm3(generatrix0) <= 1.0e-12
+        || norm3(generatrix1) <= 1.0e-12
+        || normal_delta_norm <= 1.0e-12
+    {
+        return Ok(None);
+    }
+
+    let semi_angle_magnitude = generatrix_delta_norm.atan2(normal_delta_norm);
+    let semi_angle_sign = if dot3(generatrix_delta, normal_delta) < 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let semi_angle = semi_angle_sign * semi_angle_magnitude;
+    let sin_angle = semi_angle.sin();
+    let cos_angle = semi_angle.cos();
+    if cos_angle.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let axis = normalize3(subtract3(
+        scale3(generatrix0, cos_angle),
+        scale3(normal0, sin_angle),
+    ));
+    let radial0 = normalize3(add3(
+        scale3(generatrix0, sin_angle),
+        scale3(normal0, cos_angle),
+    ));
+    let radial1 = normalize3(add3(
+        scale3(generatrix1, sin_angle),
+        scale3(normal1, cos_angle),
+    ));
+    let x_direction = scale3(
+        subtract3(scale3(radial0, u1.sin()), scale3(radial1, u0.sin())),
+        1.0 / denominator,
+    );
+    let y_direction = scale3(
+        subtract3(scale3(radial1, u0.cos()), scale3(radial0, u1.cos())),
+        1.0 / denominator,
+    );
+    let radial_delta = subtract3(radial1, radial0);
+    let radial_delta_norm2 = dot3(radial_delta, radial_delta);
+    if norm3(axis) <= 1.0e-12
+        || norm3(radial0) <= 1.0e-12
+        || norm3(radial1) <= 1.0e-12
+        || norm3(x_direction) <= 1.0e-12
+        || norm3(y_direction) <= 1.0e-12
+        || radial_delta_norm2 <= 1.0e-12
+    {
+        return Ok(None);
+    }
+
+    let radius_at_v_min = dot3(
+        subtract3(probe_sample.position, base_sample.position),
+        radial_delta,
+    ) / radial_delta_norm2;
+    let reference_radius = radius_at_v_min - geometry.v_min * sin_angle;
+    let payload = ConePayload {
+        origin: subtract3(
+            base_sample.position,
+            add3(
+                scale3(axis, geometry.v_min * cos_angle),
+                scale3(radial0, radius_at_v_min),
+            ),
+        ),
+        axis,
+        x_direction,
+        y_direction,
+        reference_radius,
+        semi_angle,
+    };
+
+    if !approx_points_eq(
+        sample_cone(payload, [u0, geometry.v_min]).position,
+        base_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cone(payload, [u1, geometry.v_min]).position,
+        probe_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cone(payload, [u0, geometry.v_max]).position,
+        base_top_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cone(payload, [u1, geometry.v_max]).position,
+        probe_top_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cone(payload, [u0, geometry.v_min]).normal,
+        normal0,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cone(payload, [u1, geometry.v_min]).normal,
+        normal1,
         1.0e-7,
     ) {
         return Ok(None);
