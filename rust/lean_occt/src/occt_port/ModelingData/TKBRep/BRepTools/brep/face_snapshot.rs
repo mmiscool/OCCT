@@ -235,12 +235,15 @@ impl FaceSnapshotAccumulator {
     fn append_face_topology_outputs(
         &mut self,
         face_index: usize,
-        face_wire_offset: usize,
-        face_wire_indices: Vec<usize>,
-        face_wire_orientations: Vec<Orientation>,
-        used_edges: BTreeSet<usize>,
-        wire_roles: Vec<LoopRole>,
+        prepared_face_topology: PreparedFaceTopology,
     ) -> Option<()> {
+        let face_wire_offset = self.face_wire_indices.len();
+        let PreparedFaceTopology {
+            face_wire_indices,
+            face_wire_orientations,
+            wire_roles,
+            used_edges,
+        } = prepared_face_topology;
         let face_wire_count = face_wire_indices.len();
         self.face_wire_indices.extend(face_wire_indices);
         self.face_wire_orientations.extend(face_wire_orientations);
@@ -256,22 +259,6 @@ impl FaceSnapshotAccumulator {
         }
 
         Some(())
-    }
-
-    fn append_prepared_face_topology(
-        &mut self,
-        face_index: usize,
-        prepared_face_topology: PreparedFaceTopology,
-    ) -> Option<()> {
-        let face_wire_offset = self.face_wire_indices.len();
-        self.append_face_topology_outputs(
-            face_index,
-            face_wire_offset,
-            prepared_face_topology.face_wire_indices,
-            prepared_face_topology.face_wire_orientations,
-            prepared_face_topology.used_edges,
-            prepared_face_topology.wire_roles,
-        )
     }
 }
 
@@ -298,8 +285,7 @@ fn pack_ported_face_snapshot(
         else {
             return Ok(None);
         };
-        let Some(()) =
-            accumulator.append_prepared_face_topology(face_index, prepared_face_topology)
+        let Some(()) = accumulator.append_face_topology_outputs(face_index, prepared_face_topology)
         else {
             return Ok(None);
         };
