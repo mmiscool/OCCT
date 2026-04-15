@@ -39,24 +39,6 @@ fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Re
     Ok(true)
 }
 
-fn load_planar_multi_wire_face(
-    context: &Context,
-    face_shape: &Shape,
-    face_wire_count: usize,
-) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
-    if face_wire_count <= 1 {
-        return Ok(None);
-    }
-    if !multi_wire_face_is_planar(context, face_shape, face_wire_count)? {
-        return Ok(None);
-    }
-
-    Ok(Some((
-        context.face_plane_payload_occt(face_shape)?,
-        context.face_geometry_occt(face_shape)?,
-    )))
-}
-
 struct MatchedFaceWires {
     face_wire_indices: Vec<usize>,
     face_wire_orientations: Vec<Orientation>,
@@ -83,15 +65,10 @@ impl PreparedFaceTopology {
             return Ok(None);
         }
 
-        let planar_face = if face_wire_shapes.len() > 1 {
-            let Some(planar_face) =
-                load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
-            else {
-                return Ok(None);
-            };
-            Some(planar_face)
-        } else {
-            None
+        let Some(planar_face) =
+            Self::load_planar_face(context, face_shape, face_wire_shapes.len())?
+        else {
+            return Ok(None);
         };
 
         let Some(matched_face_wires) = Self::collect_matched_face_wires(
@@ -114,6 +91,24 @@ impl PreparedFaceTopology {
             matched_face_wires,
             wire_roles,
         }))
+    }
+
+    fn load_planar_face(
+        context: &Context,
+        face_shape: &Shape,
+        face_wire_count: usize,
+    ) -> Result<Option<Option<(PlanePayload, FaceGeometry)>>, Error> {
+        if face_wire_count <= 1 {
+            return Ok(Some(None));
+        }
+        if !multi_wire_face_is_planar(context, face_shape, face_wire_count)? {
+            return Ok(None);
+        }
+
+        Ok(Some(Some((
+            context.face_plane_payload_occt(face_shape)?,
+            context.face_geometry_occt(face_shape)?,
+        ))))
     }
 
     fn collect_matched_face_wires(
