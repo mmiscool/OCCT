@@ -7,7 +7,7 @@ Minimal terminal UI helper with one class and no external dependencies.
 - Exposes a `lines` array where each item is one line on screen.
 - Automatically resizes that array to `terminal height - 1`.
 - Renders the buffer with `refresh()`.
-- Lets you subscribe to mouse click events with `onMouse(callback)`.
+- Lets you subscribe to mouse `click` and `drag` events with `onMouse(callback)`.
 
 ## Usage
 
@@ -21,7 +21,7 @@ ui.lines[1] = "Click in the terminal.";
 ui.refresh();
 
 const detachMouse = ui.onMouse((event) => {
-  ui.lines[2] = `Clicked ${event.button} at ${event.x}, ${event.y}`;
+  ui.lines[2] = `${event.type} ${event.button} at ${event.x}, ${event.y}`;
   ui.refresh();
 });
 

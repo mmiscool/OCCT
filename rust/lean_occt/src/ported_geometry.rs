@@ -294,7 +294,8 @@ impl PortedSurface {
                     .unwrap_or(context.face_plane_payload_occt(shape)?),
             ))),
             SurfaceKind::Cylinder => Ok(Some(Self::Cylinder(
-                context.face_cylinder_payload_occt(shape)?,
+                ported_cylinder_payload(context, shape, geometry)?
+                    .unwrap_or(context.face_cylinder_payload_occt(shape)?),
             ))),
             SurfaceKind::Cone => Ok(Some(Self::Cone(context.face_cone_payload_occt(shape)?))),
             SurfaceKind::Sphere => Ok(Some(Self::Sphere(context.face_sphere_payload_occt(shape)?))),
@@ -1583,6 +1584,101 @@ fn ported_plane_payload(
     }))
 }
 
+fn ported_cylinder_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<CylinderPayload>, Error> {
+    if geometry.kind != SurfaceKind::Cylinder {
+        return Ok(None);
+    }
+
+    let v_span = geometry.v_max - geometry.v_min;
+    if v_span.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let u0 = geometry.u_min;
+    let u1 = match select_periodic_probe_parameter(geometry.u_min, geometry.u_max) {
+        Some(parameter) => parameter,
+        None => return Ok(None),
+    };
+    let denominator = (u1 - u0).sin();
+    if denominator.abs() <= 1.0e-6 {
+        return Ok(None);
+    }
+
+    let orientation = context.shape_orientation(shape)?;
+    let base_sample = context.face_sample_occt(shape, [u0, geometry.v_min])?;
+    let axis_sample = context.face_sample_occt(shape, [u0, geometry.v_max])?;
+    let probe_sample = context.face_sample_occt(shape, [u1, geometry.v_min])?;
+    let normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+    let normal0 = scale3(base_sample.normal, normal_sign);
+    let normal1 = scale3(probe_sample.normal, normal_sign);
+    let axis = normalize3(scale3(
+        subtract3(axis_sample.position, base_sample.position),
+        1.0 / v_span,
+    ));
+    let x_direction = scale3(
+        subtract3(scale3(normal0, u1.sin()), scale3(normal1, u0.sin())),
+        1.0 / denominator,
+    );
+    let y_direction = scale3(
+        subtract3(scale3(normal1, u0.cos()), scale3(normal0, u1.cos())),
+        1.0 / denominator,
+    );
+    let normal_delta = subtract3(normal1, normal0);
+    let normal_delta_norm2 = dot3(normal_delta, normal_delta);
+    if norm3(axis) <= 1.0e-12
+        || norm3(x_direction) <= 1.0e-12
+        || norm3(y_direction) <= 1.0e-12
+        || normal_delta_norm2 <= 1.0e-12
+    {
+        return Ok(None);
+    }
+
+    let radius = dot3(
+        subtract3(probe_sample.position, base_sample.position),
+        normal_delta,
+    ) / normal_delta_norm2;
+    if radius.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let payload = CylinderPayload {
+        origin: subtract3(
+            base_sample.position,
+            add3(scale3(axis, geometry.v_min), scale3(normal0, radius)),
+        ),
+        axis,
+        x_direction,
+        y_direction,
+        radius,
+    };
+
+    if !approx_points_eq(
+        sample_cylinder(payload, [u0, geometry.v_min]).position,
+        base_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cylinder(payload, [u1, geometry.v_min]).position,
+        probe_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cylinder(payload, [u0, geometry.v_max]).position,
+        axis_sample.position,
+        1.0e-7,
+    ) {
+        return Ok(None);
+    }
+
+    Ok(Some(payload))
+}
+
 fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
     let period = period.abs();
     if period <= 1.0e-12 {
@@ -1610,6 +1706,19 @@ fn snap_periodic_parameter(value: f64, period: f64) -> f64 {
     } else {
         value
     }
+}
+
+fn select_periodic_probe_parameter(start: f64, end: f64) -> Option<f64> {
+    [0.25, 0.5, 0.75, 1.0]
+        .into_iter()
+        .map(|fraction| start + (end - start) * fraction)
+        .max_by(|lhs, rhs| {
+            (lhs - start)
+                .sin()
+                .abs()
+                .total_cmp(&(rhs - start).sin().abs())
+        })
+        .filter(|candidate| ((*candidate - start).sin()).abs() > 1.0e-6)
 }
 
 fn line_parameter(payload: LinePayload, point: [f64; 3]) -> Option<f64> {

@@ -72,6 +72,21 @@ assert.deepEqual(receivedEvent, {
   rawCode: 0
 });
 
+input.emit("data", "\u001b[<32;6;3M");
+
+assert.deepEqual(receivedEvent, {
+  type: "drag",
+  button: "left",
+  x: 5,
+  y: 2,
+  column: 6,
+  row: 3,
+  shift: false,
+  alt: false,
+  ctrl: false,
+  rawCode: 32
+});
+
 output.rows = 8;
 output.emit("resize");
 assert.equal(ui.lines.length, 7);

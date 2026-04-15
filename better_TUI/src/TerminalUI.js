@@ -115,7 +115,7 @@ export class TerminalUI {
     }
 
     this.input.on("data", this.handleData);
-    this.output.write("\u001b[?1000h\u001b[?1006h");
+    this.output.write("\u001b[?1000h\u001b[?1002h\u001b[?1006h");
     this.isListening = true;
   }
 
@@ -124,7 +124,7 @@ export class TerminalUI {
       return;
     }
 
-    this.output.write("\u001b[?1000l\u001b[?1006l");
+    this.output.write("\u001b[?1000l\u001b[?1002l\u001b[?1006l");
     this.input.off("data", this.handleData);
 
     if (this.rawModeEnabled && typeof this.input.setRawMode === "function") {
@@ -184,7 +184,9 @@ export class TerminalUI {
       return null;
     }
 
-    if ((rawCode & 32) !== 0 || (rawCode & 64) !== 0) {
+    const isDrag = (rawCode & 32) !== 0;
+
+    if ((rawCode & 64) !== 0) {
       return null;
     }
 
@@ -196,7 +198,7 @@ export class TerminalUI {
     };
 
     return {
-      type: "click",
+      type: isDrag ? "drag" : "click",
       button: buttonMap[buttonCode] ?? "unknown",
       x: column - 1,
       y: row - 1,

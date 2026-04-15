@@ -2,21 +2,24 @@ import { TerminalUI } from "../src/TerminalUI.js";
 
 const ui = new TerminalUI();
 let clickCount = 0;
+let dragCount = 0;
 let lastClick = "No clicks yet.";
+let lastDrag = "No drags yet.";
 
 function render() {
   const lines = new Array(ui.lines.length).fill("");
-  const boxStart = 7;
+  const boxStart = 9;
 
   lines[0] = "TerminalUI demo";
-  lines[1] = "Click anywhere in the terminal window.";
+  lines[1] = "Click or drag anywhere in the terminal window.";
   lines[2] = "Press q or Ctrl+C to quit.";
   lines[4] = `Terminal size: ${process.stdout.columns} columns x ${process.stdout.rows} rows`;
   lines[5] = `Visible buffer lines: ${ui.lines.length}`;
   lines[6] = `Clicks: ${clickCount} | Last click: ${lastClick}`;
+  lines[7] = `Drags: ${dragCount} | Last drag: ${lastDrag}`;
 
   for (let row = boxStart; row < lines.length; row += 1) {
-    const marker = row === boxStart ? "< click area >" : "";
+    const marker = row === boxStart ? "< click and drag area >" : "";
     lines[row] = `${String(row).padStart(2, "0")} ${marker}`;
   }
 
@@ -30,8 +33,16 @@ function exit() {
 }
 
 ui.onMouse((event) => {
-  clickCount += 1;
-  lastClick = `${event.button} button at x=${event.x}, y=${event.y}`;
+  if (event.type === "click") {
+    clickCount += 1;
+    lastClick = `${event.button} button at x=${event.x}, y=${event.y}`;
+  }
+
+  if (event.type === "drag") {
+    dragCount += 1;
+    lastDrag = `${event.button} button at x=${event.x}, y=${event.y}`;
+  }
+
   render();
 });
 
