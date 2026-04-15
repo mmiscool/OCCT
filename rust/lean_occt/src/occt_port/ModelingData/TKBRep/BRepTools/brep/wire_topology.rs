@@ -1,6 +1,11 @@
 use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
 use super::*;
 
+pub(super) struct PreparedRootWireShape {
+    pub(super) wire_shape: Shape,
+    pub(super) wire_edge_shapes: Vec<Shape>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RootWireTopology {
     pub(super) edge_indices: Vec<usize>,
@@ -18,21 +23,28 @@ struct WireOccurrence {
 
 pub(super) fn root_wire_topology(
     context: &Context,
-    wire_shape: &Shape,
+    prepared_wire_shape: &PreparedRootWireShape,
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<RootWireTopology>, Error> {
-    if let Some(topology) =
-        root_wire_topology_from_snapshot(context, wire_shape, vertex_positions, root_edges)?
-    {
+    if let Some(topology) = root_wire_topology_from_snapshot(
+        context,
+        prepared_wire_shape,
+        vertex_positions,
+        root_edges,
+    )? {
         return Ok(Some(topology));
     }
 
-    let occurrences =
-        match ported_wire_occurrences(context, wire_shape, vertex_positions, root_edges)? {
-            Some(occurrences) => occurrences,
-            None => return Ok(None),
-        };
+    let occurrences = match ported_wire_occurrences(
+        context,
+        &prepared_wire_shape.wire_edge_shapes,
+        vertex_positions,
+        root_edges,
+    )? {
+        Some(occurrences) => occurrences,
+        None => return Ok(None),
+    };
     let (edge_indices, edge_orientations, vertex_indices) =
         match order_wire_occurrences(&occurrences) {
             Some(ordered) => ordered,
@@ -85,13 +97,13 @@ pub(super) fn pack_wire_topology(
 
 fn ported_wire_occurrences(
     context: &Context,
-    wire_shape: &Shape,
+    wire_edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<Vec<WireOccurrence>>, Error> {
     let mut occurrences = Vec::new();
-    for edge_shape in context.subshapes_occt(wire_shape, ShapeKind::Edge)? {
-        let Some(occurrence) = wire_occurrence(context, &edge_shape, vertex_positions, root_edges)?
+    for edge_shape in wire_edge_shapes {
+        let Some(occurrence) = wire_occurrence(context, edge_shape, vertex_positions, root_edges)?
         else {
             return Ok(None);
         };
@@ -102,11 +114,11 @@ fn ported_wire_occurrences(
 
 fn root_wire_topology_from_snapshot(
     context: &Context,
-    wire_shape: &Shape,
+    prepared_wire_shape: &PreparedRootWireShape,
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<RootWireTopology>, Error> {
-    let topology = context.topology_occt(wire_shape)?;
+    let topology = context.topology_occt(&prepared_wire_shape.wire_shape)?;
     if !topology.faces.is_empty() || topology.wires.len() != 1 {
         return Ok(None);
     }
@@ -117,7 +129,7 @@ fn root_wire_topology_from_snapshot(
         return Ok(None);
     }
 
-    let local_edge_shapes = context.subshapes_occt(wire_shape, ShapeKind::Edge)?;
+    let local_edge_shapes = &prepared_wire_shape.wire_edge_shapes;
     let mut edge_indices = Vec::with_capacity(wire_range.count);
     let mut edge_orientations = Vec::with_capacity(wire_range.count);
     let mut ordered_vertices = Vec::with_capacity(vertex_range.count);

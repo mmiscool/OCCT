@@ -1,14 +1,14 @@
 # Next Task
 
-Carry the topology-owned `Shape` vectors through the Rust topology loaders so internal face and wire enumeration can stop depending on raw `subshapes_occt()`.
+Carry the loader-owned edge and face `Shape` inventories through `ported_brep()` so the higher-level BRep materializers stop depending on raw `subshapes_occt()`.
 
 ## Focus
 
-- Extend the root and face snapshot loading path to preserve face, wire, edge, and vertex `Vec<Shape>` inventories alongside the existing Rust topology indices instead of dropping them immediately after OCCT enumeration.
-- Keep the public `subshape()` / `subshapes()` routing Rust-first, but remove the remaining internal raw face/wire traversal in `load_ported_face_snapshot()` and the root topology loaders by consuming those preserved shape vectors directly.
-- Preserve explicit `*_occt()` escape hatches for any caller that truly needs raw traversal, and keep the topology builder acyclic while moving those internal inventory lookups onto Rust-owned state.
+- Preload the root edge and face `Vec<Shape>` inventories once at the `ported_brep()` entry boundary instead of letting `ported_brep_edges()` and `ported_brep_faces()` enumerate them again internally.
+- Thread those preserved shape vectors through [`brep_materialize.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/brep_materialize.rs) and [`face_surface.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs) so the materialization stages consume loader-owned state the same way the topology loaders now do.
+- Keep the explicit `*_occt()` escape hatches intact for actual raw geometry queries, but move the edge/face traversal boundary itself up to the `ported_brep()` loader stage.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the change.
 
 ## Why This Is Next
 
-The public topology-backed `subshape_count()`, `subshape()`, and `subshapes()` route is now Rust-first for face, wire, edge, and vertex kinds, but the topology construction path still materializes those same inventories through raw `subshapes_occt()` because the loader stages discard the aligned `Shape` vectors they already fetch. The next real traversal boundary is preserving and reusing that loader-owned shape state instead of re-enumerating it later.
+The topology loader path now preserves per-root-wire edge shapes and per-face wire/edge shapes, so `root_wire_topology()` and `load_ported_face_snapshot()` no longer call raw `subshapes_occt()` internally. The next remaining internal traversal reload is higher up: `ported_brep_edges()` still reloads edge shapes and `ported_brep_faces()` still reloads face shapes inside the BRep materialization path, even though those inventories can be loaded once and carried through `ported_brep()` instead.

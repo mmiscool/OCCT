@@ -1,6 +1,6 @@
 use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
 use super::swept_face::append_root_edge_sample_points;
-use super::wire_topology::{root_wire_topology, RootWireTopology};
+use super::wire_topology::{root_wire_topology, PreparedRootWireShape, RootWireTopology};
 use super::*;
 
 pub(super) struct TopologySnapshotFaceFields {
@@ -12,9 +12,9 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-struct PreparedFaceShape {
-    face_shape: Shape,
-    face_wire_shapes: Vec<Shape>,
+pub(super) struct PreparedFaceShape {
+    pub(super) face_shape: Shape,
+    pub(super) face_wire_shapes: Vec<PreparedRootWireShape>,
 }
 
 struct PreparedFaceTopology {
@@ -84,7 +84,7 @@ impl PreparedFaceTopologyBuilder {
             else {
                 return Ok(None);
             };
-            let orientation = context.shape_orientation(face_wire_shape)?;
+            let orientation = context.shape_orientation(&face_wire_shape.wire_shape)?;
             let used_edges = face_wire_topology.edge_indices;
 
             let wire_area = if let Some((plane, face_geometry)) = planar_face {
@@ -292,35 +292,28 @@ fn pack_ported_face_snapshot(
 
 pub(super) fn load_ported_face_snapshot(
     context: &Context,
-    shape: &Shape,
+    prepared_face_shapes: &[PreparedFaceShape],
     root_wires: &[RootWireTopology],
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
-    let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
-    for face_shape in face_shapes {
-        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
-        if face_wire_shapes.len() > 1 {
-            let geometry = match context.face_geometry(&face_shape) {
+    for prepared_face_shape in prepared_face_shapes {
+        if prepared_face_shape.face_wire_shapes.len() > 1 {
+            let geometry = match context.face_geometry(&prepared_face_shape.face_shape) {
                 Ok(geometry) => geometry,
-                Err(_) => context.face_geometry_occt(&face_shape)?,
+                Err(_) => context.face_geometry_occt(&prepared_face_shape.face_shape)?,
             };
             if geometry.kind != crate::SurfaceKind::Plane {
                 return Ok(None);
             }
         }
-        prepared_face_shapes.push(PreparedFaceShape {
-            face_shape,
-            face_wire_shapes,
-        });
     }
 
     pack_ported_face_snapshot(
         context,
-        &prepared_face_shapes,
+        prepared_face_shapes,
         root_wires,
         root_edges,
         edge_shapes,
