@@ -53,6 +53,7 @@ Fields:
 - Every Codex turn is launched with `features.multi_agent=true`.
 - Every streamed Codex event is printed live to the terminal with a horizontal separator, including messages, tool activity, completions, and stderr lines.
 - Every pause shows a live countdown in the terminal, and pressing `Enter` skips the remaining wait.
+- Pressing `Ctrl+C` stops the current wait immediately, signals any active child process to exit, and force-exits if shutdown does not complete promptly.
 
 ## Reset the saved session
 

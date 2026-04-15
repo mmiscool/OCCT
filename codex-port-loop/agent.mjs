@@ -32,16 +32,15 @@ const defaultConfig = {
 };
 
 let stopRequested = false;
+let shutdownRequested = false;
+let activeChild = null;
+let activeChildLabel = null;
+let activeDelayController = null;
+let forceExitTimer = null;
 
-process.on("SIGINT", () => {
-  stopRequested = true;
-  process.stderr.write("\nStop requested. Finishing the current turn before exit.\n");
-});
+process.on("SIGINT", () => handleStopSignal("SIGINT"));
 
-process.on("SIGTERM", () => {
-  stopRequested = true;
-  process.stderr.write("\nTermination requested. Finishing the current turn before exit.\n");
-});
+process.on("SIGTERM", () => handleStopSignal("SIGTERM"));
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -55,6 +54,10 @@ async function main() {
 
   
   await editConfigInNano();
+  if (stopRequested) {
+    console.log("Loop stopped.");
+    return;
+  }
   const config = await loadConfig();
   let state = await loadState();
 
@@ -75,6 +78,11 @@ async function main() {
   console.log(`Loop starts in ${Math.floor(startupDelayMs / 1000)} seconds unless you press Enter to skip...`);
 
   await countdownDelay(startupDelayMs, "Loop start");
+
+  if (stopRequested) {
+    console.log("Loop stopped.");
+    return;
+  }
 
   if (state.sessionId) {
     console.log(`Resuming saved session: ${state.sessionId}`);
@@ -109,7 +117,9 @@ async function main() {
       commitAndPush(config, state);
     } catch (error) {
       const message = errorMessage(error);
-      console.error(message);
+      if (!stopRequested) {
+        console.error(message);
+      }
 
       if (resumeSessionId && looksLikeMissingSession(message)) {
         console.error("Saved session could not be resumed. Clearing local state and starting a new session.");
@@ -171,6 +181,7 @@ async function runTurn(config, sessionId) {
     cwd: config.projectPath,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const childExit = waitForChildExit(child, "the active Codex turn");
 
   let resolvedSessionId = sessionId ?? null;
   let usage = null;
@@ -214,16 +225,14 @@ async function runTurn(config, sessionId) {
     printSection("stderr", line);
   });
 
-  const exitCode = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", resolve);
-  });
+  const { exitCode, exitSignal } = await childExit;
 
   await stdoutClosed;
 
-  if (exitCode !== 0 || !sawTurnCompleted || !resolvedSessionId) {
+  if (exitCode !== 0 || exitSignal || !sawTurnCompleted || !resolvedSessionId) {
+    const exitDetail = exitSignal ? ` (signal ${exitSignal})` : exitCode !== 0 ? ` (exit ${exitCode})` : "";
     throw new Error(
-      `Codex turn failed${exitCode !== 0 ? ` (exit ${exitCode})` : ""}: ${stderrBuffer.trim() || "missing completion event"}`
+      `Codex turn failed${exitDetail}: ${stderrBuffer.trim() || "missing completion event"}`
     );
   }
 
@@ -317,18 +326,18 @@ async function ensureConfigFileExists() {
 async function editConfigInNano() {
   console.log(`Opening ${configFile} in nano. Save and exit nano to continue.`);
 
-  const exitCode = await new Promise((resolve, reject) => {
-    const child = spawn("nano", [configFile], {
-      cwd: agentDir,
-      stdio: "inherit",
-    });
-
-    child.once("error", reject);
-    child.once("close", resolve);
+  const child = spawn("nano", [configFile], {
+    cwd: agentDir,
+    stdio: "inherit",
   });
+  const { exitCode, exitSignal } = await waitForChildExit(child, "the config editor");
 
-  if (exitCode !== 0) {
-    throw new Error(`nano exited with code ${exitCode}.`);
+  if (stopRequested) {
+    return;
+  }
+
+  if (exitCode !== 0 || exitSignal) {
+    throw new Error(`nano exited${exitSignal ? ` with signal ${exitSignal}` : ` with code ${exitCode}`}.`);
   }
 }
 
@@ -411,46 +420,88 @@ function question(rl, prompt) {
 
 async function countdownDelay(ms, label) {
   const totalSeconds = Math.ceil(ms / 1000);
-  if (totalSeconds <= 0) {
+  if (totalSeconds <= 0 || stopRequested) {
     return;
   }
 
   printSection("countdown", `${label} begins in ${totalSeconds}s. Press Enter to skip.`);
-
-  if (!process.stdin.isTTY) {
-    for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
-      process.stdout.write(`\r${label} in ${secondsRemaining}s.                    `);
-      await delay(1000);
-    }
-    process.stdout.write(`\r${label} now.                         \n`);
-    return;
-  }
-
-  let skipped = false;
-  const onData = (chunk) => {
-    const text = chunk.toString();
-    if (text === "\n" || text === "\r\n" || text.trim() === "") {
-      skipped = true;
-    }
-  };
-
-  process.stdin.resume();
-  process.stdin.on("data", onData);
+  const delayController = registerActiveDelay();
+  let interrupted = false;
 
   try {
-    for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
-      process.stdout.write(`\r${label} in ${secondsRemaining}s. Press Enter to skip.   `);
-      await delay(1000);
-      if (skipped) {
-        break;
+    if (!process.stdin.isTTY) {
+      for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
+        if (stopRequested) {
+          interrupted = true;
+          break;
+        }
+        process.stdout.write(`\r${label} in ${secondsRemaining}s.                    `);
+        try {
+          await delay(1000, delayController.signal);
+        } catch (error) {
+          if (isAbortError(error)) {
+            interrupted = true;
+            break;
+          }
+          throw error;
+        }
       }
+
+      if (interrupted || stopRequested) {
+        process.stdout.write(`\r${label} stopped.                     \n`);
+        return;
+      }
+
+      process.stdout.write(`\r${label} now.                         \n`);
+      return;
+    }
+
+    let skipped = false;
+    const onData = (chunk) => {
+      const text = chunk.toString();
+      if (text === "\n" || text === "\r\n" || text.trim() === "") {
+        skipped = true;
+      }
+    };
+
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+
+    try {
+      for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
+        if (stopRequested) {
+          interrupted = true;
+          break;
+        }
+        process.stdout.write(`\r${label} in ${secondsRemaining}s. Press Enter to skip.   `);
+        try {
+          await delay(1000, delayController.signal);
+        } catch (error) {
+          if (isAbortError(error)) {
+            interrupted = true;
+            break;
+          }
+          throw error;
+        }
+        if (skipped) {
+          break;
+        }
+      }
+    } finally {
+      process.stdin.removeListener("data", onData);
+      process.stdin.pause();
+    }
+
+    if (skipped) {
+      process.stdout.write(`\r${label} skipped.                     \n`);
+      return;
     }
   } finally {
-    process.stdin.removeListener("data", onData);
+    clearActiveDelay(delayController);
   }
 
-  if (skipped) {
-    process.stdout.write(`\r${label} skipped.                     \n`);
+  if (interrupted || stopRequested) {
+    process.stdout.write(`\r${label} stopped.                     \n`);
     return;
   }
 
@@ -492,6 +543,134 @@ function printSection(title, body) {
   }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function handleStopSignal(signal) {
+  if (shutdownRequested) {
+    forceExit(signal);
+    return;
+  }
+
+  shutdownRequested = true;
+  stopRequested = true;
+  const target = activeChildLabel ?? (activeDelayController ? "the current wait" : "the loop");
+
+  process.stderr.write(
+    `\n${signal === "SIGTERM" ? "Termination requested." : "Stop requested."} Stopping ${target}. Press Ctrl+C again to force exit.\n`
+  );
+
+  abortActiveDelay();
+
+  if (activeChild && !activeChild.killed) {
+    try {
+      activeChild.kill(signal === "SIGTERM" ? "SIGTERM" : "SIGINT");
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  if (!activeChild) {
+    return;
+  }
+
+  forceExitTimer = setTimeout(() => {
+    forceExit(signal);
+  }, 1000);
+  forceExitTimer.unref?.();
+}
+
+function forceExit(signal) {
+  stopRequested = true;
+  abortActiveDelay();
+
+  if (forceExitTimer) {
+    clearTimeout(forceExitTimer);
+    forceExitTimer = null;
+  }
+
+  if (activeChild && !activeChild.killed) {
+    try {
+      activeChild.kill("SIGKILL");
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  process.exit(signal === "SIGTERM" ? 143 : 130);
+}
+
+function waitForChildExit(child, label) {
+  activeChild = child;
+  activeChildLabel = label;
+
+  return new Promise((resolve, reject) => {
+    const clear = () => {
+      if (activeChild === child) {
+        activeChild = null;
+        activeChildLabel = null;
+      }
+      if (forceExitTimer) {
+        clearTimeout(forceExitTimer);
+        forceExitTimer = null;
+      }
+    };
+
+    child.once("error", (error) => {
+      clear();
+      reject(error);
+    });
+
+    child.once("close", (exitCode, exitSignal) => {
+      clear();
+      resolve({ exitCode, exitSignal });
+    });
+  });
+}
+
+function registerActiveDelay() {
+  const controller = new AbortController();
+  activeDelayController = controller;
+  return controller;
+}
+
+function clearActiveDelay(controller) {
+  if (activeDelayController === controller) {
+    activeDelayController = null;
+  }
+}
+
+function abortActiveDelay() {
+  if (activeDelayController) {
+    activeDelayController.abort();
+    activeDelayController = null;
+  }
+}
+
+function isAbortError(error) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error("Delay aborted"), { name: "AbortError" }));
+    };
+
+    if (!signal) {
+      return;
+    }
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
