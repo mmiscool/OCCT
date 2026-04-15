@@ -3015,6 +3015,16 @@ impl Context {
                     _ => unreachable!("handled by the outer match"),
                 })
             }
+            ShapeKind::Compound | ShapeKind::CompSolid | ShapeKind::Solid | ShapeKind::Shell => {
+                let summary = self.describe_shape(shape)?;
+                Ok(match kind {
+                    ShapeKind::Compound => summary.compound_count,
+                    ShapeKind::CompSolid => summary.compsolid_count,
+                    ShapeKind::Solid => summary.solid_count,
+                    ShapeKind::Shell => summary.shell_count,
+                    _ => unreachable!("handled by the outer match"),
+                })
+            }
             _ => self.subshape_count_occt(shape, kind),
         }
     }

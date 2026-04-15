@@ -196,6 +196,31 @@ fn assert_topology_backed_subshape_counts_match(
     Ok(())
 }
 
+fn assert_summary_backed_subshape_counts_match(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let summary = kernel.context().describe_shape(shape)?;
+    for (kind, expected_count) in [
+        (ShapeKind::Compound, summary.compound_count),
+        (ShapeKind::CompSolid, summary.compsolid_count),
+        (ShapeKind::Solid, summary.solid_count),
+        (ShapeKind::Shell, summary.shell_count),
+    ] {
+        let public_count = kernel.context().subshape_count(shape, kind)?;
+        let occt_count = kernel.context().subshape_count_occt(shape, kind)?;
+        if public_count != expected_count || public_count != occt_count {
+            return Err(std::io::Error::other(format!(
+                "{label} {kind:?} count mismatch: public={public_count} rust_summary={expected_count} occt={occt_count}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 fn assert_summary_matches(
     label: &str,
     rust: &lean_occt::ShapeSummary,
@@ -716,6 +741,7 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
     }
 
@@ -780,6 +806,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_eq!(rust_topology.faces.len(), 1);
         assert_eq!(
@@ -850,6 +877,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
 
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_eq!(rust_topology.faces.len(), expected_face_count);
         assert!(rust_topology

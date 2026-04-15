@@ -433,7 +433,7 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
         ),
     ] {
         let geometry = kernel.context().face_geometry(&face)?;
-        println!("{label} geometry: {geometry:?}");
+        let geometry_occt = kernel.context().face_geometry_occt(&face)?;
         let context_bounds = kernel.context().face_uv_bounds(&face)?;
         let occt_bounds = kernel.context().face_uv_bounds_occt(&face)?;
         let uv = geometry.center_uv();
@@ -466,6 +466,7 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
                 && (context_bounds.v_max - occt_bounds.v_max).abs() <= 1.0e-12,
             "{label} bounds mismatch: context={context_bounds:?} occt={occt_bounds:?}"
         );
+        assert_face_geometry_close(geometry, geometry_occt, 1.0e-12, label)?;
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-7, label)?;
         assert_vec3_close(rust_sample.normal, occt_sample.normal, 1.0e-7, label)?;
         assert_vec3_close(

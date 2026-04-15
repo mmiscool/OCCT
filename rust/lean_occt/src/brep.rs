@@ -370,10 +370,10 @@ impl Context {
     pub fn ported_vertex_point(&self, shape: &Shape) -> Result<Option<[f64; 3]>, Error> {
         let topology = self.topology(shape)?;
         let counts = ShapeCounts {
-            compound_count: self.subshape_count(shape, ShapeKind::Compound)?,
-            compsolid_count: self.subshape_count(shape, ShapeKind::CompSolid)?,
-            solid_count: self.subshape_count(shape, ShapeKind::Solid)?,
-            shell_count: self.subshape_count(shape, ShapeKind::Shell)?,
+            compound_count: self.subshape_count_occt(shape, ShapeKind::Compound)?,
+            compsolid_count: self.subshape_count_occt(shape, ShapeKind::CompSolid)?,
+            solid_count: self.subshape_count_occt(shape, ShapeKind::Solid)?,
+            shell_count: self.subshape_count_occt(shape, ShapeKind::Shell)?,
             face_count: topology.faces.len(),
             wire_count: topology.wires.len(),
             edge_count: topology.edges.len(),
@@ -395,10 +395,10 @@ impl Context {
     pub fn ported_edge_endpoints(&self, shape: &Shape) -> Result<Option<EdgeEndpoints>, Error> {
         let topology = self.topology(shape)?;
         let counts = ShapeCounts {
-            compound_count: self.subshape_count(shape, ShapeKind::Compound)?,
-            compsolid_count: self.subshape_count(shape, ShapeKind::CompSolid)?,
-            solid_count: self.subshape_count(shape, ShapeKind::Solid)?,
-            shell_count: self.subshape_count(shape, ShapeKind::Shell)?,
+            compound_count: self.subshape_count_occt(shape, ShapeKind::Compound)?,
+            compsolid_count: self.subshape_count_occt(shape, ShapeKind::CompSolid)?,
+            solid_count: self.subshape_count_occt(shape, ShapeKind::Solid)?,
+            shell_count: self.subshape_count_occt(shape, ShapeKind::Shell)?,
             face_count: topology.faces.len(),
             wire_count: topology.wires.len(),
             edge_count: topology.edges.len(),
@@ -1838,10 +1838,10 @@ fn shape_counts(
     topology: &TopologySnapshot,
 ) -> Result<ShapeCounts, Error> {
     Ok(ShapeCounts {
-        compound_count: context.subshape_count(shape, ShapeKind::Compound)?,
-        compsolid_count: context.subshape_count(shape, ShapeKind::CompSolid)?,
-        solid_count: context.subshape_count(shape, ShapeKind::Solid)?,
-        shell_count: context.subshape_count(shape, ShapeKind::Shell)?,
+        compound_count: context.subshape_count_occt(shape, ShapeKind::Compound)?,
+        compsolid_count: context.subshape_count_occt(shape, ShapeKind::CompSolid)?,
+        solid_count: context.subshape_count_occt(shape, ShapeKind::Solid)?,
+        shell_count: context.subshape_count_occt(shape, ShapeKind::Shell)?,
         face_count: topology.faces.len(),
         wire_count: topology.wires.len(),
         edge_count: topology.edges.len(),
