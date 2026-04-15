@@ -21,8 +21,8 @@ use self::mesh::{
 };
 use self::summary::{mesh_face_properties, ported_shape_summary};
 use self::topology::{
-    adjacent_face_indices, edge_points, face_adjacent_face_indices, face_loops,
-    ported_edge_endpoints, ported_topology_snapshot, ported_vertex_point, topology_edge,
+    face_adjacent_face_indices, face_loops, ported_brep_edges, ported_brep_vertices,
+    ported_brep_wires, ported_edge_endpoints, ported_topology_snapshot, ported_vertex_point,
 };
 
 use crate::ported_geometry::{
@@ -121,73 +121,9 @@ impl Context {
             Some(topology) => topology,
             None => self.topology_occt(shape)?,
         };
-        let vertices = topology
-            .vertex_positions
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, position)| BrepVertex { index, position })
-            .collect::<Vec<_>>();
-
-        let wires = topology
-            .wires
-            .iter()
-            .enumerate()
-            .map(|(index, range)| {
-                let edge_indices =
-                    topology.wire_edge_indices[range.offset..range.offset + range.count].to_vec();
-                let edge_orientations = topology.wire_edge_orientations
-                    [range.offset..range.offset + range.count]
-                    .to_vec();
-                let vertex_range = topology.wire_vertices[index];
-                let vertex_indices = topology.wire_vertex_indices
-                    [vertex_range.offset..vertex_range.offset + vertex_range.count]
-                    .to_vec();
-                BrepWire {
-                    index,
-                    edge_indices,
-                    edge_orientations,
-                    vertex_indices,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let edge_shapes = self.subshapes_occt(shape, ShapeKind::Edge)?;
-        let edges = edge_shapes
-            .iter()
-            .enumerate()
-            .map(|(index, edge_shape)| {
-                let topology_edge = topology_edge(&topology, index)?;
-                let geometry = match self.edge_geometry(edge_shape) {
-                    Ok(geometry) => geometry,
-                    Err(_) => self.edge_geometry_occt(edge_shape)?,
-                };
-                let ported_curve = match PortedCurve::from_context_with_ported_payloads(
-                    self, edge_shape, geometry,
-                ) {
-                    Ok(ported_curve) => ported_curve,
-                    Err(_) => PortedCurve::from_context_with_geometry(self, edge_shape, geometry)?,
-                };
-                let adjacent_face_indices = adjacent_face_indices(&topology, index)?;
-                let (start_point, end_point) = edge_points(&topology, index);
-                let length = match ported_curve {
-                    Some(curve) => curve.length_with_geometry(geometry),
-                    None => topology_edge.length,
-                };
-
-                Ok(BrepEdge {
-                    index,
-                    geometry,
-                    ported_curve,
-                    length,
-                    start_vertex: topology_edge.start_vertex,
-                    end_vertex: topology_edge.end_vertex,
-                    start_point,
-                    end_point,
-                    adjacent_face_indices,
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
+        let vertices = ported_brep_vertices(&topology);
+        let wires = ported_brep_wires(&topology);
+        let (edge_shapes, edges) = ported_brep_edges(self, shape, &topology)?;
 
         let face_shapes = self.subshapes_occt(shape, ShapeKind::Face)?;
         let faces = face_shapes
