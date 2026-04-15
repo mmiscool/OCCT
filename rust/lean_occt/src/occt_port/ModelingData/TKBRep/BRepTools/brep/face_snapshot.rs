@@ -18,20 +18,6 @@ struct PreparedFaceShape {
 }
 
 impl PreparedFaceShape {
-    fn load_all(context: &Context, shape: &Shape) -> Result<Option<Vec<Self>>, Error> {
-        let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
-        let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
-
-        for face_shape in face_shapes {
-            let Some(prepared_face_shape) = Self::load(context, face_shape)? else {
-                return Ok(None);
-            };
-            prepared_face_shapes.push(prepared_face_shape);
-        }
-
-        Ok(Some(prepared_face_shapes))
-    }
-
     fn load(context: &Context, face_shape: Shape) -> Result<Option<Self>, Error> {
         let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
         if !Self::multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
@@ -293,9 +279,14 @@ pub(super) fn load_ported_face_snapshot(
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let Some(prepared_face_shapes) = PreparedFaceShape::load_all(context, shape)? else {
-        return Ok(None);
-    };
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
+    for face_shape in face_shapes {
+        let Some(prepared_face_shape) = PreparedFaceShape::load(context, face_shape)? else {
+            return Ok(None);
+        };
+        prepared_face_shapes.push(prepared_face_shape);
+    }
 
     pack_ported_face_snapshot(
         context,
