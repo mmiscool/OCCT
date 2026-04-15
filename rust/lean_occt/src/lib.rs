@@ -22,7 +22,10 @@ pub use pipeline::{
     FeatureBuildSource, FeatureId, FeatureOperation, FeaturePersistentData, FeaturePipeline,
     FeaturePipelineBuild, FeatureRecord, FeatureRuntimeState,
 };
-pub use ported_geometry::{PortedCurve, PortedSurface};
+pub use ported_geometry::{
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedOffsetSurface, PortedSurface,
+    PortedSweptSurface,
+};
 pub use recipes::{
     DrilledBlockRecipe, RecipeBuildResult, RoundedDrilledBlockRecipe,
     SelectorDrivenRoundedBlockRecipe,
@@ -656,6 +659,66 @@ mod ffi {
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
             payload: *mut LeanOcctOffsetSurfacePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_geometry(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            geometry: *mut LeanOcctFaceGeometry,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_plane_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctPlanePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_cylinder_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctCylinderPayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_cone_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctConePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_sphere_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctSpherePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_torus_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctTorusPayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_revolution_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctRevolutionSurfacePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_extrusion_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctExtrusionSurfacePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_curve_geometry(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            geometry: *mut LeanOcctEdgeGeometry,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_curve_line_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctLinePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_curve_circle_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctCirclePayload,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_offset_basis_curve_ellipse_payload(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            payload: *mut LeanOcctEllipsePayload,
         ) -> LeanOcctResult;
         pub fn lean_occt_shape_describe(
             context: *mut LeanOcctContext,
@@ -1532,6 +1595,13 @@ impl Context {
     }
 
     pub fn edge_sample(&self, shape: &Shape, t: f64) -> Result<EdgeSample, Error> {
+        match self.ported_edge_sample(shape, t)? {
+            Some(sample) => Ok(sample),
+            None => self.edge_sample_occt(shape, t),
+        }
+    }
+
+    pub fn edge_sample_occt(&self, shape: &Shape, t: f64) -> Result<EdgeSample, Error> {
         let mut sample = ffi::LeanOcctEdgeSample {
             position: [0.0; 3],
             tangent: [0.0; 3],
@@ -1550,6 +1620,17 @@ impl Context {
     }
 
     pub fn edge_sample_at_parameter(
+        &self,
+        shape: &Shape,
+        parameter: f64,
+    ) -> Result<EdgeSample, Error> {
+        match self.ported_edge_sample_at_parameter(shape, parameter)? {
+            Some(sample) => Ok(sample),
+            None => self.edge_sample_at_parameter_occt(shape, parameter),
+        }
+    }
+
+    pub fn edge_sample_at_parameter_occt(
         &self,
         shape: &Shape,
         parameter: f64,
@@ -1705,6 +1786,13 @@ impl Context {
     }
 
     pub fn face_sample(&self, shape: &Shape, uv: [f64; 2]) -> Result<FaceSample, Error> {
+        match self.ported_face_sample(shape, uv)? {
+            Some(sample) => Ok(sample),
+            None => self.face_sample_occt(shape, uv),
+        }
+    }
+
+    pub fn face_sample_occt(&self, shape: &Shape, uv: [f64; 2]) -> Result<FaceSample, Error> {
         let mut sample = ffi::LeanOcctFaceSample {
             position: [0.0; 3],
             normal: [0.0; 3],
@@ -1729,6 +1817,17 @@ impl Context {
     }
 
     pub fn face_sample_normalized(
+        &self,
+        shape: &Shape,
+        uv_t: [f64; 2],
+    ) -> Result<FaceSample, Error> {
+        match self.ported_face_sample_normalized(shape, uv_t)? {
+            Some(sample) => Ok(sample),
+            None => self.face_sample_normalized_occt(shape, uv_t),
+        }
+    }
+
+    pub fn face_sample_normalized_occt(
         &self,
         shape: &Shape,
         uv_t: [f64; 2],
@@ -2005,7 +2104,367 @@ impl Context {
         }
     }
 
+    pub fn face_offset_basis_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
+        let mut geometry = ffi::LeanOcctFaceGeometry {
+            kind: ffi::LeanOcctSurfaceKind::Unknown,
+            u_min: 0.0,
+            u_max: 0.0,
+            v_min: 0.0,
+            v_max: 0.0,
+            is_u_closed: 0,
+            is_v_closed: 0,
+            is_u_periodic: 0,
+            is_v_periodic: 0,
+            u_period: 0.0,
+            v_period: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_geometry(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut geometry,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(FaceGeometry {
+                kind: SurfaceKind::from(geometry.kind),
+                u_min: geometry.u_min,
+                u_max: geometry.u_max,
+                v_min: geometry.v_min,
+                v_max: geometry.v_max,
+                is_u_closed: geometry.is_u_closed != 0,
+                is_v_closed: geometry.is_v_closed != 0,
+                is_u_periodic: geometry.is_u_periodic != 0,
+                is_v_periodic: geometry.is_v_periodic != 0,
+                u_period: geometry.u_period,
+                v_period: geometry.v_period,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
+        let mut payload = ffi::LeanOcctPlanePayload {
+            origin: [0.0; 3],
+            normal: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_plane_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(PlanePayload {
+                origin: payload.origin,
+                normal: payload.normal,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_cylinder_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<CylinderPayload, Error> {
+        let mut payload = ffi::LeanOcctCylinderPayload {
+            origin: [0.0; 3],
+            axis: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            radius: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_cylinder_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(CylinderPayload {
+                origin: payload.origin,
+                axis: payload.axis,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                radius: payload.radius,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
+        let mut payload = ffi::LeanOcctConePayload {
+            origin: [0.0; 3],
+            axis: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            reference_radius: 0.0,
+            semi_angle: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_cone_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(ConePayload {
+                origin: payload.origin,
+                axis: payload.axis,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                reference_radius: payload.reference_radius,
+                semi_angle: payload.semi_angle,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
+        let mut payload = ffi::LeanOcctSpherePayload {
+            center: [0.0; 3],
+            normal: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            radius: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_sphere_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(SpherePayload {
+                center: payload.center,
+                normal: payload.normal,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                radius: payload.radius,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
+        let mut payload = ffi::LeanOcctTorusPayload {
+            center: [0.0; 3],
+            axis: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            major_radius: 0.0,
+            minor_radius: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_torus_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(TorusPayload {
+                center: payload.center,
+                axis: payload.axis,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                major_radius: payload.major_radius,
+                minor_radius: payload.minor_radius,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_revolution_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<RevolutionSurfacePayload, Error> {
+        let mut payload = ffi::LeanOcctRevolutionSurfacePayload {
+            axis_origin: [0.0; 3],
+            axis_direction: [0.0; 3],
+            basis_curve_kind: ffi::LeanOcctCurveKind::Unknown,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_revolution_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(RevolutionSurfacePayload {
+                axis_origin: payload.axis_origin,
+                axis_direction: payload.axis_direction,
+                basis_curve_kind: CurveKind::from(payload.basis_curve_kind),
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_extrusion_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<ExtrusionSurfacePayload, Error> {
+        let mut payload = ffi::LeanOcctExtrusionSurfacePayload {
+            direction: [0.0; 3],
+            basis_curve_kind: ffi::LeanOcctCurveKind::Unknown,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_extrusion_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(ExtrusionSurfacePayload {
+                direction: payload.direction,
+                basis_curve_kind: CurveKind::from(payload.basis_curve_kind),
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_curve_geometry(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
+        let mut geometry = ffi::LeanOcctEdgeGeometry {
+            kind: ffi::LeanOcctCurveKind::Unknown,
+            start_parameter: 0.0,
+            end_parameter: 0.0,
+            is_closed: 0,
+            is_periodic: 0,
+            period: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_curve_geometry(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut geometry,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(EdgeGeometry {
+                kind: CurveKind::from(geometry.kind),
+                start_parameter: geometry.start_parameter,
+                end_parameter: geometry.end_parameter,
+                is_closed: geometry.is_closed != 0,
+                is_periodic: geometry.is_periodic != 0,
+                period: geometry.period,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_curve_line_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<LinePayload, Error> {
+        let mut payload = ffi::LeanOcctLinePayload {
+            origin: [0.0; 3],
+            direction: [0.0; 3],
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_curve_line_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(LinePayload {
+                origin: payload.origin,
+                direction: payload.direction,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_curve_circle_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<CirclePayload, Error> {
+        let mut payload = ffi::LeanOcctCirclePayload {
+            center: [0.0; 3],
+            normal: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            radius: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_curve_circle_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(CirclePayload {
+                center: payload.center,
+                normal: payload.normal,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                radius: payload.radius,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_offset_basis_curve_ellipse_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<EllipsePayload, Error> {
+        let mut payload = ffi::LeanOcctEllipsePayload {
+            center: [0.0; 3],
+            normal: [0.0; 3],
+            x_direction: [0.0; 3],
+            y_direction: [0.0; 3],
+            major_radius: 0.0,
+            minor_radius: 0.0,
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_offset_basis_curve_ellipse_payload(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut payload,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(EllipsePayload {
+                center: payload.center,
+                normal: payload.normal,
+                x_direction: payload.x_direction,
+                y_direction: payload.y_direction,
+                major_radius: payload.major_radius,
+                minor_radius: payload.minor_radius,
+            })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
     pub fn describe_shape(&self, shape: &Shape) -> Result<ShapeSummary, Error> {
+        self.ported_brep(shape).map(|brep| brep.summary)
+    }
+
+    pub fn describe_shape_occt(&self, shape: &Shape) -> Result<ShapeSummary, Error> {
         let mut raw_summary = ffi::LeanOcctShapeSummary {
             root_kind: ffi::LeanOcctShapeKind::Unknown,
             primary_kind: ffi::LeanOcctShapeKind::Unknown,
@@ -2051,6 +2510,13 @@ impl Context {
     }
 
     pub fn topology(&self, shape: &Shape) -> Result<TopologySnapshot, Error> {
+        match self.ported_topology(shape)? {
+            Some(topology) => Ok(topology),
+            None => self.topology_occt(shape),
+        }
+    }
+
+    pub fn topology_occt(&self, shape: &Shape) -> Result<TopologySnapshot, Error> {
         let raw = unsafe { ffi::lean_occt_shape_topology(self.raw.as_ptr(), shape.raw.as_ptr()) };
         let raw = TopologyHandle {
             raw: NonNull::new(raw).ok_or_else(|| Error::new(self.last_error()))?,
@@ -2234,6 +2700,22 @@ impl Context {
     }
 
     pub fn subshape_count(&self, shape: &Shape, kind: ShapeKind) -> Result<usize, Error> {
+        match kind {
+            ShapeKind::Face | ShapeKind::Wire | ShapeKind::Edge | ShapeKind::Vertex => {
+                let topology = self.topology(shape)?;
+                Ok(match kind {
+                    ShapeKind::Face => topology.faces.len(),
+                    ShapeKind::Wire => topology.wires.len(),
+                    ShapeKind::Edge => topology.edges.len(),
+                    ShapeKind::Vertex => topology.vertex_positions.len(),
+                    _ => unreachable!("handled by the outer match"),
+                })
+            }
+            _ => self.subshape_count_occt(shape, kind),
+        }
+    }
+
+    pub fn subshape_count_occt(&self, shape: &Shape, kind: ShapeKind) -> Result<usize, Error> {
         let mut count = 0_usize;
         let result = unsafe {
             ffi::lean_occt_shape_subshape_count(
@@ -2251,6 +2733,15 @@ impl Context {
     }
 
     pub fn subshape(&self, shape: &Shape, kind: ShapeKind, index: usize) -> Result<Shape, Error> {
+        self.subshape_occt(shape, kind, index)
+    }
+
+    pub fn subshape_occt(
+        &self,
+        shape: &Shape,
+        kind: ShapeKind,
+        index: usize,
+    ) -> Result<Shape, Error> {
         let raw = unsafe {
             ffi::lean_occt_shape_subshape(
                 self.raw.as_ptr(),
@@ -2267,6 +2758,15 @@ impl Context {
         let mut shapes = Vec::with_capacity(count);
         for index in 0..count {
             shapes.push(self.subshape(shape, kind, index)?);
+        }
+        Ok(shapes)
+    }
+
+    pub fn subshapes_occt(&self, shape: &Shape, kind: ShapeKind) -> Result<Vec<Shape>, Error> {
+        let count = self.subshape_count_occt(shape, kind)?;
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            shapes.push(self.subshape_occt(shape, kind, index)?);
         }
         Ok(shapes)
     }

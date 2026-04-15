@@ -534,6 +534,54 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_payload(
   LeanOcctContext*                the_context,
   const LeanOcctShape*            the_shape,
   LeanOcctOffsetSurfacePayload*   the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_geometry(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctFaceGeometry*           the_geometry);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_plane_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctPlanePayload*           the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_cylinder_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctCylinderPayload*        the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_cone_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctConePayload*            the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_sphere_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctSpherePayload*          the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_torus_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctTorusPayload*           the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_revolution_payload(
+  LeanOcctContext*                    the_context,
+  const LeanOcctShape*                the_shape,
+  LeanOcctRevolutionSurfacePayload*   the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_extrusion_payload(
+  LeanOcctContext*                   the_context,
+  const LeanOcctShape*               the_shape,
+  LeanOcctExtrusionSurfacePayload*   the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_geometry(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctEdgeGeometry*           the_geometry);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_line_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctLinePayload*            the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_circle_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctCirclePayload*          the_payload);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_ellipse_payload(
+  LeanOcctContext*                the_context,
+  const LeanOcctShape*            the_shape,
+  LeanOcctEllipsePayload*         the_payload);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_describe(LeanOcctContext*            the_context,
                                                               const LeanOcctShape*        the_shape,
                                                               LeanOcctShapeSummary*       the_summary);

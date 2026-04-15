@@ -6,8 +6,8 @@ use crate::{
     BoxParams, BrepEdge, BrepFace, BrepShape, ConeParams, CurveKind, CylinderParams,
     CylindricalHoleParams, EdgeGeometry, EllipseEdgeParams, Error, FaceGeometry, FaceSample,
     FilletParams, HelixParams, LoopRole, ModelKernel, OffsetParams, Orientation, PortedCurve,
-    PortedSurface, PrismParams, RevolutionParams, Shape, ShapeReport, ShapeSummary, SphereParams,
-    SurfaceKind, ThroughHoleCut, TopologySnapshot, TorusParams,
+    PortedFaceSurface, PortedSurface, PrismParams, RevolutionParams, Shape, ShapeReport,
+    ShapeSummary, SphereParams, SurfaceKind, ThroughHoleCut, TopologySnapshot, TorusParams,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +28,7 @@ pub struct FaceDescriptor {
     pub index: usize,
     pub geometry: FaceGeometry,
     pub ported_surface: Option<PortedSurface>,
+    pub ported_face_surface: Option<PortedFaceSurface>,
     pub area: f64,
     pub wire_count: usize,
     pub orientation: Orientation,
@@ -760,6 +761,7 @@ fn face_descriptor_from_brep(face: &BrepFace) -> FaceDescriptor {
         index: face.index,
         geometry: face.geometry,
         ported_surface: face.ported_surface,
+        ported_face_surface: face.ported_face_surface,
         area: face.area,
         wire_count: face.loops.len(),
         orientation: face.orientation,

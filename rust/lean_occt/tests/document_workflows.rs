@@ -4,8 +4,8 @@ mod support;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelDocument,
-    OperationRecord, PrismParams, RevolutionParams, ShapeKind, SphereParams, SurfaceKind,
-    ThroughHoleCut, TorusParams,
+    OperationRecord, PortedFaceSurface, PortedSweptSurface, PrismParams, RevolutionParams,
+    ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -160,12 +160,36 @@ fn document_runs_analytic_shape_pipeline() -> Result<(), Box<dyn std::error::Err
     )?;
     let prism_summary = document.summary("prism")?;
     let revolved_summary = document.summary("revolved")?;
+    let prism_faces = document.faces("prism")?;
+    let revolved_faces = document.faces("revolved")?;
     let cone_report = document.report("cone")?;
     let sphere_report = document.report("sphere")?;
     let torus_report = document.report("torus")?;
 
     assert!(prism_summary.face_count > 0);
     assert!(revolved_summary.face_count > 0);
+    assert!(matches!(
+        prism_faces
+            .iter()
+            .find(|face| face.geometry.kind == SurfaceKind::Extrusion)
+            .ok_or_else(|| std::io::Error::other("expected extrusion face descriptor in prism"))?
+            .ported_face_surface,
+        Some(PortedFaceSurface::Swept(
+            PortedSweptSurface::Extrusion { .. }
+        ))
+    ));
+    assert!(matches!(
+        revolved_faces
+            .iter()
+            .find(|face| face.geometry.kind == SurfaceKind::Revolution)
+            .ok_or_else(|| {
+                std::io::Error::other("expected revolution face descriptor in revolved shape")
+            })?
+            .ported_face_surface,
+        Some(PortedFaceSurface::Swept(
+            PortedSweptSurface::Revolution { .. }
+        ))
+    ));
     assert_eq!(cone_report.summary.primary_kind, ShapeKind::Solid);
     assert_eq!(sphere_report.summary.primary_kind, ShapeKind::Solid);
     assert_eq!(torus_report.summary.primary_kind, ShapeKind::Solid);

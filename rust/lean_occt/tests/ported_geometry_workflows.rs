@@ -3,7 +3,8 @@ mod support;
 use std::f64::consts::PI;
 
 use lean_occt::{
-    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, PrismParams,
+    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, OffsetParams,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams,
     RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
@@ -67,6 +68,13 @@ fn assert_vec3_close(
         ))
         .into())
     }
+}
+
+fn normalized_uv_to_uv(geometry: lean_occt::FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
+    [
+        geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
+        geometry.v_min + (geometry.v_max - geometry.v_min) * uv_t[1],
+    ]
 }
 
 fn simpson_integral(start: f64, end: f64, steps: usize, f: impl Fn(f64) -> f64) -> f64 {
@@ -147,14 +155,25 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             .context()
             .ported_edge_sample_at_parameter(&edge, parameter)?
             .ok_or_else(|| std::io::Error::other(format!("expected ported {label} edge sample")))?;
+        let context_sample = kernel
+            .context()
+            .edge_sample_at_parameter(&edge, parameter)?;
+        let rust_normalized_sample = kernel
+            .context()
+            .ported_edge_sample(&edge, 0.5)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!("expected ported {label} normalized edge sample"))
+            })?;
+        let context_normalized_sample = kernel.context().edge_sample(&edge, 0.5)?;
         let rust_length = kernel
             .context()
             .ported_edge_length(&edge)?
             .ok_or_else(|| std::io::Error::other(format!("expected ported {label} edge length")))?;
         let occt_sample = kernel
             .context()
-            .edge_sample_at_parameter(&edge, parameter)?;
-        let occt_length = kernel.context().describe_shape(&edge)?.linear_length;
+            .edge_sample_at_parameter_occt(&edge, parameter)?;
+        let occt_normalized_sample = kernel.context().edge_sample_occt(&edge, 0.5)?;
+        let occt_length = kernel.context().describe_shape_occt(&edge)?.linear_length;
 
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-8, label)?;
         assert_vec3_close(rust_sample.tangent, occt_sample.tangent, 1.0e-8, label)?;
@@ -168,6 +187,42 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             rust_sample_via_context.tangent,
             occt_sample.tangent,
             1.0e-8,
+            label,
+        )?;
+        assert_vec3_close(
+            context_sample.position,
+            rust_sample_via_context.position,
+            1.0e-12,
+            label,
+        )?;
+        assert_vec3_close(
+            context_sample.tangent,
+            rust_sample_via_context.tangent,
+            1.0e-12,
+            label,
+        )?;
+        assert_vec3_close(
+            rust_normalized_sample.position,
+            occt_normalized_sample.position,
+            1.0e-8,
+            label,
+        )?;
+        assert_vec3_close(
+            rust_normalized_sample.tangent,
+            occt_normalized_sample.tangent,
+            1.0e-8,
+            label,
+        )?;
+        assert_vec3_close(
+            context_normalized_sample.position,
+            rust_normalized_sample.position,
+            1.0e-12,
+            label,
+        )?;
+        assert_vec3_close(
+            context_normalized_sample.tangent,
+            rust_normalized_sample.tangent,
+            1.0e-12,
             label,
         )?;
         let length_tolerance = if label == "ellipse" { 5.0e-2 } else { 1.0e-7 };
@@ -249,20 +304,209 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
             find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?,
         ),
     ] {
+        let geometry = kernel.context().face_geometry(&face)?;
+        let uv = geometry.center_uv();
         let rust_sample = kernel
             .context()
             .ported_face_sample_normalized(&face, [0.5, 0.5])?
             .ok_or_else(|| std::io::Error::other(format!("expected ported {label} surface")))?;
-        let occt_sample = kernel.context().face_sample_normalized(&face, [0.5, 0.5])?;
+        let context_sample = kernel.context().face_sample_normalized(&face, [0.5, 0.5])?;
+        let rust_uv_sample = kernel
+            .context()
+            .ported_face_sample(&face, uv)?
+            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} UV sample")))?;
+        let context_uv_sample = kernel.context().face_sample(&face, uv)?;
+        let occt_sample = kernel
+            .context()
+            .face_sample_normalized_occt(&face, [0.5, 0.5])?;
+        let occt_uv_sample = kernel.context().face_sample_occt(&face, uv)?;
 
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-7, label)?;
         assert_vec3_close(rust_sample.normal, occt_sample.normal, 1.0e-7, label)?;
+        assert_vec3_close(
+            context_sample.position,
+            rust_sample.position,
+            1.0e-12,
+            label,
+        )?;
+        assert_vec3_close(context_sample.normal, rust_sample.normal, 1.0e-12, label)?;
+        assert_vec3_close(
+            rust_uv_sample.position,
+            occt_uv_sample.position,
+            1.0e-7,
+            label,
+        )?;
+        assert_vec3_close(rust_uv_sample.normal, occt_uv_sample.normal, 1.0e-7, label)?;
+        assert_vec3_close(
+            context_uv_sample.position,
+            rust_uv_sample.position,
+            1.0e-12,
+            label,
+        )?;
+        assert_vec3_close(
+            context_uv_sample.normal,
+            rust_uv_sample.normal,
+            1.0e-12,
+            label,
+        )?;
     }
 
     assert!(cut_step.is_file());
     assert!(cone_step.is_file());
     assert!(sphere_step.is_file());
     assert!(torus_step.is_file());
+    Ok(())
+}
+
+#[test]
+fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let offset_face_shape = kernel.make_offset(
+        &revolution_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    for (label, face, uv_t) in [
+        (
+            "plane",
+            find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?,
+            [0.5, 0.5],
+        ),
+        (
+            "extrusion",
+            find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?,
+            [0.2, 0.7],
+        ),
+        ("revolution", revolution_face, [0.2, 0.7]),
+        (
+            "offset",
+            find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?,
+            [0.5, 0.5],
+        ),
+    ] {
+        let geometry = kernel.context().face_geometry(&face)?;
+        let orientation = kernel.context().shape_orientation(&face)?;
+        let uv = normalized_uv_to_uv(geometry, uv_t);
+        let descriptor = kernel
+            .context()
+            .ported_face_surface_descriptor(&face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} descriptor")))?;
+
+        match (label, descriptor) {
+            ("plane", PortedFaceSurface::Analytic(_)) => {}
+            (
+                "extrusion",
+                PortedFaceSurface::Swept(PortedSweptSurface::Extrusion {
+                    payload,
+                    basis_curve,
+                    ..
+                }),
+            ) => {
+                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
+                assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+            }
+            (
+                "revolution",
+                PortedFaceSurface::Swept(PortedSweptSurface::Revolution {
+                    payload,
+                    basis_curve,
+                    ..
+                }),
+            ) => {
+                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
+                assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+            }
+            ("offset", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Revolution);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. })
+                ));
+            }
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected ported face descriptor for {label}: {descriptor:?}"
+                ))
+                .into())
+            }
+        }
+
+        let rust_sample =
+            descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+        let occt_sample = kernel.context().face_sample_normalized_occt(&face, uv_t)?;
+        assert_vec3_close(
+            rust_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{label} descriptor sample position"),
+        )?;
+        assert_vec3_close(
+            rust_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{label} descriptor sample normal"),
+        )?;
+        let rust_uv_sample = kernel
+            .context()
+            .ported_face_sample(&face, uv)?
+            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} UV sample")))?;
+        let context_uv_sample = kernel.context().face_sample(&face, uv)?;
+        let occt_uv_sample = kernel.context().face_sample_occt(&face, uv)?;
+        assert_vec3_close(
+            rust_uv_sample.position,
+            occt_uv_sample.position,
+            1.0e-6,
+            &format!("{label} UV sample position"),
+        )?;
+        assert_vec3_close(
+            rust_uv_sample.normal,
+            occt_uv_sample.normal,
+            1.0e-6,
+            &format!("{label} UV sample normal"),
+        )?;
+        assert_vec3_close(
+            context_uv_sample.position,
+            rust_uv_sample.position,
+            1.0e-12,
+            &format!("{label} context UV sample position"),
+        )?;
+        assert_vec3_close(
+            context_uv_sample.normal,
+            rust_uv_sample.normal,
+            1.0e-12,
+            &format!("{label} context UV sample normal"),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -310,33 +554,221 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
         (&prism, SurfaceKind::Extrusion),
         (&revolution, SurfaceKind::Revolution),
     ] {
-        let brep = kernel.brep(shape)?;
-        let rust_face = brep
-            .faces
-            .iter()
-            .find(|face| face.geometry.kind == kind)
-            .ok_or_else(|| std::io::Error::other(format!("expected a {:?} face in brep", kind)))?;
         let occt_face = find_first_face_by_kind(&kernel, shape, kind)?;
-        let occt_sample = kernel
-            .context()
-            .face_sample_normalized(&occt_face, [0.5, 0.5])?;
+        for uv_t in [[0.5, 0.5], [0.2, 0.7]] {
+            let rust_sample = kernel
+                .context()
+                .ported_face_sample_normalized(&occt_face, uv_t)?
+                .ok_or_else(|| {
+                    std::io::Error::other(format!("expected a ported {:?} face sample", kind))
+                })?;
+            let occt_sample = kernel
+                .context()
+                .face_sample_normalized_occt(&occt_face, uv_t)?;
 
-        assert_vec3_close(
-            rust_face.sample.position,
-            occt_sample.position,
-            1.0e-6,
-            &format!("{kind:?} sample position"),
-        )?;
-        assert_vec3_close(
-            rust_face.sample.normal,
-            occt_sample.normal,
-            1.0e-6,
-            &format!("{kind:?} sample normal"),
-        )?;
+            assert_vec3_close(
+                rust_sample.position,
+                occt_sample.position,
+                1.0e-6,
+                &format!("{kind:?} sample position at {:?}", uv_t),
+            )?;
+            assert_vec3_close(
+                rust_sample.normal,
+                occt_sample.normal,
+                1.0e-6,
+                &format!("{kind:?} sample normal at {:?}", uv_t),
+            )?;
+        }
     }
 
     assert!(prism_step.is_file());
     assert!(revolution_step.is_file());
+    Ok(())
+}
+
+#[test]
+fn ported_offset_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let offset_face_shape = kernel.make_offset(
+        &revolution_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let offset_step = support::export_kernel_shape(
+        &kernel,
+        &offset_face_shape,
+        "ported_geometry_workflows",
+        "ported_offset_surface",
+    )?;
+
+    let offset_face = find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?;
+    let rust_sample = kernel
+        .context()
+        .ported_face_sample_normalized(&offset_face, [0.5, 0.5])?
+        .ok_or_else(|| std::io::Error::other("expected ported offset surface sample"))?;
+    let occt_sample = kernel
+        .context()
+        .face_sample_normalized_occt(&offset_face, [0.5, 0.5])?;
+
+    assert_vec3_close(
+        rust_sample.position,
+        occt_sample.position,
+        1.0e-6,
+        "offset sample position",
+    )?;
+    assert_vec3_close(
+        rust_sample.normal,
+        occt_sample.normal,
+        1.0e-6,
+        "offset sample normal",
+    )?;
+    assert!(offset_step.is_file());
+
+    Ok(())
+}
+
+#[test]
+fn ported_face_areas_match_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 15.0,
+        top_radius: 5.0,
+        height: 30.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 14.0,
+    })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 25.0,
+        minor_radius: 6.0,
+    })?;
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let offset_face_shape = kernel.make_offset(
+        &revolution_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    for (label, face, tolerance) in [
+        (
+            "plane",
+            find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?,
+            1.0e-6,
+        ),
+        (
+            "cylinder",
+            find_first_face_by_kind(&kernel, &cut, SurfaceKind::Cylinder)?,
+            1.0e-6,
+        ),
+        (
+            "cone",
+            find_first_face_by_kind(&kernel, &cone, SurfaceKind::Cone)?,
+            1.0e-6,
+        ),
+        (
+            "sphere",
+            find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?,
+            1.0e-6,
+        ),
+        (
+            "torus",
+            find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?,
+            1.0e-6,
+        ),
+        (
+            "offset",
+            find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?,
+            5.0e-1,
+        ),
+    ] {
+        let rust_area = kernel
+            .context()
+            .ported_face_area(&face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected a ported {label} face area")))?;
+        let occt_area = kernel.context().describe_shape_occt(&face)?.surface_area;
+
+        assert!(
+            (rust_area - occt_area).abs() <= tolerance,
+            "{label} face area drifted from OCCT: rust={rust_area} occt={occt_area}"
+        );
+    }
+
+    let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let rust_extrusion_area = kernel
+        .context()
+        .ported_face_area(&extrusion_face)?
+        .ok_or_else(|| std::io::Error::other("expected a ported extrusion face area"))?;
+    let expected_extrusion_area = ellipse_perimeter(10.0, 6.0) * 24.0;
+    assert!(
+        (rust_extrusion_area - expected_extrusion_area).abs() <= 1.0e-3,
+        "extrusion face area drifted from expected integral: rust={rust_extrusion_area} expected={expected_extrusion_area}"
+    );
+
+    let rust_revolution_area = kernel
+        .context()
+        .ported_face_area(&revolution_face)?
+        .ok_or_else(|| std::io::Error::other("expected a ported revolution face area"))?;
+    let expected_revolution_area = revolved_ellipse_area(30.0, 10.0, 6.0, PI);
+    assert!(
+        (rust_revolution_area - expected_revolution_area).abs() <= 1.0e-2,
+        "revolution face area drifted from expected integral: rust={rust_revolution_area} expected={expected_revolution_area}"
+    );
+
     Ok(())
 }
 

@@ -1,0 +1,16 @@
+{
+  "name": "occt-codex-port-loop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Root launcher for the OCCT Codex port loop.",
+  "scripts": {
+    "codexAgent": "node codex-port-loop/agent.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@openai/codex": "^0.120.0"
+  }
+}

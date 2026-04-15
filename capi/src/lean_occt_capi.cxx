@@ -189,6 +189,23 @@ static void writeDir(double* the_xyz3, const gp_Dir& the_dir)
   the_xyz3[2] = the_dir.Z();
 }
 
+static void fillCurveGeometry(const Adaptor3d_Curve& the_curve, LeanOcctEdgeGeometry& the_geometry);
+static void fillFaceGeometry(const Adaptor3d_Surface& the_surface, LeanOcctFaceGeometry& the_geometry);
+static void fillLinePayload(const Adaptor3d_Curve& the_curve, LeanOcctLinePayload& the_payload);
+static void fillCirclePayload(const Adaptor3d_Curve& the_curve, LeanOcctCirclePayload& the_payload);
+static void fillEllipsePayload(const Adaptor3d_Curve& the_curve, LeanOcctEllipsePayload& the_payload);
+static void fillPlanePayload(const Adaptor3d_Surface& the_surface, LeanOcctPlanePayload& the_payload);
+static void fillCylinderPayload(const Adaptor3d_Surface& the_surface, LeanOcctCylinderPayload& the_payload);
+static void fillConePayload(const Adaptor3d_Surface& the_surface, LeanOcctConePayload& the_payload);
+static void fillSpherePayload(const Adaptor3d_Surface& the_surface, LeanOcctSpherePayload& the_payload);
+static void fillTorusPayload(const Adaptor3d_Surface& the_surface, LeanOcctTorusPayload& the_payload);
+static void fillRevolutionSurfacePayload(const Adaptor3d_Surface& the_surface,
+                                         LeanOcctRevolutionSurfacePayload& the_payload);
+static void fillExtrusionSurfacePayload(const Adaptor3d_Surface& the_surface,
+                                        LeanOcctExtrusionSurfacePayload& the_payload);
+static occ::handle<Adaptor3d_Surface> offsetBasisSurface(const TopoDS_Face& the_face);
+static occ::handle<Adaptor3d_Curve> offsetBasisCurve(const TopoDS_Face& the_face);
+
 } // namespace
 
 struct LeanOcctContext
@@ -954,20 +971,35 @@ static void sampleEdgeAtParameter(const TopoDS_Edge&      the_edge,
            requireDirection(a_tangent, "Edge tangent was undefined at the requested parameter."));
 }
 
+static void fillCurveGeometry(const Adaptor3d_Curve& the_curve, LeanOcctEdgeGeometry& the_geometry)
+{
+  the_geometry.kind = toLeanOcctCurveKind(the_curve.GetType());
+  the_geometry.start_parameter = the_curve.FirstParameter();
+  the_geometry.end_parameter = the_curve.LastParameter();
+  the_geometry.is_closed = the_curve.IsClosed() ? 1U : 0U;
+  the_geometry.is_periodic = the_curve.IsPeriodic() ? 1U : 0U;
+  the_geometry.period = the_geometry.is_periodic != 0 ? the_curve.Period() : 0.0;
+}
+
 static void fillFaceGeometry(const TopoDS_Face& the_face, LeanOcctFaceGeometry& the_geometry)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  the_geometry.kind = toLeanOcctSurfaceKind(a_surface.GetType());
-  the_geometry.u_min = a_surface.FirstUParameter();
-  the_geometry.u_max = a_surface.LastUParameter();
-  the_geometry.v_min = a_surface.FirstVParameter();
-  the_geometry.v_max = a_surface.LastVParameter();
-  the_geometry.is_u_closed = a_surface.IsUClosed() ? 1U : 0U;
-  the_geometry.is_v_closed = a_surface.IsVClosed() ? 1U : 0U;
-  the_geometry.is_u_periodic = a_surface.IsUPeriodic() ? 1U : 0U;
-  the_geometry.is_v_periodic = a_surface.IsVPeriodic() ? 1U : 0U;
-  the_geometry.u_period = the_geometry.is_u_periodic != 0 ? a_surface.UPeriod() : 0.0;
-  the_geometry.v_period = the_geometry.is_v_periodic != 0 ? a_surface.VPeriod() : 0.0;
+  fillFaceGeometry(a_surface, the_geometry);
+}
+
+static void fillFaceGeometry(const Adaptor3d_Surface& the_surface, LeanOcctFaceGeometry& the_geometry)
+{
+  the_geometry.kind = toLeanOcctSurfaceKind(the_surface.GetType());
+  the_geometry.u_min = the_surface.FirstUParameter();
+  the_geometry.u_max = the_surface.LastUParameter();
+  the_geometry.v_min = the_surface.FirstVParameter();
+  the_geometry.v_max = the_surface.LastVParameter();
+  the_geometry.is_u_closed = the_surface.IsUClosed() ? 1U : 0U;
+  the_geometry.is_v_closed = the_surface.IsVClosed() ? 1U : 0U;
+  the_geometry.is_u_periodic = the_surface.IsUPeriodic() ? 1U : 0U;
+  the_geometry.is_v_periodic = the_surface.IsVPeriodic() ? 1U : 0U;
+  the_geometry.u_period = the_geometry.is_u_periodic != 0 ? the_surface.UPeriod() : 0.0;
+  the_geometry.v_period = the_geometry.is_v_periodic != 0 ? the_surface.VPeriod() : 0.0;
 }
 
 static void sampleFaceAtUv(const TopoDS_Face&     the_face,
@@ -1042,15 +1074,48 @@ static void fillCirclePayload(const TopoDS_Edge& the_edge, LeanOcctCirclePayload
   the_payload.radius = a_circle.Radius();
 }
 
+static void fillLinePayload(const Adaptor3d_Curve& the_curve, LeanOcctLinePayload& the_payload)
+{
+  if (the_curve.GetType() != GeomAbs_Line)
+  {
+    throw std::invalid_argument("LeanOcct basis curve was not a line.");
+  }
+
+  const gp_Lin a_line = the_curve.Line();
+  writePoint(the_payload.origin, a_line.Location());
+  writeDir(the_payload.direction, a_line.Direction());
+}
+
+static void fillCirclePayload(const Adaptor3d_Curve& the_curve, LeanOcctCirclePayload& the_payload)
+{
+  if (the_curve.GetType() != GeomAbs_Circle)
+  {
+    throw std::invalid_argument("LeanOcct basis curve was not a circle.");
+  }
+
+  const gp_Circ a_circle = the_curve.Circle();
+  writePoint(the_payload.center, a_circle.Location());
+  writeDir(the_payload.normal, a_circle.Position().Direction());
+  writeDir(the_payload.x_direction, a_circle.Position().XDirection());
+  writeDir(the_payload.y_direction, a_circle.Position().YDirection());
+  the_payload.radius = a_circle.Radius();
+}
+
 static void fillPlanePayload(const TopoDS_Face& the_face, LeanOcctPlanePayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_Plane)
+  fillPlanePayload(a_surface, the_payload);
+}
+
+static void fillPlanePayload(const Adaptor3d_Surface& the_surface,
+                             LeanOcctPlanePayload&    the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_Plane)
   {
     throw std::invalid_argument("LeanOcctShape face was not a plane.");
   }
 
-  const gp_Pln a_plane = a_surface.Plane();
+  const gp_Pln a_plane = the_surface.Plane();
   writePoint(the_payload.origin, a_plane.Location());
   writeDir(the_payload.normal, a_plane.Position().Direction());
   writeDir(the_payload.x_direction, a_plane.Position().XDirection());
@@ -1060,12 +1125,18 @@ static void fillPlanePayload(const TopoDS_Face& the_face, LeanOcctPlanePayload& 
 static void fillCylinderPayload(const TopoDS_Face& the_face, LeanOcctCylinderPayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_Cylinder)
+  fillCylinderPayload(a_surface, the_payload);
+}
+
+static void fillCylinderPayload(const Adaptor3d_Surface& the_surface,
+                                LeanOcctCylinderPayload& the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_Cylinder)
   {
     throw std::invalid_argument("LeanOcctShape face was not a cylinder.");
   }
 
-  const gp_Cylinder a_cylinder = a_surface.Cylinder();
+  const gp_Cylinder a_cylinder = the_surface.Cylinder();
   writePoint(the_payload.origin, a_cylinder.Location());
   writeDir(the_payload.axis, a_cylinder.Position().Direction());
   writeDir(the_payload.x_direction, a_cylinder.Position().XDirection());
@@ -1090,15 +1161,36 @@ static void fillEllipsePayload(const TopoDS_Edge& the_edge, LeanOcctEllipsePaylo
   the_payload.minor_radius = an_ellipse.MinorRadius();
 }
 
+static void fillEllipsePayload(const Adaptor3d_Curve& the_curve, LeanOcctEllipsePayload& the_payload)
+{
+  if (the_curve.GetType() != GeomAbs_Ellipse)
+  {
+    throw std::invalid_argument("LeanOcct basis curve was not an ellipse.");
+  }
+
+  const gp_Elips an_ellipse = the_curve.Ellipse();
+  writePoint(the_payload.center, an_ellipse.Location());
+  writeDir(the_payload.normal, an_ellipse.Position().Direction());
+  writeDir(the_payload.x_direction, an_ellipse.Position().XDirection());
+  writeDir(the_payload.y_direction, an_ellipse.Position().YDirection());
+  the_payload.major_radius = an_ellipse.MajorRadius();
+  the_payload.minor_radius = an_ellipse.MinorRadius();
+}
+
 static void fillConePayload(const TopoDS_Face& the_face, LeanOcctConePayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_Cone)
+  fillConePayload(a_surface, the_payload);
+}
+
+static void fillConePayload(const Adaptor3d_Surface& the_surface, LeanOcctConePayload& the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_Cone)
   {
     throw std::invalid_argument("LeanOcctShape face was not a cone.");
   }
 
-  const gp_Cone a_cone = a_surface.Cone();
+  const gp_Cone a_cone = the_surface.Cone();
   writePoint(the_payload.origin, a_cone.Location());
   writeDir(the_payload.axis, a_cone.Position().Direction());
   writeDir(the_payload.x_direction, a_cone.Position().XDirection());
@@ -1110,12 +1202,18 @@ static void fillConePayload(const TopoDS_Face& the_face, LeanOcctConePayload& th
 static void fillSpherePayload(const TopoDS_Face& the_face, LeanOcctSpherePayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_Sphere)
+  fillSpherePayload(a_surface, the_payload);
+}
+
+static void fillSpherePayload(const Adaptor3d_Surface& the_surface,
+                              LeanOcctSpherePayload&   the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_Sphere)
   {
     throw std::invalid_argument("LeanOcctShape face was not a sphere.");
   }
 
-  const gp_Sphere a_sphere = a_surface.Sphere();
+  const gp_Sphere a_sphere = the_surface.Sphere();
   writePoint(the_payload.center, a_sphere.Location());
   writeDir(the_payload.normal, a_sphere.Position().Direction());
   writeDir(the_payload.x_direction, a_sphere.Position().XDirection());
@@ -1126,12 +1224,17 @@ static void fillSpherePayload(const TopoDS_Face& the_face, LeanOcctSpherePayload
 static void fillTorusPayload(const TopoDS_Face& the_face, LeanOcctTorusPayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_Torus)
+  fillTorusPayload(a_surface, the_payload);
+}
+
+static void fillTorusPayload(const Adaptor3d_Surface& the_surface, LeanOcctTorusPayload& the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_Torus)
   {
     throw std::invalid_argument("LeanOcctShape face was not a torus.");
   }
 
-  const gp_Torus a_torus = a_surface.Torus();
+  const gp_Torus a_torus = the_surface.Torus();
   writePoint(the_payload.center, a_torus.Location());
   writeDir(the_payload.axis, a_torus.Position().Direction());
   writeDir(the_payload.x_direction, a_torus.Position().XDirection());
@@ -1144,15 +1247,21 @@ static void fillRevolutionSurfacePayload(const TopoDS_Face& the_face,
                                          LeanOcctRevolutionSurfacePayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_SurfaceOfRevolution)
+  fillRevolutionSurfacePayload(a_surface, the_payload);
+}
+
+static void fillRevolutionSurfacePayload(const Adaptor3d_Surface&         the_surface,
+                                         LeanOcctRevolutionSurfacePayload& the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_SurfaceOfRevolution)
   {
     throw std::invalid_argument("LeanOcctShape face was not a surface of revolution.");
   }
 
-  const gp_Ax1 an_axis = a_surface.AxeOfRevolution();
+  const gp_Ax1 an_axis = the_surface.AxeOfRevolution();
   writePoint(the_payload.axis_origin, an_axis.Location());
   writeDir(the_payload.axis_direction, an_axis.Direction());
-  const occ::handle<Adaptor3d_Curve> a_basis_curve = a_surface.BasisCurve();
+  const occ::handle<Adaptor3d_Curve> a_basis_curve = the_surface.BasisCurve();
   if (a_basis_curve.IsNull())
   {
     throw std::runtime_error("Surface of revolution basis curve was null.");
@@ -1164,13 +1273,19 @@ static void fillExtrusionSurfacePayload(const TopoDS_Face& the_face,
                                         LeanOcctExtrusionSurfacePayload& the_payload)
 {
   const BRepAdaptor_Surface a_surface(the_face);
-  if (a_surface.GetType() != GeomAbs_SurfaceOfExtrusion)
+  fillExtrusionSurfacePayload(a_surface, the_payload);
+}
+
+static void fillExtrusionSurfacePayload(const Adaptor3d_Surface&        the_surface,
+                                        LeanOcctExtrusionSurfacePayload& the_payload)
+{
+  if (the_surface.GetType() != GeomAbs_SurfaceOfExtrusion)
   {
     throw std::invalid_argument("LeanOcctShape face was not a surface of extrusion.");
   }
 
-  writeDir(the_payload.direction, a_surface.Direction());
-  const occ::handle<Adaptor3d_Curve> a_basis_curve = a_surface.BasisCurve();
+  writeDir(the_payload.direction, the_surface.Direction());
+  const occ::handle<Adaptor3d_Curve> a_basis_curve = the_surface.BasisCurve();
   if (a_basis_curve.IsNull())
   {
     throw std::runtime_error("Surface of extrusion basis curve was null.");
@@ -1194,6 +1309,33 @@ static void fillOffsetSurfacePayload(const TopoDS_Face& the_face,
     throw std::runtime_error("Offset surface basis surface was null.");
   }
   the_payload.basis_surface_kind = toLeanOcctSurfaceKind(a_basis_surface->GetType());
+}
+
+static occ::handle<Adaptor3d_Surface> offsetBasisSurface(const TopoDS_Face& the_face)
+{
+  const BRepAdaptor_Surface a_surface(the_face);
+  if (a_surface.GetType() != GeomAbs_OffsetSurface)
+  {
+    throw std::invalid_argument("LeanOcctShape face was not an offset surface.");
+  }
+
+  const occ::handle<Adaptor3d_Surface> a_basis_surface = a_surface.BasisSurface();
+  if (a_basis_surface.IsNull())
+  {
+    throw std::runtime_error("Offset surface basis surface was null.");
+  }
+  return a_basis_surface;
+}
+
+static occ::handle<Adaptor3d_Curve> offsetBasisCurve(const TopoDS_Face& the_face)
+{
+  const occ::handle<Adaptor3d_Surface> a_basis_surface = offsetBasisSurface(the_face);
+  const occ::handle<Adaptor3d_Curve>   a_basis_curve = a_basis_surface->BasisCurve();
+  if (a_basis_curve.IsNull())
+  {
+    throw std::runtime_error("Offset surface basis curve was null.");
+  }
+  return a_basis_curve;
 }
 
 static TopologyBuffers snapshotTopology(const TopoDS_Shape& the_shape)
@@ -1506,10 +1648,6 @@ static MeshBuffers tessellateShape(const TopoDS_Shape& the_shape, const LeanOcct
     }
   }
 
-  if (a_buffers.solidCount == 0)
-  {
-    throw std::runtime_error("Meshed shape did not contain a solid.");
-  }
   if (a_buffers.faceCount == 0)
   {
     throw std::runtime_error("Meshed shape did not contain any faces.");
@@ -2086,7 +2224,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_line_payloa
                          the_payload,
                          "LeanOcctLinePayload output pointer was null.",
                          requireEdgeShape,
-                         fillLinePayload);
+                         static_cast<void (*)(const TopoDS_Edge&, LeanOcctLinePayload&)>(
+                           fillLinePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_circle_payload(
@@ -2099,7 +2238,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_circle_payl
                          the_payload,
                          "LeanOcctCirclePayload output pointer was null.",
                          requireEdgeShape,
-                         fillCirclePayload);
+                         static_cast<void (*)(const TopoDS_Edge&, LeanOcctCirclePayload&)>(
+                           fillCirclePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_ellipse_payload(
@@ -2112,7 +2252,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_ellipse_pay
                          the_payload,
                          "LeanOcctEllipsePayload output pointer was null.",
                          requireEdgeShape,
-                         fillEllipsePayload);
+                         static_cast<void (*)(const TopoDS_Edge&, LeanOcctEllipsePayload&)>(
+                           fillEllipsePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_uv_bounds(
@@ -2213,7 +2354,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_geometry(
                          the_geometry,
                          "LeanOcctFaceGeometry output pointer was null.",
                          requireFaceShape,
-                         fillFaceGeometry);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctFaceGeometry&)>(
+                           fillFaceGeometry));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_plane_payload(
@@ -2226,7 +2368,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_plane_paylo
                          the_payload,
                          "LeanOcctPlanePayload output pointer was null.",
                          requireFaceShape,
-                         fillPlanePayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctPlanePayload&)>(
+                           fillPlanePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_cylinder_payload(
@@ -2239,7 +2382,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_cylinder_pa
                          the_payload,
                          "LeanOcctCylinderPayload output pointer was null.",
                          requireFaceShape,
-                         fillCylinderPayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctCylinderPayload&)>(
+                           fillCylinderPayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_cone_payload(
@@ -2252,7 +2396,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_cone_payloa
                          the_payload,
                          "LeanOcctConePayload output pointer was null.",
                          requireFaceShape,
-                         fillConePayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctConePayload&)>(
+                           fillConePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_sphere_payload(
@@ -2265,7 +2410,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_sphere_payl
                          the_payload,
                          "LeanOcctSpherePayload output pointer was null.",
                          requireFaceShape,
-                         fillSpherePayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctSpherePayload&)>(
+                           fillSpherePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_torus_payload(
@@ -2278,7 +2424,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_torus_paylo
                          the_payload,
                          "LeanOcctTorusPayload output pointer was null.",
                          requireFaceShape,
-                         fillTorusPayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctTorusPayload&)>(
+                           fillTorusPayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_revolution_payload(
@@ -2291,7 +2438,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_revolution_
                          the_payload,
                          "LeanOcctRevolutionSurfacePayload output pointer was null.",
                          requireFaceShape,
-                         fillRevolutionSurfacePayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctRevolutionSurfacePayload&)>(
+                           fillRevolutionSurfacePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_extrusion_payload(
@@ -2304,7 +2452,8 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_extrusion_p
                          the_payload,
                          "LeanOcctExtrusionSurfacePayload output pointer was null.",
                          requireFaceShape,
-                         fillExtrusionSurfacePayload);
+                         static_cast<void (*)(const TopoDS_Face&, LeanOcctExtrusionSurfacePayload&)>(
+                           fillExtrusionSurfacePayload));
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_payload(
@@ -2318,6 +2467,164 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_payl
                          "LeanOcctOffsetSurfacePayload output pointer was null.",
                          requireFaceShape,
                          fillOffsetSurfacePayload);
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_geometry(
+  LeanOcctContext*       the_context,
+  const LeanOcctShape*   the_shape,
+  LeanOcctFaceGeometry*  the_geometry)
+{
+  return writeOutput(the_context,
+                     the_geometry,
+                     "LeanOcctFaceGeometry output pointer was null.",
+                     [&](LeanOcctFaceGeometry& the_result) {
+                       fillFaceGeometry(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_plane_payload(
+  LeanOcctContext*       the_context,
+  const LeanOcctShape*   the_shape,
+  LeanOcctPlanePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctPlanePayload output pointer was null.",
+                     [&](LeanOcctPlanePayload& the_result) {
+                       fillPlanePayload(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_cylinder_payload(
+  LeanOcctContext*          the_context,
+  const LeanOcctShape*      the_shape,
+  LeanOcctCylinderPayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctCylinderPayload output pointer was null.",
+                     [&](LeanOcctCylinderPayload& the_result) {
+                       fillCylinderPayload(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_cone_payload(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctConePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctConePayload output pointer was null.",
+                     [&](LeanOcctConePayload& the_result) {
+                       fillConePayload(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_sphere_payload(
+  LeanOcctContext*        the_context,
+  const LeanOcctShape*    the_shape,
+  LeanOcctSpherePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctSpherePayload output pointer was null.",
+                     [&](LeanOcctSpherePayload& the_result) {
+                       fillSpherePayload(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_torus_payload(
+  LeanOcctContext*       the_context,
+  const LeanOcctShape*   the_shape,
+  LeanOcctTorusPayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctTorusPayload output pointer was null.",
+                     [&](LeanOcctTorusPayload& the_result) {
+                       fillTorusPayload(*offsetBasisSurface(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_revolution_payload(
+  LeanOcctContext*                  the_context,
+  const LeanOcctShape*              the_shape,
+  LeanOcctRevolutionSurfacePayload* the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctRevolutionSurfacePayload output pointer was null.",
+                     [&](LeanOcctRevolutionSurfacePayload& the_result) {
+                       fillRevolutionSurfacePayload(*offsetBasisSurface(requireFaceShape(the_shape)),
+                                                    the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_extrusion_payload(
+  LeanOcctContext*                 the_context,
+  const LeanOcctShape*             the_shape,
+  LeanOcctExtrusionSurfacePayload* the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctExtrusionSurfacePayload output pointer was null.",
+                     [&](LeanOcctExtrusionSurfacePayload& the_result) {
+                       fillExtrusionSurfacePayload(*offsetBasisSurface(requireFaceShape(the_shape)),
+                                                  the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_geometry(
+  LeanOcctContext*       the_context,
+  const LeanOcctShape*   the_shape,
+  LeanOcctEdgeGeometry*  the_geometry)
+{
+  return writeOutput(the_context,
+                     the_geometry,
+                     "LeanOcctEdgeGeometry output pointer was null.",
+                     [&](LeanOcctEdgeGeometry& the_result) {
+                       fillCurveGeometry(*offsetBasisCurve(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_line_payload(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctLinePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctLinePayload output pointer was null.",
+                     [&](LeanOcctLinePayload& the_result) {
+                       fillLinePayload(*offsetBasisCurve(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_circle_payload(
+  LeanOcctContext*        the_context,
+  const LeanOcctShape*    the_shape,
+  LeanOcctCirclePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctCirclePayload output pointer was null.",
+                     [&](LeanOcctCirclePayload& the_result) {
+                       fillCirclePayload(*offsetBasisCurve(requireFaceShape(the_shape)), the_result);
+                     });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_offset_basis_curve_ellipse_payload(
+  LeanOcctContext*         the_context,
+  const LeanOcctShape*     the_shape,
+  LeanOcctEllipsePayload*  the_payload)
+{
+  return writeOutput(the_context,
+                     the_payload,
+                     "LeanOcctEllipsePayload output pointer was null.",
+                     [&](LeanOcctEllipsePayload& the_result) {
+                       fillEllipsePayload(*offsetBasisCurve(requireFaceShape(the_shape)), the_result);
+                     });
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_describe(

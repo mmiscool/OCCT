@@ -1,6 +1,11 @@
+use crate::brep::{
+    ported_face_area as ported_face_area_value,
+    ported_face_surface_descriptor as ported_face_surface_descriptor_value,
+};
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry, EdgeSample,
-    EllipsePayload, Error, FaceGeometry, FaceSample, LinePayload, Orientation, PlanePayload, Shape,
+    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, LinePayload,
+    OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
     SpherePayload, SurfaceKind, TorusPayload,
 };
 
@@ -24,6 +29,40 @@ pub enum PortedSurface {
     Cone(ConePayload),
     Sphere(SpherePayload),
     Torus(TorusPayload),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PortedSweptSurface {
+    Revolution {
+        payload: RevolutionSurfacePayload,
+        basis_curve: PortedCurve,
+        basis_geometry: EdgeGeometry,
+    },
+    Extrusion {
+        payload: ExtrusionSurfacePayload,
+        basis_curve: PortedCurve,
+        basis_geometry: EdgeGeometry,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PortedOffsetBasisSurface {
+    Analytic(PortedSurface),
+    Swept(PortedSweptSurface),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PortedOffsetSurface {
+    pub payload: OffsetSurfacePayload,
+    pub basis_geometry: FaceGeometry,
+    pub basis: PortedOffsetBasisSurface,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PortedFaceSurface {
+    Analytic(PortedSurface),
+    Swept(PortedSweptSurface),
+    Offset(PortedOffsetSurface),
 }
 
 impl PortedCurve {
@@ -414,9 +453,179 @@ impl PortedSurface {
     }
 }
 
+impl PortedSweptSurface {
+    pub fn sample_normalized(self, geometry: FaceGeometry, uv_t: [f64; 2]) -> FaceSample {
+        self.sample_normalized_with_orientation(geometry, uv_t, Orientation::Forward)
+    }
+
+    pub fn sample_normalized_with_orientation(
+        self,
+        geometry: FaceGeometry,
+        uv_t: [f64; 2],
+        orientation: Orientation,
+    ) -> FaceSample {
+        match self {
+            Self::Revolution {
+                payload,
+                basis_curve,
+                basis_geometry,
+            } => sample_revolution_surface_normalized(
+                basis_curve,
+                geometry,
+                basis_geometry,
+                uv_t,
+                payload.axis_origin,
+                payload.axis_direction,
+                orientation,
+            ),
+            Self::Extrusion {
+                payload,
+                basis_curve,
+                basis_geometry,
+            } => sample_extrusion_surface_normalized(
+                basis_curve,
+                geometry,
+                basis_geometry,
+                uv_t,
+                payload.direction,
+                orientation,
+            ),
+        }
+    }
+}
+
+impl PortedOffsetSurface {
+    pub fn sample_normalized(self, uv_t: [f64; 2]) -> FaceSample {
+        self.sample_normalized_with_orientation(uv_t, Orientation::Forward)
+    }
+
+    pub fn sample_normalized_with_orientation(
+        self,
+        uv_t: [f64; 2],
+        orientation: Orientation,
+    ) -> FaceSample {
+        let mut basis_sample = match self.basis {
+            PortedOffsetBasisSurface::Analytic(surface) => {
+                surface.sample_normalized(self.basis_geometry, uv_t)
+            }
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                payload,
+                basis_curve,
+                basis_geometry,
+            }) => sample_revolution_surface_normalized(
+                basis_curve,
+                self.basis_geometry,
+                basis_geometry,
+                uv_t,
+                payload.axis_origin,
+                payload.axis_direction,
+                Orientation::Forward,
+            ),
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                payload,
+                basis_curve,
+                basis_geometry,
+            }) => sample_extrusion_surface_normalized(
+                basis_curve,
+                self.basis_geometry,
+                basis_geometry,
+                uv_t,
+                payload.direction,
+                Orientation::Forward,
+            ),
+        };
+        basis_sample.position = add3(
+            basis_sample.position,
+            scale3(basis_sample.normal, self.payload.offset_value),
+        );
+        if matches!(orientation, Orientation::Reversed) {
+            basis_sample.normal = scale3(basis_sample.normal, -1.0);
+        }
+        basis_sample
+    }
+
+    pub(crate) fn equivalent_analytic_surface(self) -> Option<PortedSurface> {
+        let offset = self.payload.offset_value;
+        match self.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)) => {
+                Some(PortedSurface::Plane(PlanePayload {
+                    origin: add3(payload.origin, scale3(payload.normal, offset)),
+                    ..payload
+                }))
+            }
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(payload)) => {
+                let radius = payload.radius + offset;
+                (radius.abs() > 1.0e-9).then_some(PortedSurface::Cylinder(CylinderPayload {
+                    radius,
+                    ..payload
+                }))
+            }
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(payload)) => {
+                Some(PortedSurface::Cone(ConePayload {
+                    origin: add3(
+                        payload.origin,
+                        scale3(payload.axis, -offset * payload.semi_angle.sin()),
+                    ),
+                    reference_radius: payload.reference_radius + offset * payload.semi_angle.cos(),
+                    ..payload
+                }))
+            }
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(payload)) => {
+                let radius = payload.radius + offset;
+                (radius.abs() > 1.0e-9)
+                    .then_some(PortedSurface::Sphere(SpherePayload { radius, ..payload }))
+            }
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(payload)) => {
+                let minor_radius = payload.minor_radius + offset;
+                (minor_radius.abs() > 1.0e-9).then_some(PortedSurface::Torus(TorusPayload {
+                    minor_radius,
+                    ..payload
+                }))
+            }
+            PortedOffsetBasisSurface::Swept(_) => None,
+        }
+    }
+}
+
+impl PortedFaceSurface {
+    pub fn sample_normalized(self, geometry: FaceGeometry, uv_t: [f64; 2]) -> FaceSample {
+        self.sample_normalized_with_orientation(geometry, uv_t, Orientation::Forward)
+    }
+
+    pub fn sample_normalized_with_orientation(
+        self,
+        geometry: FaceGeometry,
+        uv_t: [f64; 2],
+        orientation: Orientation,
+    ) -> FaceSample {
+        match self {
+            Self::Analytic(surface) => {
+                surface.sample_normalized_with_orientation(geometry, uv_t, orientation)
+            }
+            Self::Swept(surface) => {
+                surface.sample_normalized_with_orientation(geometry, uv_t, orientation)
+            }
+            Self::Offset(surface) => surface.sample_normalized_with_orientation(uv_t, orientation),
+        }
+    }
+}
+
 impl Context {
     pub fn ported_edge_curve(&self, shape: &Shape) -> Result<Option<PortedCurve>, Error> {
         PortedCurve::from_context(self, shape)
+    }
+
+    pub fn ported_edge_sample(&self, shape: &Shape, t: f64) -> Result<Option<EdgeSample>, Error> {
+        if !(t >= 0.0 && t <= 1.0) {
+            return Err(Error::new("Edge sample parameter must be within [0, 1]."));
+        }
+
+        let geometry = self.edge_geometry(shape)?;
+        let parameter = interpolate_range(geometry.start_parameter, geometry.end_parameter, t);
+        Ok(
+            PortedCurve::from_context_with_geometry(self, shape, geometry)?
+                .map(|curve| curve.sample_with_geometry(geometry, parameter)),
+        )
     }
 
     pub fn ported_edge_sample_at_parameter(
@@ -443,6 +652,14 @@ impl Context {
         PortedSurface::from_context(self, shape)
     }
 
+    pub fn ported_face_surface_descriptor(
+        &self,
+        shape: &Shape,
+    ) -> Result<Option<PortedFaceSurface>, Error> {
+        let geometry = self.face_geometry(shape)?;
+        ported_face_surface_descriptor_value(self, shape, geometry)
+    }
+
     pub fn ported_face_sample_normalized(
         &self,
         shape: &Shape,
@@ -450,11 +667,110 @@ impl Context {
     ) -> Result<Option<FaceSample>, Error> {
         let geometry = self.face_geometry(shape)?;
         let orientation = self.shape_orientation(shape)?;
-        Ok(
-            PortedSurface::from_context_with_geometry(self, shape, geometry)?.map(|surface| {
-                surface.sample_normalized_with_orientation(geometry, uv_t, orientation)
-            }),
-        )
+        Ok(ported_face_surface_descriptor_value(self, shape, geometry)?
+            .map(|surface| surface.sample_normalized_with_orientation(geometry, uv_t, orientation)))
+    }
+
+    pub fn ported_face_sample(
+        &self,
+        shape: &Shape,
+        uv: [f64; 2],
+    ) -> Result<Option<FaceSample>, Error> {
+        let geometry = self.face_geometry(shape)?;
+        if !(uv[0] >= geometry.u_min && uv[0] <= geometry.u_max)
+            || !(uv[1] >= geometry.v_min && uv[1] <= geometry.v_max)
+        {
+            return Err(Error::new(
+                "Requested UV sample was outside the face bounds.",
+            ));
+        }
+
+        let orientation = self.shape_orientation(shape)?;
+        let uv_t = uv_to_normalized_uv(geometry, uv);
+        Ok(ported_face_surface_descriptor_value(self, shape, geometry)?
+            .map(|surface| surface.sample_normalized_with_orientation(geometry, uv_t, orientation)))
+    }
+
+    pub fn ported_face_area(&self, shape: &Shape) -> Result<Option<f64>, Error> {
+        ported_face_area_value(self, shape)
+    }
+
+    pub(crate) fn ported_offset_surface(
+        &self,
+        shape: &Shape,
+    ) -> Result<Option<PortedOffsetSurface>, Error> {
+        if self.face_geometry(shape)?.kind != SurfaceKind::Offset {
+            return Ok(None);
+        }
+
+        let payload = self.face_offset_payload(shape)?;
+        let basis_geometry = self.face_offset_basis_geometry(shape)?;
+        let basis = match payload.basis_surface_kind {
+            SurfaceKind::Plane => PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(
+                self.face_offset_basis_plane_payload(shape)?,
+            )),
+            SurfaceKind::Cylinder => PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(
+                self.face_offset_basis_cylinder_payload(shape)?,
+            )),
+            SurfaceKind::Cone => PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(
+                self.face_offset_basis_cone_payload(shape)?,
+            )),
+            SurfaceKind::Sphere => PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(
+                self.face_offset_basis_sphere_payload(shape)?,
+            )),
+            SurfaceKind::Torus => PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(
+                self.face_offset_basis_torus_payload(shape)?,
+            )),
+            SurfaceKind::Revolution => {
+                let payload = self.face_offset_basis_revolution_payload(shape)?;
+                let basis_geometry = self.face_offset_basis_curve_geometry(shape)?;
+                let basis_curve = match payload.basis_curve_kind {
+                    CurveKind::Line => {
+                        PortedCurve::Line(self.face_offset_basis_curve_line_payload(shape)?)
+                    }
+                    CurveKind::Circle => {
+                        PortedCurve::Circle(self.face_offset_basis_curve_circle_payload(shape)?)
+                    }
+                    CurveKind::Ellipse => {
+                        PortedCurve::Ellipse(self.face_offset_basis_curve_ellipse_payload(shape)?)
+                    }
+                    _ => return Ok(None),
+                };
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    payload,
+                    basis_curve,
+                    basis_geometry,
+                })
+            }
+            SurfaceKind::Extrusion => {
+                let payload = self.face_offset_basis_extrusion_payload(shape)?;
+                let basis_geometry = self.face_offset_basis_curve_geometry(shape)?;
+                let basis_curve = match payload.basis_curve_kind {
+                    CurveKind::Line => {
+                        PortedCurve::Line(self.face_offset_basis_curve_line_payload(shape)?)
+                    }
+                    CurveKind::Circle => {
+                        PortedCurve::Circle(self.face_offset_basis_curve_circle_payload(shape)?)
+                    }
+                    CurveKind::Ellipse => {
+                        PortedCurve::Ellipse(self.face_offset_basis_curve_ellipse_payload(shape)?)
+                    }
+                    _ => return Ok(None),
+                };
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    payload,
+                    basis_curve,
+                    basis_geometry,
+                })
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(PortedOffsetSurface {
+            payload,
+            basis_geometry,
+            basis,
+        }))
     }
 }
 
@@ -615,6 +931,26 @@ fn normalized_uv_to_uv(geometry: FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
         geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
         geometry.v_min + (geometry.v_max - geometry.v_min) * uv_t[1],
     ]
+}
+
+fn uv_to_normalized_uv(geometry: FaceGeometry, uv: [f64; 2]) -> [f64; 2] {
+    [
+        normalize_range(geometry.u_min, geometry.u_max, uv[0]),
+        normalize_range(geometry.v_min, geometry.v_max, uv[1]),
+    ]
+}
+
+fn normalize_range(start: f64, end: f64, value: f64) -> f64 {
+    let span = end - start;
+    if span.abs() <= 1.0e-12 {
+        0.0
+    } else {
+        (value - start) / span
+    }
+}
+
+fn interpolate_range(start: f64, end: f64, t: f64) -> f64 {
+    start + (end - start) * t
 }
 
 fn rotate_point_about_axis(

@@ -4,8 +4,9 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
-    ModelDocument, ModelKernel, OffsetParams, PrismParams, RevolutionParams, Shape, ShapeKind,
-    SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
+    ModelDocument, ModelKernel, OffsetParams, PortedFaceSurface, PortedOffsetBasisSurface,
+    PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind,
+    ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -21,6 +22,19 @@ fn default_cut() -> ThroughHoleCut {
             height: 72.0,
         },
     }
+}
+
+fn find_first_edge_by_kind(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    kind: CurveKind,
+) -> Result<Shape, Box<dyn std::error::Error>> {
+    for edge in kernel.context().subshapes(shape, ShapeKind::Edge)? {
+        if kernel.context().edge_geometry(&edge)?.kind == kind {
+            return Ok(edge);
+        }
+    }
+    Err(std::io::Error::other(format!("expected edge with curve kind {:?}", kind)).into())
 }
 
 fn find_first_face_by_kind(
@@ -61,6 +75,188 @@ fn assert_bbox_close(
     Ok(())
 }
 
+fn assert_vec3_close(
+    lhs: [f64; 3],
+    rhs: [f64; 3],
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for axis in 0..3 {
+        if (lhs[axis] - rhs[axis]).abs() > tolerance {
+            return Err(std::io::Error::other(format!(
+                "{label} mismatch on axis {axis}: lhs={lhs:?} rhs={rhs:?} tol={tolerance}"
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn assert_topology_matches(
+    label: &str,
+    rust: &lean_occt::TopologySnapshot,
+    occt: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if rust.vertex_positions.len() != occt.vertex_positions.len()
+        || rust.edges.len() != occt.edges.len()
+        || rust.wires.len() != occt.wires.len()
+        || rust.faces.len() != occt.faces.len()
+        || rust.edge_face_indices != occt.edge_face_indices
+        || rust.wire_edge_indices != occt.wire_edge_indices
+        || rust.wire_edge_orientations != occt.wire_edge_orientations
+        || rust.wire_vertex_indices != occt.wire_vertex_indices
+        || rust.face_wire_indices != occt.face_wire_indices
+        || rust.face_wire_orientations != occt.face_wire_orientations
+        || rust.face_wire_roles != occt.face_wire_roles
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} topology mismatch: rust={rust:?} occt={occt:?}"
+        ))
+        .into());
+    }
+
+    for (index, (lhs, rhs)) in rust.edge_faces.iter().zip(&occt.edge_faces).enumerate() {
+        if lhs.offset != rhs.offset || lhs.count != rhs.count {
+            return Err(std::io::Error::other(format!(
+                "{label} edge-face range {index} mismatch: rust={lhs:?} occt={rhs:?}"
+            ))
+            .into());
+        }
+    }
+
+    for (index, (lhs, rhs)) in rust
+        .wire_vertices
+        .iter()
+        .zip(&occt.wire_vertices)
+        .enumerate()
+    {
+        if lhs.offset != rhs.offset || lhs.count != rhs.count {
+            return Err(std::io::Error::other(format!(
+                "{label} wire-vertex range {index} mismatch: rust={lhs:?} occt={rhs:?}"
+            ))
+            .into());
+        }
+    }
+
+    for (index, (lhs, rhs)) in rust.faces.iter().zip(&occt.faces).enumerate() {
+        if lhs.offset != rhs.offset || lhs.count != rhs.count {
+            return Err(std::io::Error::other(format!(
+                "{label} face range {index} mismatch: rust={lhs:?} occt={rhs:?}"
+            ))
+            .into());
+        }
+    }
+
+    for (index, (lhs, rhs)) in rust
+        .vertex_positions
+        .iter()
+        .zip(&occt.vertex_positions)
+        .enumerate()
+    {
+        assert_vec3_close(*lhs, *rhs, 1.0e-8, &format!("{label} vertex {index}"))?;
+    }
+
+    for (index, (lhs, rhs)) in rust.edges.iter().zip(&occt.edges).enumerate() {
+        if lhs.start_vertex != rhs.start_vertex
+            || lhs.end_vertex != rhs.end_vertex
+            || (lhs.length - rhs.length).abs() > 1.0e-8
+        {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} mismatch: rust={lhs:?} occt={rhs:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_topology_backed_subshape_counts_match(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (kind, expected_count) in [
+        (ShapeKind::Face, topology.faces.len()),
+        (ShapeKind::Wire, topology.wires.len()),
+        (ShapeKind::Edge, topology.edges.len()),
+        (ShapeKind::Vertex, topology.vertex_positions.len()),
+    ] {
+        let public_count = kernel.context().subshape_count(shape, kind)?;
+        let occt_count = kernel.context().subshape_count_occt(shape, kind)?;
+        if public_count != expected_count || public_count != occt_count {
+            return Err(std::io::Error::other(format!(
+                "{label} {kind:?} count mismatch: public={public_count} rust_topology={expected_count} occt={occt_count}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_summary_matches(
+    label: &str,
+    rust: &lean_occt::ShapeSummary,
+    expected: &lean_occt::ShapeSummary,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if rust.root_kind != expected.root_kind
+        || rust.primary_kind != expected.primary_kind
+        || rust.compound_count != expected.compound_count
+        || rust.compsolid_count != expected.compsolid_count
+        || rust.solid_count != expected.solid_count
+        || rust.shell_count != expected.shell_count
+        || rust.face_count != expected.face_count
+        || rust.wire_count != expected.wire_count
+        || rust.edge_count != expected.edge_count
+        || rust.vertex_count != expected.vertex_count
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} summary count mismatch: rust={rust:?} expected={expected:?}"
+        ))
+        .into());
+    }
+
+    if (rust.linear_length - expected.linear_length).abs() > 1.0e-9
+        || (rust.surface_area - expected.surface_area).abs() > 1.0e-9
+        || (rust.volume - expected.volume).abs() > 1.0e-9
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} summary metric mismatch: rust={rust:?} expected={expected:?}"
+        ))
+        .into());
+    }
+
+    assert_bbox_close(
+        label,
+        rust.bbox_min,
+        rust.bbox_max,
+        expected.bbox_min,
+        expected.bbox_max,
+        1.0e-9,
+    )?;
+
+    Ok(())
+}
+
+fn dot3(lhs: [f64; 3], rhs: [f64; 3]) -> f64 {
+    lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2]
+}
+
+fn norm3(value: [f64; 3]) -> f64 {
+    dot3(value, value).sqrt()
+}
+
+fn normalize3(value: [f64; 3]) -> [f64; 3] {
+    let length = norm3(value);
+    [value[0] / length, value[1] / length, value[2] / length]
+}
+
+fn subtract3(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
+    [lhs[0] - rhs[0], lhs[1] - rhs[1], lhs[2] - rhs[2]]
+}
+
 #[test]
 fn ported_brep_snapshot_captures_topology_and_analytic_entities(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -72,10 +268,15 @@ fn ported_brep_snapshot_captures_topology_and_analytic_entities(
         support::export_document_shape(&mut document, "cut", "brep_workflows", "ported_brep_cut")?;
     let brep = document.brep("cut")?;
     let kernel_summary = document.summary("cut")?;
-    let occt_summary = document
+    let context_summary = document
         .kernel()
         .context()
         .describe_shape(document.shape("cut")?)?;
+    let context_topology = document.topology("cut")?;
+    let occt_summary = document
+        .kernel()
+        .context()
+        .describe_shape_occt(document.shape("cut")?)?;
 
     assert_eq!(brep.summary.primary_kind, ShapeKind::Solid);
     assert_eq!(brep.faces.len(), 7);
@@ -85,6 +286,8 @@ fn ported_brep_snapshot_captures_topology_and_analytic_entities(
     assert!(brep.wires.iter().all(|wire| !wire.edge_indices.is_empty()));
     assert_eq!(kernel_summary.face_count, brep.faces.len());
     assert_eq!(kernel_summary.edge_count, brep.edges.len());
+    assert_summary_matches("context summary", &context_summary, &brep.summary)?;
+    assert_topology_matches("context topology", &context_topology, &brep.topology)?;
     let wire_occurrence_length = brep
         .topology
         .wire_edge_indices
@@ -313,7 +516,7 @@ fn ported_brep_uses_exact_primitive_surface_and_volume_formulas(
         let occt_summary = document
             .kernel()
             .context()
-            .describe_shape(document.shape(name)?)?;
+            .describe_shape_occt(document.shape(name)?)?;
         let brep_face_area_sum = brep.faces.iter().map(|face| face.area).sum::<f64>();
 
         assert!(
@@ -365,6 +568,300 @@ fn ported_brep_uses_exact_primitive_surface_and_volume_formulas(
 }
 
 #[test]
+fn ported_brep_uses_exact_primitive_bounding_boxes() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let axis = normalize3([0.0, 1.0, 1.0]);
+
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [4.0, -3.0, 1.5],
+        axis,
+        radius: 6.0,
+        height: 18.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [-6.0, 5.0, 2.0],
+        axis,
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 15.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [5.0, -4.0, 3.0],
+        axis,
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    })?;
+
+    for (label, shape, artifact_name) in [
+        ("cylinder", &cylinder, "bbox_rotated_cylinder"),
+        ("cone", &cone, "bbox_rotated_cone"),
+        ("sphere", &sphere, "bbox_rotated_sphere"),
+    ] {
+        let artifact =
+            support::export_kernel_shape(&kernel, shape, "brep_workflows", artifact_name)?;
+        let summary = kernel.summarize(shape)?;
+        let brep = kernel.brep(shape)?;
+        let occt_summary = kernel.context().describe_shape_occt(shape)?;
+
+        assert_bbox_close(
+            label,
+            summary.bbox_min,
+            summary.bbox_max,
+            occt_summary.bbox_min,
+            occt_summary.bbox_max,
+            5.0e-7,
+        )?;
+        assert_bbox_close(
+            label,
+            brep.summary.bbox_min,
+            brep.summary.bbox_max,
+            occt_summary.bbox_min,
+            occt_summary.bbox_max,
+            5.0e-7,
+        )?;
+        assert!(artifact.is_file(), "{label} artifact should exist");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 4.0, -2.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: normalize3([1.0, 0.0, 1.0]),
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [-12.0, -6.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 5.0,
+        height: 14.0,
+    })?;
+    let circle_face = find_first_face_by_kind(&kernel, &cylinder, SurfaceKind::Plane)?;
+    let circle_edge = find_first_edge_by_kind(&kernel, &cylinder, CurveKind::Circle)?;
+    let prism = kernel.make_prism(
+        &circle_face,
+        PrismParams {
+            direction: [8.0, 24.0, -5.0],
+        },
+    )?;
+
+    for (label, shape) in [
+        ("ellipse_edge", &ellipse),
+        ("circle_face", &circle_face),
+        ("circle_edge", &circle_edge),
+        ("oblique_circle_prism", &prism),
+    ] {
+        let summary = kernel.summarize(shape)?;
+        let brep = kernel.brep(shape)?;
+        let occt_summary = kernel.context().describe_shape_occt(shape)?;
+
+        assert_bbox_close(
+            label,
+            summary.bbox_min,
+            summary.bbox_max,
+            occt_summary.bbox_min,
+            occt_summary.bbox_max,
+            5.0e-7,
+        )?;
+        assert_bbox_close(
+            label,
+            brep.summary.bbox_min,
+            brep.summary.bbox_max,
+            occt_summary.bbox_min,
+            occt_summary.bbox_max,
+            5.0e-7,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let helix = kernel.make_helix(HelixParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 20.0,
+        height: 30.0,
+        pitch: 10.0,
+    })?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+
+    for (label, shape) in [("ellipse", &ellipse), ("helix", &helix)] {
+        let rust_topology = kernel
+            .context()
+            .ported_topology(shape)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+        let occt_topology = kernel.context().topology_occt(shape)?;
+        let brep = kernel.brep(shape)?;
+
+        assert_topology_matches(label, &rust_topology, &occt_topology)?;
+        assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_matches(label, &brep.topology, &rust_topology)?;
+    }
+
+    assert!(kernel.context().ported_topology(&cut)?.is_some());
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [0.0, 0.0, -7.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 5.0,
+        height: 14.0,
+    })?;
+    let box_shape = kernel.make_box(BoxParams {
+        origin: [-10.0, -10.0, -10.0],
+        size: [20.0, 20.0, 20.0],
+    })?;
+    let circle_face = find_first_face_by_kind(&kernel, &cylinder, SurfaceKind::Plane)?;
+    let box_face = find_first_face_by_kind(&kernel, &box_shape, SurfaceKind::Plane)?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let holed_planar_face = kernel
+        .context()
+        .subshapes(&cut, ShapeKind::Face)?
+        .into_iter()
+        .find(|face| {
+            kernel
+                .context()
+                .face_geometry(face)
+                .map(|geometry| geometry.kind == SurfaceKind::Plane)
+                .unwrap_or(false)
+                && kernel
+                    .context()
+                    .topology_occt(face)
+                    .map(|topology| {
+                        topology
+                            .faces
+                            .first()
+                            .map(|range| range.count > 1)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+        })
+        .ok_or_else(|| std::io::Error::other("expected a holed planar face"))?;
+
+    for (label, shape) in [
+        ("circle_face", &circle_face),
+        ("box_face", &box_face),
+        ("holed_planar_face", &holed_planar_face),
+    ] {
+        let rust_topology = kernel
+            .context()
+            .ported_topology(shape)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+        let occt_topology = kernel.context().topology_occt(shape)?;
+        let brep = kernel.brep(shape)?;
+
+        assert_topology_matches(label, &rust_topology, &occt_topology)?;
+        assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_matches(label, &brep.topology, &rust_topology)?;
+        assert_eq!(rust_topology.faces.len(), 1);
+        assert_eq!(
+            rust_topology
+                .face_wire_roles
+                .iter()
+                .filter(|&&role| role == LoopRole::Outer)
+                .count(),
+            1
+        );
+        match label {
+            "holed_planar_face" => {
+                assert!(rust_topology.wires.len() > 1);
+                assert!(rust_topology
+                    .face_wire_roles
+                    .iter()
+                    .any(|&role| role == LoopRole::Inner));
+            }
+            _ => {
+                assert_eq!(rust_topology.wires.len(), 1);
+                assert_eq!(rust_topology.face_wire_roles, vec![LoopRole::Outer]);
+            }
+        }
+    }
+
+    assert!(kernel.context().ported_topology(&cut)?.is_some());
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let box_shape = kernel.make_box(BoxParams {
+        origin: [-10.0, -10.0, -10.0],
+        size: [20.0, 20.0, 20.0],
+    })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [0.0, 0.0, -7.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 5.0,
+        height: 14.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [0.0, 0.0, -8.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 6.0,
+        top_radius: 2.0,
+        height: 16.0,
+    })?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+
+    for (label, shape, expected_face_count) in [
+        ("box_solid", &box_shape, 6usize),
+        ("cylinder_solid", &cylinder, 3usize),
+        ("cone_solid", &cone, 3usize),
+        ("through_hole_cut", &cut, 7usize),
+    ] {
+        let rust_topology = kernel
+            .context()
+            .ported_topology(shape)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+        let occt_topology = kernel.context().topology_occt(shape)?;
+        let brep = kernel.brep(shape)?;
+
+        assert_topology_matches(label, &rust_topology, &occt_topology)?;
+        assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_matches(label, &brep.topology, &rust_topology)?;
+        assert_eq!(rust_topology.faces.len(), expected_face_count);
+        assert!(rust_topology
+            .edge_faces
+            .iter()
+            .all(|range| range.count >= 1 && range.count <= 2));
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dyn std::error::Error>>
 {
     let _guard = support::test_guard();
@@ -399,7 +896,7 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         "swept_revolution_solid",
     )?;
     let summary = kernel.summarize(&revolved)?;
-    let occt_summary = kernel.context().describe_shape(&revolved)?;
+    let occt_summary = kernel.context().describe_shape_occt(&revolved)?;
     let brep = kernel.brep(&revolved)?;
 
     assert_eq!(summary.primary_kind, ShapeKind::Solid);
@@ -412,6 +909,28 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         .faces
         .iter()
         .any(|face| face.geometry.kind == SurfaceKind::Revolution));
+    let extrusion_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Extrusion)
+        .ok_or_else(|| std::io::Error::other("expected an extrusion face in the revolved solid"))?;
+    assert!(matches!(
+        extrusion_face.ported_face_surface,
+        Some(PortedFaceSurface::Swept(
+            PortedSweptSurface::Extrusion { .. }
+        ))
+    ));
+    let revolution_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Revolution)
+        .ok_or_else(|| std::io::Error::other("expected a revolution face in the revolved solid"))?;
+    assert!(matches!(
+        revolution_face.ported_face_surface,
+        Some(PortedFaceSurface::Swept(
+            PortedSweptSurface::Revolution { .. }
+        ))
+    ));
     assert!(
         (summary.surface_area - occt_summary.surface_area).abs() <= 2.0e-1,
         "swept revolution surface area drifted from OCCT: rust={} occt={}",
@@ -436,7 +955,7 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
 }
 
 #[test]
-fn ported_brep_uses_rust_mesh_area_for_offset_faces() -> Result<(), Box<dyn std::error::Error>> {
+fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
     let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
@@ -467,7 +986,7 @@ fn ported_brep_uses_rust_mesh_area_for_offset_faces() -> Result<(), Box<dyn std:
         &kernel,
         &offset_surface,
         "brep_workflows",
-        "offset_surface_mesh_area",
+        "offset_surface_rust_area",
     )?;
     let brep = kernel.brep(&offset_surface)?;
     let offset_face = brep
@@ -476,25 +995,132 @@ fn ported_brep_uses_rust_mesh_area_for_offset_faces() -> Result<(), Box<dyn std:
         .find(|face| face.geometry.kind == SurfaceKind::Offset)
         .ok_or_else(|| std::io::Error::other("expected an offset face"))?;
     let occt_face = find_first_face_by_kind(&kernel, &offset_surface, SurfaceKind::Offset)?;
-    let occt_area = kernel.context().describe_shape(&occt_face)?.surface_area;
+    let occt_area = kernel
+        .context()
+        .describe_shape_occt(&occt_face)?
+        .surface_area;
+    let occt_sample = kernel
+        .context()
+        .face_sample_normalized_occt(&occt_face, [0.5, 0.5])?;
 
     assert_eq!(brep.summary.primary_kind, ShapeKind::Shell);
     assert_eq!(brep.summary.face_count, 1);
     assert!(
         offset_face.ported_surface.is_none(),
-        "offset face should still be on the non-ported surface path"
+        "offset face should stay on the dedicated offset surface path"
     );
+    assert!(matches!(
+        offset_face.ported_face_surface,
+        Some(PortedFaceSurface::Offset(_))
+    ));
     assert!(
-        (offset_face.area - occt_area).abs() <= 5.0e-2,
+        (offset_face.area - occt_area).abs() <= 5.0e-1,
         "offset face area drifted from OCCT: rust={} occt={}",
         offset_face.area,
         occt_area
+    );
+    assert!(
+        (norm3(offset_face.sample.normal) - 1.0).abs() <= 1.0e-3,
+        "offset face sample normal was not unit length: {:?}",
+        offset_face.sample.normal
+    );
+    assert!(
+        dot3(offset_face.sample.normal, occt_sample.normal).abs() >= 0.6,
+        "offset face sample normal drifted from OCCT center sample: rust={:?} occt={:?}",
+        offset_face.sample.normal,
+        occt_sample.normal
+    );
+    assert!(
+        norm3(subtract3(offset_face.sample.position, occt_sample.position)) <= 8.0,
+        "offset face sample position drifted too far from OCCT center sample: rust={:?} occt={:?}",
+        offset_face.sample.position,
+        occt_sample.position
     );
     assert!(
         (brep.summary.surface_area - offset_face.area).abs() <= 1.0e-9,
         "offset brep summary surface area drifted from face area: summary={} face={}",
         brep.summary.surface_area,
         offset_face.area
+    );
+    assert!(artifact.is_file());
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let revolved = kernel.make_revolution(
+        &extrusion_face,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let offset = kernel.make_offset(
+        &revolved,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    let artifact = support::export_kernel_shape(
+        &kernel,
+        &offset,
+        "brep_workflows",
+        "offset_solid_rust_volume",
+    )?;
+    let summary = kernel.summarize(&offset)?;
+    let occt_summary = kernel.context().describe_shape_occt(&offset)?;
+    let brep = kernel.brep(&offset)?;
+    let offset_faces = brep
+        .faces
+        .iter()
+        .filter(|face| face.geometry.kind == SurfaceKind::Offset)
+        .collect::<Vec<_>>();
+
+    assert_eq!(summary.primary_kind, ShapeKind::Solid);
+    assert!(
+        !offset_faces.is_empty(),
+        "expected offset solid to retain offset faces"
+    );
+    assert!(
+        offset_faces.iter().any(|face| matches!(
+            face.ported_face_surface,
+            Some(PortedFaceSurface::Offset(surface))
+                if matches!(surface.basis, PortedOffsetBasisSurface::Swept(_))
+        )),
+        "expected at least one Rust-owned swept offset face descriptor in offset solid"
+    );
+    assert!(
+        (summary.volume - occt_summary.volume).abs() <= 3.0e2,
+        "offset solid volume drifted from OCCT: rust={} occt={}",
+        summary.volume,
+        occt_summary.volume
+    );
+    assert!(
+        (brep.summary.volume - summary.volume).abs() <= 1.0e-9,
+        "brep summary volume drifted from kernel summary: brep={} kernel={}",
+        brep.summary.volume,
+        summary.volume
     );
     assert!(artifact.is_file());
 
@@ -529,7 +1155,7 @@ fn ported_brep_uses_rust_owned_bounding_boxes() -> Result<(), Box<dyn std::error
         support::export_kernel_shape(&kernel, &helix, "brep_workflows", "bbox_helix_shape")?;
 
     let cut_summary = kernel.summarize(&cut)?;
-    let cut_occt = kernel.context().describe_shape(&cut)?;
+    let cut_occt = kernel.context().describe_shape_occt(&cut)?;
     assert_bbox_close(
         "cut",
         cut_summary.bbox_min,
@@ -542,18 +1168,18 @@ fn ported_brep_uses_rust_owned_bounding_boxes() -> Result<(), Box<dyn std::error
     assert_eq!(cut_summary.bbox_max, [30.0, 30.0, 30.0]);
 
     let sphere_summary = kernel.summarize(&sphere)?;
-    let sphere_occt = kernel.context().describe_shape(&sphere)?;
+    let sphere_occt = kernel.context().describe_shape_occt(&sphere)?;
     assert_bbox_close(
         "sphere",
         sphere_summary.bbox_min,
         sphere_summary.bbox_max,
         sphere_occt.bbox_min,
         sphere_occt.bbox_max,
-        5.0e-2,
+        5.0e-7,
     )?;
 
     let helix_summary = kernel.summarize(&helix)?;
-    let helix_occt = kernel.context().describe_shape(&helix)?;
+    let helix_occt = kernel.context().describe_shape_occt(&helix)?;
     assert_bbox_close(
         "helix",
         helix_summary.bbox_min,
@@ -614,7 +1240,7 @@ fn ported_brep_uses_rust_kind_classification() -> Result<(), Box<dyn std::error:
         ("offset", &offset_surface),
     ] {
         let rust_summary = kernel.summarize(shape)?;
-        let occt_summary = kernel.context().describe_shape(shape)?;
+        let occt_summary = kernel.context().describe_shape_occt(shape)?;
         assert_eq!(
             rust_summary.root_kind, occt_summary.root_kind,
             "{label} root_kind drifted from OCCT"

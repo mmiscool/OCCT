@@ -1,10 +1,10 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
-    planar_wire_signed_area, revolution_swept_area, sample_extrusion_surface_normalized,
-    sample_revolution_surface_normalized,
+    planar_wire_signed_area, revolution_swept_area, PortedFaceSurface, PortedOffsetBasisSurface,
+    PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
     ConePayload, Context, CylinderPayload, EdgeGeometry, Error, FaceGeometry, FaceSample, LoopRole,
@@ -69,6 +69,7 @@ pub struct BrepFace {
     pub index: usize,
     pub geometry: FaceGeometry,
     pub ported_surface: Option<PortedSurface>,
+    pub ported_face_surface: Option<PortedFaceSurface>,
     pub orientation: Orientation,
     pub area: f64,
     pub sample: FaceSample,
@@ -90,6 +91,7 @@ pub struct BrepShape {
 struct ExactPrimitiveSummary {
     surface_area: f64,
     volume: f64,
+    bbox: Option<([f64; 3], [f64; 3])>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,9 +113,65 @@ struct FaceCurveCandidate {
     midpoint: [f64; 3],
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CurveDifferential {
+    position: [f64; 3],
+    first_derivative: [f64; 3],
+    second_derivative: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OffsetCurveDifferential {
+    position: [f64; 3],
+    derivative: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MeshFaceProperties {
+    area: f64,
+    sample: FaceSample,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RootEdgeTopology {
+    geometry: EdgeGeometry,
+    start_vertex: Option<usize>,
+    end_vertex: Option<usize>,
+    length: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RootWireTopology {
+    edge_indices: Vec<usize>,
+    edge_orientations: Vec<Orientation>,
+    vertex_indices: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WireOccurrence {
+    edge_index: usize,
+    orientation: Orientation,
+    start_vertex: usize,
+    end_vertex: usize,
+}
+
+struct SingleFaceTopology {
+    loops: Vec<BrepFaceLoop>,
+    wires: Vec<BrepWire>,
+    edges: Vec<BrepEdge>,
+    edge_shapes: Vec<Shape>,
+}
+
 impl Context {
+    pub fn ported_topology(&self, shape: &Shape) -> Result<Option<TopologySnapshot>, Error> {
+        ported_topology_snapshot(self, shape)
+    }
+
     pub fn ported_brep(&self, shape: &Shape) -> Result<BrepShape, Error> {
-        let topology = self.topology(shape)?;
+        let topology = match self.ported_topology(shape)? {
+            Some(topology) => topology,
+            None => self.topology_occt(shape)?,
+        };
         let vertices = topology
             .vertex_positions
             .iter()
@@ -145,7 +203,7 @@ impl Context {
             })
             .collect::<Vec<_>>();
 
-        let edge_shapes = self.subshapes(shape, ShapeKind::Edge)?;
+        let edge_shapes = self.subshapes_occt(shape, ShapeKind::Edge)?;
         let edges = edge_shapes
             .iter()
             .enumerate()
@@ -175,7 +233,7 @@ impl Context {
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let face_shapes = self.subshapes(shape, ShapeKind::Face)?;
+        let face_shapes = self.subshapes_occt(shape, ShapeKind::Face)?;
         let faces = face_shapes
             .iter()
             .enumerate()
@@ -183,27 +241,44 @@ impl Context {
                 let geometry = self.face_geometry(face_shape)?;
                 let ported_surface =
                     PortedSurface::from_context_with_geometry(self, face_shape, geometry)?;
+                let ported_face_surface = ported_face_surface_descriptor_from_surface(
+                    self,
+                    face_shape,
+                    geometry,
+                    ported_surface,
+                )?;
                 let orientation = self.shape_orientation(face_shape)?;
                 let loops = face_loops(&topology, index)?;
-                let sample = match ported_surface {
-                    Some(surface) => surface.sample_normalized_with_orientation(
-                        geometry,
-                        [0.5, 0.5],
-                        orientation,
-                    ),
-                    None => analytic_swept_face_sample(
-                        self,
-                        face_shape,
-                        geometry,
-                        orientation,
-                        &loops,
-                        &wires,
-                        &edges,
-                    )
-                    .unwrap_or(self.face_sample_normalized(face_shape, [0.5, 0.5])?),
+                let mut mesh_fallback = if ported_face_surface.is_none() {
+                    mesh_face_properties(self, face_shape, orientation)
+                } else {
+                    None
                 };
-                let area = match ported_surface {
-                    Some(surface) => analytic_face_area(
+                let mut mesh_fallback_loaded = ported_face_surface.is_none();
+                let mut load_mesh_fallback = || {
+                    if !mesh_fallback_loaded {
+                        mesh_fallback = mesh_face_properties(self, face_shape, orientation);
+                        mesh_fallback_loaded = true;
+                    }
+                    mesh_fallback
+                };
+                let sample = ported_face_surface
+                    .map(|surface| {
+                        surface.sample_normalized_with_orientation(
+                            geometry,
+                            [0.5, 0.5],
+                            orientation,
+                        )
+                    })
+                    .or_else(|| load_mesh_fallback().map(|fallback| fallback.sample))
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "failed to derive a Rust-owned sample for face {index} ({:?})",
+                            geometry.kind
+                        ))
+                    })?;
+                let area = match ported_face_surface {
+                    Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
                         self,
                         surface,
                         geometry,
@@ -212,13 +287,47 @@ impl Context {
                         &edges,
                         &edge_shapes,
                     )
-                    .or_else(|| mesh_face_area(self, face_shape))
-                    .unwrap_or(self.describe_shape(face_shape)?.surface_area),
-                    None => {
-                        analytic_swept_face_area(self, face_shape, geometry, &loops, &wires, &edges)
-                            .or_else(|| mesh_face_area(self, face_shape))
-                            .unwrap_or(self.describe_shape(face_shape)?.surface_area)
+                    .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "failed to derive a Rust-owned area for face {index} ({:?})",
+                            geometry.kind
+                        ))
+                    })?,
+                    Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
+                        self,
+                        surface,
+                        geometry,
+                        &loops,
+                        &wires,
+                        &edges,
+                        &edge_shapes,
+                    )
+                    .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
+                    .ok_or_else(|| {
+                        Error::new(format!(
+                            "failed to derive a Rust-owned area for face {index} ({:?})",
+                            geometry.kind
+                        ))
+                    })?,
+                    Some(PortedFaceSurface::Swept(surface)) => {
+                        analytic_ported_swept_face_area(surface, geometry)
+                            .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
+                            .ok_or_else(|| {
+                                Error::new(format!(
+                                    "failed to derive a Rust-owned area for face {index} ({:?})",
+                                    geometry.kind
+                                ))
+                            })?
                     }
+                    None => load_mesh_fallback()
+                        .map(|fallback| fallback.area)
+                        .ok_or_else(|| {
+                            Error::new(format!(
+                                "failed to derive a Rust-owned area for face {index} ({:?})",
+                                geometry.kind
+                            ))
+                        })?,
                 };
                 let adjacent_face_indices = face_adjacent_face_indices(&topology, &wires, index)?;
 
@@ -226,6 +335,7 @@ impl Context {
                     index,
                     geometry,
                     ported_surface,
+                    ported_face_surface,
                     orientation,
                     area,
                     sample,
@@ -258,6 +368,910 @@ impl Context {
     }
 }
 
+fn ported_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshot>, Error> {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    for face_shape in &face_shapes {
+        let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
+        if face_wire_shapes.len() > 1
+            && context.face_geometry(face_shape)?.kind != crate::SurfaceKind::Plane
+        {
+            return Ok(None);
+        }
+    }
+
+    let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
+    let vertex_positions = vertex_shapes
+        .iter()
+        .map(|vertex_shape| context.vertex_point(vertex_shape))
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let edge_shapes = context.subshapes_occt(shape, ShapeKind::Edge)?;
+    let root_edges = edge_shapes
+        .iter()
+        .map(|edge_shape| root_edge_topology(context, edge_shape, &vertex_positions))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let edges = root_edges
+        .iter()
+        .map(|edge| crate::TopologyEdge {
+            start_vertex: edge.start_vertex,
+            end_vertex: edge.end_vertex,
+            length: edge.length,
+        })
+        .collect::<Vec<_>>();
+
+    let wire_shapes = context.subshapes_occt(shape, ShapeKind::Wire)?;
+    let mut root_wires = Vec::with_capacity(wire_shapes.len());
+    for wire_shape in &wire_shapes {
+        let Some(topology) =
+            root_wire_topology(context, wire_shape, &vertex_positions, &root_edges)?
+        else {
+            return Ok(None);
+        };
+        root_wires.push(topology);
+    }
+    let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
+        pack_wire_topology(&root_wires);
+    let mut edge_face_lists = vec![Vec::new(); edges.len()];
+    let mut faces = Vec::with_capacity(face_shapes.len());
+    let mut face_wire_indices = Vec::new();
+    let mut face_wire_orientations = Vec::new();
+    let mut face_wire_roles = Vec::new();
+
+    for (face_index, face_shape) in face_shapes.iter().enumerate() {
+        let Some(face_topology) = ported_face_topology(
+            context,
+            face_shape,
+            &root_wires,
+            &root_edges,
+            &edge_shapes,
+            &vertex_positions,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        faces.push(crate::TopologyRange {
+            offset: face_wire_indices.len(),
+            count: face_topology.face_wire_indices.len(),
+        });
+        face_wire_indices.extend(face_topology.face_wire_indices);
+        face_wire_orientations.extend(face_topology.face_wire_orientations);
+        face_wire_roles.extend(face_topology.face_wire_roles);
+
+        for edge_index in face_topology.edge_indices {
+            let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
+                return Ok(None);
+            };
+            edge_faces.push(face_index);
+        }
+    }
+
+    let mut edge_faces = Vec::with_capacity(edges.len());
+    let mut edge_face_indices = Vec::new();
+    for face_indices in edge_face_lists {
+        edge_faces.push(crate::TopologyRange {
+            offset: edge_face_indices.len(),
+            count: face_indices.len(),
+        });
+        edge_face_indices.extend(face_indices);
+    }
+
+    Ok(Some(TopologySnapshot {
+        vertex_positions,
+        edges,
+        edge_faces,
+        edge_face_indices,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }))
+}
+
+fn root_edge_topology(
+    context: &Context,
+    edge_shape: &Shape,
+    vertex_positions: &[[f64; 3]],
+) -> Result<RootEdgeTopology, Error> {
+    let geometry = context.edge_geometry(edge_shape)?;
+    let endpoints = context.edge_endpoints(edge_shape)?;
+    Ok(RootEdgeTopology {
+        geometry,
+        start_vertex: match_vertex_index(vertex_positions, endpoints.start),
+        end_vertex: match_vertex_index(vertex_positions, endpoints.end),
+        length: edge_length(edge_shape),
+    })
+}
+
+fn ported_wire_occurrences(
+    context: &Context,
+    wire_shape: &Shape,
+    vertex_positions: &[[f64; 3]],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<Vec<WireOccurrence>>, Error> {
+    let mut occurrences = Vec::new();
+    for edge_shape in context.subshapes_occt(wire_shape, ShapeKind::Edge)? {
+        let Some(occurrence) = wire_occurrence(context, &edge_shape, vertex_positions, root_edges)?
+        else {
+            return Ok(None);
+        };
+        occurrences.push(occurrence);
+    }
+    Ok(Some(occurrences))
+}
+
+fn root_wire_topology(
+    context: &Context,
+    wire_shape: &Shape,
+    vertex_positions: &[[f64; 3]],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<RootWireTopology>, Error> {
+    if let Some(topology) =
+        root_wire_topology_from_snapshot(context, wire_shape, vertex_positions, root_edges)?
+    {
+        return Ok(Some(topology));
+    }
+
+    let occurrences =
+        match ported_wire_occurrences(context, wire_shape, vertex_positions, root_edges)? {
+            Some(occurrences) => occurrences,
+            None => return Ok(None),
+        };
+    let (edge_indices, edge_orientations, vertex_indices) =
+        match order_wire_occurrences(&occurrences) {
+            Some(ordered) => ordered,
+            None => return Ok(None),
+        };
+    Ok(Some(RootWireTopology {
+        edge_indices,
+        edge_orientations,
+        vertex_indices,
+    }))
+}
+
+fn root_wire_topology_from_snapshot(
+    context: &Context,
+    wire_shape: &Shape,
+    vertex_positions: &[[f64; 3]],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<RootWireTopology>, Error> {
+    let topology = context.topology_occt(wire_shape)?;
+    if !topology.faces.is_empty() || topology.wires.len() != 1 {
+        return Ok(None);
+    }
+
+    let wire_range = topology.wires[0];
+    let vertex_range = topology.wire_vertices[0];
+    if wire_range.count == 0 || vertex_range.count != wire_range.count + 1 {
+        return Ok(None);
+    }
+
+    let local_edge_shapes = context.subshapes_occt(wire_shape, ShapeKind::Edge)?;
+    let mut edge_indices = Vec::with_capacity(wire_range.count);
+    let mut edge_orientations = Vec::with_capacity(wire_range.count);
+    let mut ordered_vertices = Vec::with_capacity(vertex_range.count);
+
+    for occurrence_offset in 0..wire_range.count {
+        let wire_edge_offset = wire_range.offset + occurrence_offset;
+        let local_edge_index = *topology
+            .wire_edge_indices
+            .get(wire_edge_offset)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "wire topology is missing edge occurrence {wire_edge_offset}"
+                ))
+            })?;
+        let orientation = *topology
+            .wire_edge_orientations
+            .get(wire_edge_offset)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "wire topology is missing edge orientation {wire_edge_offset}"
+                ))
+            })?;
+        let local_edge_shape = local_edge_shapes.get(local_edge_index).ok_or_else(|| {
+            Error::new(format!(
+                "wire topology referenced local edge index {local_edge_index} outside the edge map"
+            ))
+        })?;
+
+        let local_start_index = *topology
+            .wire_vertex_indices
+            .get(vertex_range.offset + occurrence_offset)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "wire topology is missing start vertex occurrence {}",
+                    vertex_range.offset + occurrence_offset
+                ))
+            })?;
+        let local_end_index = *topology
+            .wire_vertex_indices
+            .get(vertex_range.offset + occurrence_offset + 1)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "wire topology is missing end vertex occurrence {}",
+                    vertex_range.offset + occurrence_offset + 1
+                ))
+            })?;
+
+        let start_vertex = topology_vertex_match(
+            &topology.vertex_positions,
+            vertex_positions,
+            local_start_index,
+        );
+        let end_vertex = topology_vertex_match(
+            &topology.vertex_positions,
+            vertex_positions,
+            local_end_index,
+        );
+
+        let geometry =
+            oriented_edge_geometry(context.edge_geometry(local_edge_shape)?, orientation);
+        let length = edge_length(local_edge_shape);
+        let matches = root_edges
+            .iter()
+            .enumerate()
+            .filter_map(|(root_edge_index, root_edge)| {
+                if root_edge.geometry.kind != geometry.kind
+                    || !approx_eq(root_edge.length, length, 1.0e-6, 1.0e-6)
+                {
+                    return None;
+                }
+                if let (Some(start_vertex), Some(end_vertex)) = (start_vertex, end_vertex) {
+                    if !matches_edge_vertices(root_edge, start_vertex, end_vertex) {
+                        return None;
+                    }
+                }
+                Some(root_edge_index)
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Ok(None);
+        }
+
+        let matched_edge = &root_edges[matches[0]];
+        let start_vertex = start_vertex.or_else(|| {
+            oriented_root_edge_vertices(matched_edge, orientation)
+                .map(|(start_vertex, _)| start_vertex)
+        });
+        let end_vertex = end_vertex.or_else(|| {
+            oriented_root_edge_vertices(matched_edge, orientation).map(|(_, end_vertex)| end_vertex)
+        });
+        let (Some(start_vertex), Some(end_vertex)) = (start_vertex, end_vertex) else {
+            return Ok(None);
+        };
+
+        edge_indices.push(matches[0]);
+        edge_orientations.push(orientation);
+        if ordered_vertices.is_empty() {
+            ordered_vertices.push(start_vertex);
+        } else if *ordered_vertices.last().unwrap_or(&start_vertex) != start_vertex {
+            return Ok(None);
+        }
+        ordered_vertices.push(end_vertex);
+    }
+
+    Ok(Some(RootWireTopology {
+        edge_indices,
+        edge_orientations,
+        vertex_indices: ordered_vertices,
+    }))
+}
+
+fn pack_wire_topology(
+    root_wires: &[RootWireTopology],
+) -> (
+    Vec<crate::TopologyRange>,
+    Vec<usize>,
+    Vec<Orientation>,
+    Vec<crate::TopologyRange>,
+    Vec<usize>,
+) {
+    let mut wires = Vec::with_capacity(root_wires.len());
+    let mut wire_edge_indices = Vec::new();
+    let mut wire_edge_orientations = Vec::new();
+    let mut wire_vertices = Vec::with_capacity(root_wires.len());
+    let mut wire_vertex_indices = Vec::new();
+
+    for wire in root_wires {
+        wires.push(crate::TopologyRange {
+            offset: wire_edge_indices.len(),
+            count: wire.edge_indices.len(),
+        });
+        wire_edge_indices.extend(&wire.edge_indices);
+        wire_edge_orientations.extend(&wire.edge_orientations);
+        wire_vertices.push(crate::TopologyRange {
+            offset: wire_vertex_indices.len(),
+            count: wire.vertex_indices.len(),
+        });
+        wire_vertex_indices.extend(&wire.vertex_indices);
+    }
+
+    (
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    )
+}
+
+struct PortedFaceTopology {
+    edge_indices: BTreeSet<usize>,
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
+    face_wire_roles: Vec<LoopRole>,
+}
+
+fn ported_face_topology(
+    context: &Context,
+    face_shape: &Shape,
+    root_wires: &[RootWireTopology],
+    root_edges: &[RootEdgeTopology],
+    edge_shapes: &[Shape],
+    vertex_positions: &[[f64; 3]],
+) -> Result<Option<PortedFaceTopology>, Error> {
+    let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
+    if root_wires.is_empty() || face_wire_shapes.is_empty() {
+        return Ok(None);
+    }
+
+    let mut used_root_wire_indices = BTreeSet::new();
+    let mut used_edges = BTreeSet::new();
+    let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
+    let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
+    let mut face_wire_areas = Vec::new();
+
+    let mut planar_face = None;
+    if face_wire_shapes.len() > 1 {
+        let face_geometry = context.face_geometry(face_shape)?;
+        if face_geometry.kind != crate::SurfaceKind::Plane {
+            return Ok(None);
+        }
+        planar_face = Some((context.face_plane_payload(face_shape)?, face_geometry));
+    }
+
+    for face_wire_shape in &face_wire_shapes {
+        let Some(face_wire_topology) =
+            root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
+        else {
+            return Ok(None);
+        };
+        let Some(root_wire_index) =
+            match_root_wire_index(root_wires, &face_wire_topology, &used_root_wire_indices)
+        else {
+            return Ok(None);
+        };
+        used_root_wire_indices.insert(root_wire_index);
+        used_edges.extend(face_wire_topology.edge_indices.iter().copied());
+
+        face_wire_indices.push(root_wire_index);
+        face_wire_orientations.push(context.shape_orientation(face_wire_shape)?);
+
+        if let Some((plane, face_geometry)) = planar_face {
+            let Some(wire_area) = planar_wire_area_magnitude(
+                context,
+                plane,
+                face_geometry,
+                &root_wires[root_wire_index],
+                edge_shapes,
+                root_edges,
+            )?
+            else {
+                return Ok(None);
+            };
+            face_wire_areas.push(wire_area);
+        }
+    }
+
+    let face_wire_roles = match face_wire_shapes.len() {
+        1 => vec![LoopRole::Outer],
+        _ => {
+            let Some((outer_offset, outer_area)) = face_wire_areas
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs))
+            else {
+                return Ok(None);
+            };
+            if outer_area <= 1.0e-9 {
+                return Ok(None);
+            }
+
+            face_wire_areas
+                .iter()
+                .enumerate()
+                .map(|(offset, _)| {
+                    if offset == outer_offset {
+                        LoopRole::Outer
+                    } else {
+                        LoopRole::Inner
+                    }
+                })
+                .collect()
+        }
+    };
+
+    Ok(Some(PortedFaceTopology {
+        edge_indices: used_edges,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }))
+}
+
+fn match_root_wire_index(
+    root_wires: &[RootWireTopology],
+    face_wire_topology: &RootWireTopology,
+    used_root_wire_indices: &BTreeSet<usize>,
+) -> Option<usize> {
+    root_wires
+        .iter()
+        .enumerate()
+        .find(|(index, root_wire)| {
+            !used_root_wire_indices.contains(index) && *root_wire == face_wire_topology
+        })
+        .map(|(index, _)| index)
+}
+
+fn planar_wire_area_magnitude(
+    context: &Context,
+    plane: PlanePayload,
+    face_geometry: FaceGeometry,
+    wire: &RootWireTopology,
+    edge_shapes: &[Shape],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<f64>, Error> {
+    let mut curve_segments = Vec::with_capacity(wire.edge_indices.len());
+    let mut sampled_points = Vec::new();
+
+    for (&edge_index, &edge_orientation) in wire.edge_indices.iter().zip(&wire.edge_orientations) {
+        let Some(root_edge) = root_edges.get(edge_index) else {
+            return Ok(None);
+        };
+        let Some(edge_shape) = edge_shapes.get(edge_index) else {
+            return Ok(None);
+        };
+
+        let geometry = oriented_edge_geometry(root_edge.geometry, edge_orientation);
+        if let Some(curve) =
+            PortedCurve::from_context_with_geometry(context, edge_shape, root_edge.geometry)?
+        {
+            curve_segments.push((curve, geometry));
+        }
+
+        append_root_edge_sample_points(
+            context,
+            edge_shape,
+            root_edge,
+            geometry,
+            &mut sampled_points,
+        )?;
+    }
+
+    let area = if curve_segments.len() == wire.edge_indices.len() {
+        planar_wire_signed_area(plane, &curve_segments).abs()
+    } else {
+        let Some(area) = analytic_sampled_wire_signed_area(
+            PortedSurface::Plane(plane),
+            face_geometry,
+            &sampled_points,
+        ) else {
+            return Ok(None);
+        };
+        area.abs()
+    };
+    Ok(Some(area))
+}
+
+fn wire_occurrence(
+    context: &Context,
+    edge_shape: &Shape,
+    vertex_positions: &[[f64; 3]],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<WireOccurrence>, Error> {
+    let geometry = context.edge_geometry(edge_shape)?;
+    let endpoints = context.edge_endpoints(edge_shape)?;
+    let Some(mut start_vertex) = match_vertex_index(vertex_positions, endpoints.start) else {
+        return Ok(None);
+    };
+    let Some(mut end_vertex) = match_vertex_index(vertex_positions, endpoints.end) else {
+        return Ok(None);
+    };
+    let orientation = context.shape_orientation(edge_shape)?;
+    if matches!(orientation, Orientation::Reversed) {
+        std::mem::swap(&mut start_vertex, &mut end_vertex);
+    }
+    let length = edge_length(edge_shape);
+    let matches = root_edges
+        .iter()
+        .enumerate()
+        .filter(|(_, root_edge)| {
+            root_edge.geometry.kind == geometry.kind
+                && approx_eq(root_edge.length, length, 1.0e-6, 1.0e-6)
+                && matches_edge_vertices(root_edge, start_vertex, end_vertex)
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Ok(None);
+    }
+
+    Ok(Some(WireOccurrence {
+        edge_index: matches[0],
+        orientation,
+        start_vertex,
+        end_vertex,
+    }))
+}
+
+fn order_wire_occurrences(
+    occurrences: &[WireOccurrence],
+) -> Option<(Vec<usize>, Vec<Orientation>, Vec<usize>)> {
+    if occurrences.is_empty() {
+        return Some((Vec::new(), Vec::new(), Vec::new()));
+    }
+    if let Some(vertices) =
+        chain_wire_occurrences(occurrences, &(0..occurrences.len()).collect::<Vec<_>>())
+    {
+        return Some((
+            occurrences
+                .iter()
+                .map(|occurrence| occurrence.edge_index)
+                .collect(),
+            occurrences
+                .iter()
+                .map(|occurrence| occurrence.orientation)
+                .collect(),
+            vertices,
+        ));
+    }
+
+    let mut outgoing = BTreeMap::<usize, Vec<usize>>::new();
+    let mut in_degree = BTreeMap::<usize, usize>::new();
+    let mut out_degree = BTreeMap::<usize, usize>::new();
+    for (index, occurrence) in occurrences.iter().enumerate() {
+        outgoing
+            .entry(occurrence.start_vertex)
+            .or_default()
+            .push(index);
+        *out_degree.entry(occurrence.start_vertex).or_default() += 1;
+        *in_degree.entry(occurrence.end_vertex).or_default() += 1;
+    }
+
+    let start_candidates = outgoing
+        .keys()
+        .copied()
+        .filter(|vertex| {
+            let outgoing = out_degree.get(vertex).copied().unwrap_or(0);
+            let incoming = in_degree.get(vertex).copied().unwrap_or(0);
+            outgoing == incoming + 1
+        })
+        .collect::<Vec<_>>();
+    let start_vertex = match start_candidates.as_slice() {
+        [start] => *start,
+        [] => occurrences.first()?.start_vertex,
+        _ => return None,
+    };
+
+    let mut used = vec![false; occurrences.len()];
+    let mut ordered = Vec::with_capacity(occurrences.len());
+    let mut current_vertex = start_vertex;
+    while ordered.len() < occurrences.len() {
+        let next = outgoing
+            .get(&current_vertex)?
+            .iter()
+            .copied()
+            .filter(|index| !used[*index])
+            .collect::<Vec<_>>();
+        if next.len() != 1 {
+            return None;
+        }
+        let index = next[0];
+        used[index] = true;
+        ordered.push(index);
+        current_vertex = occurrences[index].end_vertex;
+    }
+
+    let ordered_vertices = chain_wire_occurrences(occurrences, &ordered)?;
+    Some((
+        ordered
+            .iter()
+            .map(|&index| occurrences[index].edge_index)
+            .collect(),
+        ordered
+            .iter()
+            .map(|&index| occurrences[index].orientation)
+            .collect(),
+        ordered_vertices,
+    ))
+}
+
+fn chain_wire_occurrences(occurrences: &[WireOccurrence], ordered: &[usize]) -> Option<Vec<usize>> {
+    let &first = ordered.first()?;
+    let mut vertices = vec![occurrences[first].start_vertex];
+    let mut current_vertex = occurrences[first].end_vertex;
+    vertices.push(current_vertex);
+    for &index in ordered.iter().skip(1) {
+        let occurrence = occurrences.get(index)?;
+        if occurrence.start_vertex != current_vertex {
+            return None;
+        }
+        current_vertex = occurrence.end_vertex;
+        vertices.push(current_vertex);
+    }
+    Some(vertices)
+}
+
+fn matches_edge_vertices(
+    root_edge: &RootEdgeTopology,
+    start_vertex: usize,
+    end_vertex: usize,
+) -> bool {
+    matches!(
+        (root_edge.start_vertex, root_edge.end_vertex),
+        (Some(root_start), Some(root_end))
+            if (root_start == start_vertex && root_end == end_vertex)
+                || (root_start == end_vertex && root_end == start_vertex)
+    )
+}
+
+fn oriented_root_edge_vertices(
+    root_edge: &RootEdgeTopology,
+    orientation: Orientation,
+) -> Option<(usize, usize)> {
+    let start_vertex = root_edge.start_vertex?;
+    let end_vertex = root_edge.end_vertex?;
+    Some(match orientation {
+        Orientation::Reversed => (end_vertex, start_vertex),
+        _ => (start_vertex, end_vertex),
+    })
+}
+
+fn topology_vertex_match(
+    topology_vertices: &[[f64; 3]],
+    root_vertices: &[[f64; 3]],
+    index: usize,
+) -> Option<usize> {
+    topology_vertices
+        .get(index)
+        .copied()
+        .and_then(|point| match_vertex_index(root_vertices, point))
+}
+
+fn edge_length(edge_shape: &Shape) -> f64 {
+    edge_shape.linear_length()
+}
+
+fn match_vertex_index(vertex_positions: &[[f64; 3]], point: [f64; 3]) -> Option<usize> {
+    let mut found = None;
+    for (index, vertex_position) in vertex_positions.iter().copied().enumerate() {
+        if approx_points_eq(vertex_position, point, 1.0e-7) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+        }
+    }
+    found
+}
+
+pub(crate) fn ported_face_surface_descriptor(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+) -> Result<Option<PortedFaceSurface>, Error> {
+    let ported_surface =
+        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
+    ported_face_surface_descriptor_from_surface(context, face_shape, face_geometry, ported_surface)
+}
+
+fn ported_face_surface_descriptor_from_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    ported_surface: Option<PortedSurface>,
+) -> Result<Option<PortedFaceSurface>, Error> {
+    if let Some(surface) = ported_surface {
+        return Ok(Some(PortedFaceSurface::Analytic(surface)));
+    }
+
+    if let Some(surface) = context.ported_offset_surface(face_shape)? {
+        return Ok(Some(PortedFaceSurface::Offset(surface)));
+    }
+
+    Ok(
+        ported_swept_face_surface(context, face_shape, face_geometry)?
+            .map(PortedFaceSurface::Swept),
+    )
+}
+
+pub(crate) fn ported_swept_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+) -> Result<Option<PortedSweptSurface>, Error> {
+    let topology = match single_face_topology(context, face_shape)? {
+        Some(topology) => topology,
+        None => return Ok(None),
+    };
+
+    match face_geometry.kind {
+        crate::SurfaceKind::Extrusion => {
+            let payload = context.face_extrusion_payload(face_shape)?;
+            let basis = select_swept_face_basis_curve(
+                face_curve_candidates(
+                    &topology.loops,
+                    &topology.wires,
+                    &topology.edges,
+                    payload.basis_curve_kind,
+                )
+                .ok_or_else(|| {
+                    Error::new("failed to identify a Rust-owned basis curve for extrusion face")
+                })?,
+                face_geometry,
+                SweptBasisSelection::Extrusion {
+                    direction: payload.direction,
+                },
+            )
+            .ok_or_else(|| {
+                Error::new("failed to select a Rust-owned basis curve for extrusion face")
+            })?;
+            Ok(Some(PortedSweptSurface::Extrusion {
+                payload,
+                basis_curve: basis.curve,
+                basis_geometry: basis.geometry,
+            }))
+        }
+        crate::SurfaceKind::Revolution => {
+            let payload = context.face_revolution_payload(face_shape)?;
+            let basis = select_swept_face_basis_curve(
+                face_curve_candidates(
+                    &topology.loops,
+                    &topology.wires,
+                    &topology.edges,
+                    payload.basis_curve_kind,
+                )
+                .ok_or_else(|| {
+                    Error::new("failed to identify a Rust-owned basis curve for revolution face")
+                })?,
+                face_geometry,
+                SweptBasisSelection::Revolution {
+                    axis_origin: payload.axis_origin,
+                    axis_direction: payload.axis_direction,
+                },
+            )
+            .ok_or_else(|| {
+                Error::new("failed to select a Rust-owned basis curve for revolution face")
+            })?;
+            Ok(Some(PortedSweptSurface::Revolution {
+                payload,
+                basis_curve: basis.curve,
+                basis_geometry: basis.geometry,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub(crate) fn ported_face_area(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<f64>, Error> {
+    let face_geometry = context.face_geometry(face_shape)?;
+    let topology = match single_face_topology(context, face_shape)? {
+        Some(topology) => topology,
+        None => return Ok(None),
+    };
+
+    let ported_surface =
+        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
+    let ported_face_surface = ported_face_surface_descriptor_from_surface(
+        context,
+        face_shape,
+        face_geometry,
+        ported_surface,
+    )?;
+
+    Ok(match ported_face_surface {
+        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
+            context,
+            surface,
+            face_geometry,
+            &topology.loops,
+            &topology.wires,
+            &topology.edges,
+            &topology.edge_shapes,
+        ),
+        Some(PortedFaceSurface::Swept(surface)) => {
+            analytic_ported_swept_face_area(surface, face_geometry)
+        }
+        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
+            context,
+            surface,
+            face_geometry,
+            &topology.loops,
+            &topology.wires,
+            &topology.edges,
+            &topology.edge_shapes,
+        ),
+        None => None,
+    })
+}
+
+fn single_face_topology(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<SingleFaceTopology>, Error> {
+    let topology = match context.ported_topology(face_shape)? {
+        Some(topology) => topology,
+        None => context.topology_occt(face_shape)?,
+    };
+    if topology.faces.len() != 1 {
+        return Ok(None);
+    }
+
+    let wires = topology
+        .wires
+        .iter()
+        .enumerate()
+        .map(|(index, range)| {
+            let edge_indices =
+                topology.wire_edge_indices[range.offset..range.offset + range.count].to_vec();
+            let edge_orientations =
+                topology.wire_edge_orientations[range.offset..range.offset + range.count].to_vec();
+            let vertex_range = topology.wire_vertices[index];
+            let vertex_indices = topology.wire_vertex_indices
+                [vertex_range.offset..vertex_range.offset + vertex_range.count]
+                .to_vec();
+            BrepWire {
+                index,
+                edge_indices,
+                edge_orientations,
+                vertex_indices,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let edge_shapes = context.subshapes_occt(face_shape, ShapeKind::Edge)?;
+    let edges = edge_shapes
+        .iter()
+        .enumerate()
+        .map(|(index, edge_shape)| {
+            let geometry = context.edge_geometry(edge_shape)?;
+            let ported_curve =
+                PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
+            Ok(BrepEdge {
+                index,
+                geometry,
+                ported_curve,
+                length: 0.0,
+                start_vertex: None,
+                end_vertex: None,
+                start_point: None,
+                end_point: None,
+                adjacent_face_indices: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    Ok(Some(SingleFaceTopology {
+        loops: face_loops(&topology, 0)?,
+        wires,
+        edges,
+        edge_shapes,
+    }))
+}
+
 fn ported_shape_summary(
     context: &Context,
     shape: &Shape,
@@ -274,8 +1288,10 @@ fn ported_shape_summary(
     let primary_kind = classify_primary_kind(counts);
     let exact_primitive =
         exact_primitive_shape_summary(primary_kind, counts.solid_count, vertices, edges, faces);
-    let fallback_summary = || context.describe_shape(shape).ok();
-    let (bbox_min, bbox_max) = ported_shape_bbox(context, shape, vertices, edges, faces)
+    let fallback_summary = || context.describe_shape_occt(shape).ok();
+    let (bbox_min, bbox_max) = exact_primitive
+        .and_then(|summary| summary.bbox)
+        .or_else(|| ported_shape_bbox(context, shape, vertices, edges, faces))
         .or_else(|| fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max)))
         .unwrap_or(([0.0; 3], [0.0; 3]));
 
@@ -334,7 +1350,7 @@ fn exact_primitive_shape_summary(
         .or_else(|| exact_cone_summary(faces))
         .or_else(|| exact_sphere_summary(faces))
         .or_else(|| exact_torus_summary(faces))
-        .or_else(|| exact_translational_solid_summary(faces))
+        .or_else(|| exact_translational_solid_summary(faces, edges))
 }
 
 fn exact_box_summary(
@@ -357,6 +1373,7 @@ fn exact_box_summary(
     {
         return None;
     }
+    let bbox = bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect())?;
 
     for vertex in vertices {
         let incident = edges
@@ -382,6 +1399,7 @@ fn exact_box_summary(
                     return Some(ExactPrimitiveSummary {
                         surface_area,
                         volume,
+                        bbox: Some(bbox),
                     });
                 }
             }
@@ -398,6 +1416,9 @@ fn exact_cylinder_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
 
     let (payload, _) = single_cylinder_face(faces)?;
     let axis = normalize3(payload.axis);
+    if norm3(axis) <= 1.0e-12 {
+        return None;
+    }
     let caps = aligned_plane_faces(faces, axis);
     if caps.len() != 2 {
         return None;
@@ -407,9 +1428,20 @@ fn exact_cylinder_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
         - dot3(subtract3(caps[1].origin, payload.origin), axis))
     .abs();
     let radius = payload.radius.abs();
+    let bbox = circular_sections_bbox(
+        axis,
+        &caps
+            .iter()
+            .map(|plane| {
+                let axial = dot3(subtract3(plane.origin, payload.origin), axis);
+                (add3(payload.origin, scale3(axis, axial)), radius)
+            })
+            .collect::<Vec<_>>(),
+    );
     Some(ExactPrimitiveSummary {
         surface_area: 2.0 * PI * radius * (height + radius),
         volume: PI * radius * radius * height,
+        bbox,
     })
 }
 
@@ -419,29 +1451,7 @@ fn exact_cone_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
     }
 
     let (payload, _) = single_cone_face(faces)?;
-    let axis = normalize3(payload.axis);
-    let caps = aligned_plane_faces(faces, axis);
-    if caps.is_empty() || caps.len() > 2 || caps.len() + 1 != faces.len() {
-        return None;
-    }
-
-    let tan_angle = payload.semi_angle.tan();
-    if tan_angle.abs() <= 1.0e-12 {
-        return None;
-    }
-
-    let mut axial_radii = caps
-        .iter()
-        .map(|plane| {
-            let axial = dot3(subtract3(plane.origin, payload.origin), axis);
-            let radius = (payload.reference_radius + axial * tan_angle).abs();
-            (axial, radius)
-        })
-        .collect::<Vec<_>>();
-
-    if axial_radii.len() == 1 {
-        axial_radii.push((-payload.reference_radius / tan_angle, 0.0));
-    }
+    let (axis, axial_radii) = exact_cone_axial_radii(payload, faces)?;
     if axial_radii.len() != 2 {
         return None;
     }
@@ -450,11 +1460,19 @@ fn exact_cone_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
     let (axial1, radius1) = axial_radii[1];
     let height = (axial0 - axial1).abs();
     let slant = ((radius0 - radius1).powi(2) + height.powi(2)).sqrt();
+    let bbox = circular_sections_bbox(
+        axis,
+        &axial_radii
+            .iter()
+            .map(|&(axial, radius)| (add3(payload.origin, scale3(axis, axial)), radius))
+            .collect::<Vec<_>>(),
+    );
 
     Some(ExactPrimitiveSummary {
         surface_area: PI * (radius0 + radius1) * slant
             + PI * (radius0 * radius0 + radius1 * radius1),
         volume: PI * height * (radius0 * radius0 + radius0 * radius1 + radius1 * radius1) / 3.0,
+        bbox,
     })
 }
 
@@ -464,6 +1482,18 @@ fn exact_sphere_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
     Some(ExactPrimitiveSummary {
         surface_area: 4.0 * PI * radius * radius,
         volume: 4.0 * PI * radius * radius * radius / 3.0,
+        bbox: Some((
+            [
+                payload.center[0] - radius,
+                payload.center[1] - radius,
+                payload.center[2] - radius,
+            ],
+            [
+                payload.center[0] + radius,
+                payload.center[1] + radius,
+                payload.center[2] + radius,
+            ],
+        )),
     })
 }
 
@@ -474,10 +1504,14 @@ fn exact_torus_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
     Some(ExactPrimitiveSummary {
         surface_area: 4.0 * PI * PI * major_radius * minor_radius,
         volume: 2.0 * PI * PI * major_radius * minor_radius * minor_radius,
+        bbox: None,
     })
 }
 
-fn exact_translational_solid_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
+fn exact_translational_solid_summary(
+    faces: &[BrepFace],
+    edges: &[BrepEdge],
+) -> Option<ExactPrimitiveSummary> {
     let plane_faces = faces
         .iter()
         .filter_map(|face| match face.ported_surface {
@@ -513,11 +1547,71 @@ fn exact_translational_solid_summary(faces: &[BrepFace]) -> Option<ExactPrimitiv
             return Some(ExactPrimitiveSummary {
                 surface_area: faces.iter().map(|face| face.area).sum(),
                 volume: lhs_face.area * span,
+                bbox: analytic_edges_bbox(edges),
             });
         }
     }
 
     None
+}
+
+fn exact_cone_axial_radii(
+    payload: ConePayload,
+    faces: &[BrepFace],
+) -> Option<([f64; 3], Vec<(f64, f64)>)> {
+    let axis = normalize3(payload.axis);
+    if norm3(axis) <= 1.0e-12 {
+        return None;
+    }
+    let caps = aligned_plane_faces(faces, axis);
+    if caps.is_empty() || caps.len() > 2 || caps.len() + 1 != faces.len() {
+        return None;
+    }
+
+    let tan_angle = payload.semi_angle.tan();
+    if tan_angle.abs() <= 1.0e-12 {
+        return None;
+    }
+
+    let mut axial_radii = caps
+        .iter()
+        .map(|plane| {
+            let axial = dot3(subtract3(plane.origin, payload.origin), axis);
+            let radius = (payload.reference_radius + axial * tan_angle).abs();
+            (axial, radius)
+        })
+        .collect::<Vec<_>>();
+    if axial_radii.len() == 1 {
+        axial_radii.push((-payload.reference_radius / tan_angle, 0.0));
+    }
+
+    (axial_radii.len() == 2).then_some((axis, axial_radii))
+}
+
+fn circular_sections_bbox(
+    axis: [f64; 3],
+    sections: &[([f64; 3], f64)],
+) -> Option<([f64; 3], [f64; 3])> {
+    if sections.is_empty() {
+        return None;
+    }
+
+    let axis = normalize3(axis);
+    if norm3(axis) <= 1.0e-12 {
+        return None;
+    }
+
+    let mut bbox_min = [f64::INFINITY; 3];
+    let mut bbox_max = [f64::NEG_INFINITY; 3];
+    for (center, radius) in sections {
+        for coordinate in 0..3 {
+            let radial_extent =
+                radius.abs() * (1.0 - axis[coordinate] * axis[coordinate]).max(0.0).sqrt();
+            bbox_min[coordinate] = bbox_min[coordinate].min(center[coordinate] - radial_extent);
+            bbox_max[coordinate] = bbox_max[coordinate].max(center[coordinate] + radial_extent);
+        }
+    }
+    Some((bbox_min, bbox_max))
 }
 
 fn single_cylinder_face(faces: &[BrepFace]) -> Option<(CylinderPayload, usize)> {
@@ -629,8 +1723,9 @@ fn analytic_shape_volume(
 
     let mut volume = 0.0;
     for face in faces {
-        let contribution = match face.ported_surface {
-            Some(surface) => analytic_face_volume(
+        let face_shape = face_shapes.get(face.index)?;
+        let analytic_contribution = match face.ported_face_surface {
+            Some(PortedFaceSurface::Analytic(surface)) => analytic_face_volume(
                 context,
                 face,
                 surface,
@@ -640,16 +1735,23 @@ fn analytic_shape_volume(
                 edges,
                 edge_shapes,
             ),
-            None => analytic_swept_face_volume(
+            Some(PortedFaceSurface::Swept(surface)) => {
+                analytic_ported_swept_face_volume(face, face.geometry, surface)
+            }
+            Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_volume(
                 context,
-                face_shapes.get(face.index)?,
                 face,
+                surface,
                 face.geometry,
                 &face.loops,
                 wires,
                 edges,
+                edge_shapes,
             ),
-        }?;
+            None => None,
+        };
+        let contribution =
+            analytic_contribution.or_else(|| mesh_face_volume(context, face_shape, face))?;
         volume += contribution;
     }
     Some(volume.abs())
@@ -740,24 +1842,39 @@ fn topological_shape_bbox(
     edges: &[BrepEdge],
     faces: &[BrepFace],
 ) -> Option<([f64; 3], [f64; 3])> {
-    let use_topology_points = if !faces.is_empty() {
-        !vertices.is_empty()
-            && faces
-                .iter()
-                .all(|face| matches!(face.ported_surface, Some(PortedSurface::Plane(_))))
-            && edges
-                .iter()
-                .all(|edge| matches!(edge.ported_curve, Some(PortedCurve::Line(_))))
-    } else {
-        !edges.is_empty()
-            && edges.iter().all(|edge| {
-                matches!(edge.ported_curve, Some(PortedCurve::Line(_)))
-                    && edge.start_point.is_some()
-                    && edge.end_point.is_some()
-            })
-    };
+    if faces.is_empty() {
+        return analytic_edges_bbox(edges)
+            .or_else(|| line_segment_points_bbox(vertices, edges))
+            .or_else(|| {
+                if edges.is_empty() {
+                    bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect())
+                } else {
+                    None
+                }
+            });
+    }
 
-    if !use_topology_points {
+    if faces
+        .iter()
+        .all(|face| matches!(face.ported_surface, Some(PortedSurface::Plane(_))))
+    {
+        return analytic_edges_bbox(edges).or_else(|| line_segment_points_bbox(vertices, edges));
+    }
+
+    None
+}
+
+fn line_segment_points_bbox(
+    vertices: &[BrepVertex],
+    edges: &[BrepEdge],
+) -> Option<([f64; 3], [f64; 3])> {
+    if edges.is_empty()
+        || !edges.iter().all(|edge| {
+            matches!(edge.ported_curve, Some(PortedCurve::Line(_)))
+                && edge.start_point.is_some()
+                && edge.end_point.is_some()
+        })
+    {
         return None;
     }
 
@@ -777,16 +1894,148 @@ fn topological_shape_bbox(
     bbox_from_points(points)
 }
 
+fn analytic_edges_bbox(edges: &[BrepEdge]) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for edge in edges {
+        let edge_bbox = analytic_edge_bbox(edge)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, edge_bbox),
+            None => edge_bbox,
+        });
+    }
+    bbox
+}
+
+fn analytic_edge_bbox(edge: &BrepEdge) -> Option<([f64; 3], [f64; 3])> {
+    let curve = edge.ported_curve?;
+    let start = edge.geometry.start_parameter;
+    let end = edge.geometry.end_parameter;
+
+    match curve {
+        PortedCurve::Line(_) => bbox_from_points(vec![
+            curve.evaluate(start).position,
+            curve.evaluate(end).position,
+        ]),
+        PortedCurve::Circle(payload) => periodic_curve_bbox(
+            start,
+            end,
+            2.0 * PI,
+            |axis| {
+                (
+                    payload.center[axis],
+                    payload.radius * payload.x_direction[axis],
+                    payload.radius * payload.y_direction[axis],
+                )
+            },
+            |parameter| curve.evaluate(parameter).position,
+        ),
+        PortedCurve::Ellipse(payload) => periodic_curve_bbox(
+            start,
+            end,
+            2.0 * PI,
+            |axis| {
+                (
+                    payload.center[axis],
+                    payload.major_radius * payload.x_direction[axis],
+                    payload.minor_radius * payload.y_direction[axis],
+                )
+            },
+            |parameter| curve.evaluate(parameter).position,
+        ),
+    }
+}
+
+fn periodic_curve_bbox(
+    start: f64,
+    end: f64,
+    period: f64,
+    coefficients_for_axis: impl Fn(usize) -> (f64, f64, f64),
+    position_at: impl Fn(f64) -> [f64; 3],
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut parameters = vec![start, end];
+    for axis in 0..3 {
+        let (_, cos_coefficient, sin_coefficient) = coefficients_for_axis(axis);
+        if cos_coefficient.abs() <= 1.0e-12 && sin_coefficient.abs() <= 1.0e-12 {
+            continue;
+        }
+        let critical = sin_coefficient.atan2(cos_coefficient);
+        extend_periodic_parameters(&mut parameters, start, end, period, critical);
+        extend_periodic_parameters(&mut parameters, start, end, period, critical + PI);
+    }
+    bbox_from_points(parameters.into_iter().map(position_at).collect())
+}
+
+fn extend_periodic_parameters(
+    parameters: &mut Vec<f64>,
+    start: f64,
+    end: f64,
+    period: f64,
+    base: f64,
+) {
+    let low = start.min(end);
+    let high = start.max(end);
+    let first_multiple = ((low - base - 1.0e-12) / period).ceil() as i64;
+    let last_multiple = ((high - base + 1.0e-12) / period).floor() as i64;
+    for multiple in first_multiple..=last_multiple {
+        parameters.push(base + multiple as f64 * period);
+    }
+}
+
 fn mesh_shape_bbox(context: &Context, shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
     let mesh = context.mesh(shape, SUMMARY_BBOX_MESH_PARAMS).ok()?;
     mesh_bbox(&mesh)
 }
 
-fn mesh_face_area(context: &Context, face_shape: &Shape) -> Option<f64> {
+fn mesh_face_properties(
+    context: &Context,
+    face_shape: &Shape,
+    orientation: Orientation,
+) -> Option<MeshFaceProperties> {
     let mesh = context
         .mesh(face_shape, UNSUPPORTED_FACE_AREA_MESH_PARAMS)
         .ok()?;
-    polyhedral_mesh_area(&mesh)
+    let mut sample = polyhedral_mesh_sample(&mesh)?;
+    if matches!(orientation, Orientation::Reversed) {
+        sample.normal = scale3(sample.normal, -1.0);
+    }
+    Some(MeshFaceProperties {
+        area: polyhedral_mesh_area(&mesh)?,
+        sample,
+    })
+}
+
+fn mesh_face_volume(context: &Context, face_shape: &Shape, face: &BrepFace) -> Option<f64> {
+    let mesh = context.mesh(face_shape, SUMMARY_VOLUME_MESH_PARAMS).ok()?;
+    mesh_face_signed_volume(&mesh, face.sample.normal)
+}
+
+fn mesh_face_signed_volume(mesh: &Mesh, outward_normal_hint: [f64; 3]) -> Option<f64> {
+    if mesh.triangle_indices.is_empty() {
+        return Some(0.0);
+    }
+
+    let orientation_sign = polyhedral_mesh_sample(mesh)
+        .map(|sample| {
+            if dot3(sample.normal, outward_normal_hint) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            }
+        })
+        .unwrap_or(1.0);
+
+    let mut signed_volume = 0.0;
+    for triangle in mesh.triangle_indices.chunks_exact(3) {
+        let i0 = usize::try_from(triangle[0]).ok()?;
+        let i1 = usize::try_from(triangle[1]).ok()?;
+        let i2 = usize::try_from(triangle[2]).ok()?;
+        let a = *mesh.positions.get(i0)?;
+        let b = *mesh.positions.get(i1)?;
+        let c = *mesh.positions.get(i2)?;
+        signed_volume += dot3(a, cross3(b, c)) / 6.0;
+    }
+
+    Some(orientation_sign * signed_volume)
 }
 
 fn analytic_face_area(
@@ -798,6 +2047,10 @@ fn analytic_face_area(
     edges: &[BrepEdge],
     edge_shapes: &[Shape],
 ) -> Option<f64> {
+    if let Some(area) = exact_closed_face_area(surface, face_geometry) {
+        return Some(area);
+    }
+
     if loops.is_empty() {
         return match surface {
             PortedSurface::Sphere(payload) => Some(4.0 * PI * payload.radius.abs().powi(2)),
@@ -853,189 +2106,433 @@ fn analytic_face_area(
     Some(area.abs())
 }
 
-fn analytic_swept_face_area(
-    context: &Context,
-    face_shape: &Shape,
+fn exact_closed_face_area(surface: PortedSurface, face_geometry: FaceGeometry) -> Option<f64> {
+    match surface {
+        PortedSurface::Sphere(payload)
+            if periodic_span_matches(
+                face_geometry.is_u_periodic,
+                face_geometry.u_period,
+                face_geometry.u_max - face_geometry.u_min,
+            ) && approx_eq(
+                face_geometry.v_max - face_geometry.v_min,
+                PI,
+                1.0e-6,
+                1.0e-6,
+            ) =>
+        {
+            Some(4.0 * PI * payload.radius.abs().powi(2))
+        }
+        PortedSurface::Torus(payload)
+            if periodic_span_matches(
+                face_geometry.is_u_periodic,
+                face_geometry.u_period,
+                face_geometry.u_max - face_geometry.u_min,
+            ) && periodic_span_matches(
+                face_geometry.is_v_periodic,
+                face_geometry.v_period,
+                face_geometry.v_max - face_geometry.v_min,
+            ) =>
+        {
+            Some(4.0 * PI * PI * payload.major_radius.abs() * payload.minor_radius.abs())
+        }
+        _ => None,
+    }
+}
+
+fn periodic_span_matches(is_periodic: bool, period: f64, span: f64) -> bool {
+    is_periodic && approx_eq(span.abs(), period.abs(), 1.0e-6, 1.0e-6)
+}
+
+fn analytic_ported_swept_face_area(
+    surface: PortedSweptSurface,
     face_geometry: FaceGeometry,
-    loops: &[BrepFaceLoop],
-    wires: &[BrepWire],
-    edges: &[BrepEdge],
 ) -> Option<f64> {
-    match face_geometry.kind {
-        crate::SurfaceKind::Extrusion => {
-            let payload = context.face_extrusion_payload(face_shape).ok()?;
-            let candidates = face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?;
-            let basis = *candidates.first()?;
-            let span = extrusion_span(&candidates, payload.direction)?;
+    match surface {
+        PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve,
+            basis_geometry,
+        } => {
+            let span = swept_surface_span(face_geometry, basis_geometry)?;
             Some(extrusion_swept_area(
-                basis.curve,
-                basis.geometry,
+                basis_curve,
+                basis_geometry,
                 payload.direction,
                 span,
             ))
         }
-        crate::SurfaceKind::Revolution => {
-            let payload = context.face_revolution_payload(face_shape).ok()?;
-            let candidates = face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?;
-            let basis = *candidates.first()?;
-            let sweep_angle = revolution_sweep_angle(
-                &candidates,
-                face_geometry,
-                payload.axis_origin,
-                payload.axis_direction,
-            )?;
+        PortedSweptSurface::Revolution {
+            payload,
+            basis_curve,
+            basis_geometry,
+        } => {
+            let sweep_angle = swept_surface_span(face_geometry, basis_geometry)?;
             Some(revolution_swept_area(
-                basis.curve,
-                basis.geometry,
+                basis_curve,
+                basis_geometry,
                 payload.axis_origin,
                 payload.axis_direction,
                 sweep_angle,
             ))
         }
-        _ => None,
     }
 }
 
-fn analytic_swept_face_sample(
+fn analytic_offset_face_area(
     context: &Context,
-    face_shape: &Shape,
+    surface: PortedOffsetSurface,
     face_geometry: FaceGeometry,
-    orientation: Orientation,
     loops: &[BrepFaceLoop],
     wires: &[BrepWire],
     edges: &[BrepEdge],
-) -> Option<FaceSample> {
-    match face_geometry.kind {
-        crate::SurfaceKind::Extrusion => {
-            let payload = context.face_extrusion_payload(face_shape).ok()?;
-            let basis = select_swept_face_basis_curve(
-                face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?,
-                face_geometry,
-                SweptBasisSelection::Extrusion {
-                    direction: payload.direction,
-                },
-            )?;
-            Some(sample_extrusion_surface_normalized(
-                basis.curve,
-                face_geometry,
-                basis.geometry,
-                [0.5, 0.5],
-                payload.direction,
-                orientation,
-            ))
-        }
-        crate::SurfaceKind::Revolution => {
-            let payload = context.face_revolution_payload(face_shape).ok()?;
-            let basis = select_swept_face_basis_curve(
-                face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?,
-                face_geometry,
-                SweptBasisSelection::Revolution {
-                    axis_origin: payload.axis_origin,
-                    axis_direction: payload.axis_direction,
-                },
-            )?;
-            Some(sample_revolution_surface_normalized(
-                basis.curve,
-                face_geometry,
-                basis.geometry,
-                [0.5, 0.5],
-                payload.axis_origin,
-                payload.axis_direction,
-                orientation,
-            ))
-        }
-        _ => None,
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    if let Some(equivalent_surface) = surface.equivalent_analytic_surface() {
+        return analytic_face_area(
+            context,
+            equivalent_surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        );
+    }
+
+    match surface.basis {
+        PortedOffsetBasisSurface::Analytic(_) => None,
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => offset_extrusion_swept_area(
+            surface.payload.offset_value,
+            surface.basis_geometry,
+            basis_curve,
+            basis_geometry,
+            payload.direction,
+        ),
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => offset_revolution_swept_area(
+            surface.payload.offset_value,
+            surface.basis_geometry,
+            basis_curve,
+            basis_geometry,
+            payload.axis_origin,
+            payload.axis_direction,
+        ),
     }
 }
 
-fn analytic_swept_face_volume(
-    context: &Context,
-    face_shape: &Shape,
+fn offset_extrusion_swept_area(
+    offset: f64,
+    surface_geometry: FaceGeometry,
+    curve: PortedCurve,
+    curve_geometry: EdgeGeometry,
+    direction: [f64; 3],
+) -> Option<f64> {
+    let direction = normalize3(direction);
+    if norm3(direction) <= 1.0e-12 {
+        return None;
+    }
+
+    let sweep_span = swept_surface_span(surface_geometry, curve_geometry)?;
+    let basis_on_u = basis_parameter_on_u(surface_geometry, curve_geometry);
+    Some(
+        sweep_span.abs()
+            * positive_scalar_integral(
+                curve_geometry.start_parameter,
+                curve_geometry.end_parameter,
+                |parameter| {
+                    let differential = offset_extrusion_curve_differential(
+                        curve, direction, offset, basis_on_u, parameter,
+                    );
+                    norm3(cross3(differential.derivative, direction))
+                },
+            ),
+    )
+}
+
+fn offset_revolution_swept_area(
+    offset: f64,
+    surface_geometry: FaceGeometry,
+    curve: PortedCurve,
+    curve_geometry: EdgeGeometry,
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+) -> Option<f64> {
+    let axis_direction = normalize3(axis_direction);
+    if norm3(axis_direction) <= 1.0e-12 {
+        return None;
+    }
+
+    let sweep_angle = swept_surface_span(surface_geometry, curve_geometry)?;
+    let basis_on_u = basis_parameter_on_u(surface_geometry, curve_geometry);
+    Some(
+        sweep_angle.abs()
+            * positive_scalar_integral(
+                curve_geometry.start_parameter,
+                curve_geometry.end_parameter,
+                |parameter| {
+                    let differential = offset_revolution_curve_differential(
+                        curve,
+                        axis_origin,
+                        axis_direction,
+                        offset,
+                        basis_on_u,
+                        parameter,
+                    );
+                    let sweep_derivative = cross3(
+                        axis_direction,
+                        subtract3(differential.position, axis_origin),
+                    );
+                    norm3(cross3(differential.derivative, sweep_derivative))
+                },
+            ),
+    )
+}
+
+fn swept_surface_span(surface_geometry: FaceGeometry, curve_geometry: EdgeGeometry) -> Option<f64> {
+    let span = if basis_parameter_on_u(surface_geometry, curve_geometry) {
+        surface_geometry.v_max - surface_geometry.v_min
+    } else {
+        surface_geometry.u_max - surface_geometry.u_min
+    };
+    (span.abs() > 1.0e-12).then_some(span)
+}
+
+fn offset_extrusion_curve_differential(
+    curve: PortedCurve,
+    direction: [f64; 3],
+    offset: f64,
+    basis_on_u: bool,
+    parameter: f64,
+) -> OffsetCurveDifferential {
+    let differential = curve_differential(curve, parameter);
+    let (normal_source, normal_source_derivative) = if basis_on_u {
+        (
+            cross3(differential.first_derivative, direction),
+            cross3(differential.second_derivative, direction),
+        )
+    } else {
+        (
+            cross3(direction, differential.first_derivative),
+            cross3(direction, differential.second_derivative),
+        )
+    };
+    let normal = normalize3(normal_source);
+    let normal_derivative =
+        normalized_direction_derivative(normal_source, normal_source_derivative);
+    OffsetCurveDifferential {
+        position: add3(differential.position, scale3(normal, offset)),
+        derivative: add3(
+            differential.first_derivative,
+            scale3(normal_derivative, offset),
+        ),
+    }
+}
+
+fn offset_revolution_curve_differential(
+    curve: PortedCurve,
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+    offset: f64,
+    basis_on_u: bool,
+    parameter: f64,
+) -> OffsetCurveDifferential {
+    let differential = curve_differential(curve, parameter);
+    let sweep_derivative = cross3(
+        axis_direction,
+        subtract3(differential.position, axis_origin),
+    );
+    let sweep_second_derivative = cross3(axis_direction, differential.first_derivative);
+    let (normal_source, normal_source_derivative) = if basis_on_u {
+        (
+            cross3(differential.first_derivative, sweep_derivative),
+            add3(
+                cross3(differential.second_derivative, sweep_derivative),
+                cross3(differential.first_derivative, sweep_second_derivative),
+            ),
+        )
+    } else {
+        (
+            cross3(sweep_derivative, differential.first_derivative),
+            add3(
+                cross3(sweep_second_derivative, differential.first_derivative),
+                cross3(sweep_derivative, differential.second_derivative),
+            ),
+        )
+    };
+    let normal = normalize3(normal_source);
+    let normal_derivative =
+        normalized_direction_derivative(normal_source, normal_source_derivative);
+    OffsetCurveDifferential {
+        position: add3(differential.position, scale3(normal, offset)),
+        derivative: add3(
+            differential.first_derivative,
+            scale3(normal_derivative, offset),
+        ),
+    }
+}
+
+fn curve_differential(curve: PortedCurve, parameter: f64) -> CurveDifferential {
+    match curve {
+        PortedCurve::Line(payload) => CurveDifferential {
+            position: add3(payload.origin, scale3(payload.direction, parameter)),
+            first_derivative: payload.direction,
+            second_derivative: [0.0; 3],
+        },
+        PortedCurve::Circle(payload) => {
+            let cos_parameter = parameter.cos();
+            let sin_parameter = parameter.sin();
+            CurveDifferential {
+                position: add3(
+                    payload.center,
+                    add3(
+                        scale3(payload.x_direction, payload.radius * cos_parameter),
+                        scale3(payload.y_direction, payload.radius * sin_parameter),
+                    ),
+                ),
+                first_derivative: add3(
+                    scale3(payload.x_direction, -payload.radius * sin_parameter),
+                    scale3(payload.y_direction, payload.radius * cos_parameter),
+                ),
+                second_derivative: add3(
+                    scale3(payload.x_direction, -payload.radius * cos_parameter),
+                    scale3(payload.y_direction, -payload.radius * sin_parameter),
+                ),
+            }
+        }
+        PortedCurve::Ellipse(payload) => {
+            let cos_parameter = parameter.cos();
+            let sin_parameter = parameter.sin();
+            CurveDifferential {
+                position: add3(
+                    payload.center,
+                    add3(
+                        scale3(payload.x_direction, payload.major_radius * cos_parameter),
+                        scale3(payload.y_direction, payload.minor_radius * sin_parameter),
+                    ),
+                ),
+                first_derivative: add3(
+                    scale3(payload.x_direction, -payload.major_radius * sin_parameter),
+                    scale3(payload.y_direction, payload.minor_radius * cos_parameter),
+                ),
+                second_derivative: add3(
+                    scale3(payload.x_direction, -payload.major_radius * cos_parameter),
+                    scale3(payload.y_direction, -payload.minor_radius * sin_parameter),
+                ),
+            }
+        }
+    }
+}
+
+fn normalized_direction_derivative(direction: [f64; 3], derivative: [f64; 3]) -> [f64; 3] {
+    let direction_norm = norm3(direction);
+    if direction_norm <= 1.0e-12 {
+        return [0.0; 3];
+    }
+
+    let unit_direction = scale3(direction, direction_norm.recip());
+    scale3(
+        subtract3(
+            derivative,
+            scale3(unit_direction, dot3(unit_direction, derivative)),
+        ),
+        direction_norm.recip(),
+    )
+}
+
+fn analytic_ported_swept_face_volume(
     face: &BrepFace,
     face_geometry: FaceGeometry,
-    loops: &[BrepFaceLoop],
-    wires: &[BrepWire],
-    edges: &[BrepEdge],
+    surface: PortedSweptSurface,
 ) -> Option<f64> {
-    match face_geometry.kind {
-        crate::SurfaceKind::Extrusion => {
-            let payload = context.face_extrusion_payload(face_shape).ok()?;
-            let candidates = face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?;
-            let basis = *candidates.first()?;
+    match surface {
+        PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve,
+            basis_geometry,
+        } => {
+            let direction = normalize3(payload.direction);
+            if norm3(direction) <= 1.0e-12 {
+                return None;
+            }
             let sweep = scale3(
-                normalize3(payload.direction),
-                extrusion_span(&candidates, payload.direction)?,
+                direction,
+                swept_surface_span(face_geometry, basis_geometry)?.abs(),
             );
             let midpoint_parameter =
-                0.5 * (basis.geometry.start_parameter + basis.geometry.end_parameter);
-            let midpoint = basis.curve.evaluate(midpoint_parameter);
+                0.5 * (basis_geometry.start_parameter + basis_geometry.end_parameter);
+            let midpoint = basis_curve.evaluate(midpoint_parameter);
             let midpoint_position = add3(midpoint.position, scale3(sweep, 0.5));
             let midpoint_du = midpoint.derivative;
             let midpoint_dv = sweep;
             let sign = oriented_surface_sign(face, midpoint_position, midpoint_du, midpoint_dv);
             Some(
                 sign * signed_scalar_integral(
-                    basis.geometry.start_parameter,
-                    basis.geometry.end_parameter,
+                    basis_geometry.start_parameter,
+                    basis_geometry.end_parameter,
                     |parameter| {
-                        let evaluation = basis.curve.evaluate(parameter);
+                        let evaluation = basis_curve.evaluate(parameter);
                         dot3(evaluation.position, cross3(evaluation.derivative, sweep)) / 3.0
                     },
                 ),
             )
         }
-        crate::SurfaceKind::Revolution => {
-            let payload = context.face_revolution_payload(face_shape).ok()?;
-            let candidates = face_curve_candidates(loops, wires, edges, payload.basis_curve_kind)?;
-            let (basis, sweep_angle) = revolution_basis_and_sweep(
-                &candidates,
-                face_geometry,
-                payload.axis_origin,
-                payload.axis_direction,
-            )?;
+        PortedSweptSurface::Revolution {
+            payload,
+            basis_curve,
+            basis_geometry,
+        } => {
+            let axis_direction = normalize3(payload.axis_direction);
+            if norm3(axis_direction) <= 1.0e-12 {
+                return None;
+            }
+            let sweep_angle = swept_surface_span(face_geometry, basis_geometry)?.abs();
             let midpoint_parameter =
-                0.5 * (basis.geometry.start_parameter + basis.geometry.end_parameter);
-            let midpoint_evaluation = basis.curve.evaluate(midpoint_parameter);
+                0.5 * (basis_geometry.start_parameter + basis_geometry.end_parameter);
+            let midpoint_evaluation = basis_curve.evaluate(midpoint_parameter);
             let midpoint_position = rotate_point_about_axis(
                 midpoint_evaluation.position,
                 payload.axis_origin,
-                payload.axis_direction,
+                axis_direction,
                 0.5 * sweep_angle,
             );
             let midpoint_du = rotate_vector_about_axis(
                 midpoint_evaluation.derivative,
-                payload.axis_direction,
+                axis_direction,
                 0.5 * sweep_angle,
             );
-            let midpoint_dv = revolution_surface_dv(
-                midpoint_position,
-                payload.axis_origin,
-                payload.axis_direction,
-            );
+            let midpoint_dv =
+                revolution_surface_dv(midpoint_position, payload.axis_origin, axis_direction);
             let sign = oriented_surface_sign(face, midpoint_position, midpoint_du, midpoint_dv);
 
             Some(
                 sign * signed_scalar_integral(
-                    basis.geometry.start_parameter,
-                    basis.geometry.end_parameter,
+                    basis_geometry.start_parameter,
+                    basis_geometry.end_parameter,
                     |parameter| {
-                        let evaluation = basis.curve.evaluate(parameter);
+                        let evaluation = basis_curve.evaluate(parameter);
                         signed_scalar_integral(0.0, sweep_angle, |angle| {
                             let position = rotate_point_about_axis(
                                 evaluation.position,
                                 payload.axis_origin,
-                                payload.axis_direction,
+                                axis_direction,
                                 angle,
                             );
                             let du = rotate_vector_about_axis(
                                 evaluation.derivative,
-                                payload.axis_direction,
+                                axis_direction,
                                 angle,
                             );
                             let dv = revolution_surface_dv(
                                 position,
                                 payload.axis_origin,
-                                payload.axis_direction,
+                                axis_direction,
                             );
                             dot3(position, cross3(du, dv)) / 3.0
                         })
@@ -1043,8 +2540,174 @@ fn analytic_swept_face_volume(
                 ),
             )
         }
-        _ => None,
     }
+}
+
+fn analytic_offset_face_volume(
+    context: &Context,
+    face: &BrepFace,
+    surface: PortedOffsetSurface,
+    face_geometry: FaceGeometry,
+    loops: &[BrepFaceLoop],
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    if let Some(equivalent_surface) = surface.equivalent_analytic_surface() {
+        return analytic_face_volume(
+            context,
+            face,
+            equivalent_surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        );
+    }
+
+    match surface.basis {
+        PortedOffsetBasisSurface::Analytic(_) => None,
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => analytic_offset_extrusion_face_volume(
+            face,
+            surface.payload.offset_value,
+            surface.basis_geometry,
+            basis_curve,
+            basis_geometry,
+            payload.direction,
+        ),
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => analytic_offset_revolution_face_volume(
+            face,
+            surface.payload.offset_value,
+            surface.basis_geometry,
+            basis_curve,
+            basis_geometry,
+            payload.axis_origin,
+            payload.axis_direction,
+        ),
+    }
+}
+
+fn analytic_offset_extrusion_face_volume(
+    face: &BrepFace,
+    offset: f64,
+    surface_geometry: FaceGeometry,
+    curve: PortedCurve,
+    curve_geometry: EdgeGeometry,
+    direction: [f64; 3],
+) -> Option<f64> {
+    let direction = normalize3(direction);
+    if norm3(direction) <= 1.0e-12 {
+        return None;
+    }
+
+    let sweep = scale3(
+        direction,
+        swept_surface_span(surface_geometry, curve_geometry)?.abs(),
+    );
+    let basis_on_u = basis_parameter_on_u(surface_geometry, curve_geometry);
+    let midpoint_parameter = 0.5 * (curve_geometry.start_parameter + curve_geometry.end_parameter);
+    let midpoint = offset_extrusion_curve_differential(
+        curve,
+        direction,
+        offset,
+        basis_on_u,
+        midpoint_parameter,
+    );
+    let midpoint_position = add3(midpoint.position, scale3(sweep, 0.5));
+    let midpoint_du = midpoint.derivative;
+    let midpoint_dv = sweep;
+    let sign = oriented_surface_sign(face, midpoint_position, midpoint_du, midpoint_dv);
+
+    Some(
+        sign * signed_scalar_integral(
+            curve_geometry.start_parameter,
+            curve_geometry.end_parameter,
+            |parameter| {
+                let differential = offset_extrusion_curve_differential(
+                    curve, direction, offset, basis_on_u, parameter,
+                );
+                dot3(
+                    differential.position,
+                    cross3(differential.derivative, sweep),
+                ) / 3.0
+            },
+        ),
+    )
+}
+
+fn analytic_offset_revolution_face_volume(
+    face: &BrepFace,
+    offset: f64,
+    surface_geometry: FaceGeometry,
+    curve: PortedCurve,
+    curve_geometry: EdgeGeometry,
+    axis_origin: [f64; 3],
+    axis_direction: [f64; 3],
+) -> Option<f64> {
+    let axis_direction = normalize3(axis_direction);
+    if norm3(axis_direction) <= 1.0e-12 {
+        return None;
+    }
+
+    let sweep_angle = swept_surface_span(surface_geometry, curve_geometry)?.abs();
+    let basis_on_u = basis_parameter_on_u(surface_geometry, curve_geometry);
+    let midpoint_parameter = 0.5 * (curve_geometry.start_parameter + curve_geometry.end_parameter);
+    let midpoint = offset_revolution_curve_differential(
+        curve,
+        axis_origin,
+        axis_direction,
+        offset,
+        basis_on_u,
+        midpoint_parameter,
+    );
+    let midpoint_position = rotate_point_about_axis(
+        midpoint.position,
+        axis_origin,
+        axis_direction,
+        0.5 * sweep_angle,
+    );
+    let midpoint_du =
+        rotate_vector_about_axis(midpoint.derivative, axis_direction, 0.5 * sweep_angle);
+    let midpoint_dv = revolution_surface_dv(midpoint_position, axis_origin, axis_direction);
+    let sign = oriented_surface_sign(face, midpoint_position, midpoint_du, midpoint_dv);
+
+    Some(
+        sign * signed_scalar_integral(
+            curve_geometry.start_parameter,
+            curve_geometry.end_parameter,
+            |parameter| {
+                let differential = offset_revolution_curve_differential(
+                    curve,
+                    axis_origin,
+                    axis_direction,
+                    offset,
+                    basis_on_u,
+                    parameter,
+                );
+                signed_scalar_integral(0.0, sweep_angle, |angle| {
+                    let position = rotate_point_about_axis(
+                        differential.position,
+                        axis_origin,
+                        axis_direction,
+                        angle,
+                    );
+                    let du =
+                        rotate_vector_about_axis(differential.derivative, axis_direction, angle);
+                    let dv = revolution_surface_dv(position, axis_origin, axis_direction);
+                    dot3(position, cross3(du, dv)) / 3.0
+                })
+            },
+        ),
+    )
 }
 
 fn analytic_face_volume(
@@ -1233,138 +2896,6 @@ fn basis_parameter_on_u(face_geometry: FaceGeometry, basis_geometry: EdgeGeometr
     (u_span - basis_span).abs() <= (v_span - basis_span).abs()
 }
 
-fn extrusion_span(candidates: &[FaceCurveCandidate], direction: [f64; 3]) -> Option<f64> {
-    if candidates.len() < 2 {
-        return None;
-    }
-
-    let direction = normalize3(direction);
-    let mut min_projection = f64::INFINITY;
-    let mut max_projection = f64::NEG_INFINITY;
-    for candidate in candidates {
-        let projection = dot3(candidate.midpoint, direction);
-        min_projection = min_projection.min(projection);
-        max_projection = max_projection.max(projection);
-    }
-
-    let span = max_projection - min_projection;
-    if span <= 1.0e-9 {
-        None
-    } else {
-        Some(span)
-    }
-}
-
-fn revolution_sweep_angle(
-    candidates: &[FaceCurveCandidate],
-    face_geometry: FaceGeometry,
-    axis_origin: [f64; 3],
-    axis_direction: [f64; 3],
-) -> Option<f64> {
-    if let Some(span) = periodic_face_span(face_geometry) {
-        return Some(span.abs());
-    }
-    if candidates.len() < 2 {
-        return None;
-    }
-
-    let axis_direction = normalize3(axis_direction);
-    let reference_radial = candidates.iter().find_map(|candidate| {
-        let radial = subtract3(
-            candidate.midpoint,
-            add3(
-                axis_origin,
-                scale3(
-                    axis_direction,
-                    dot3(subtract3(candidate.midpoint, axis_origin), axis_direction),
-                ),
-            ),
-        );
-        if norm3(radial) > 1.0e-9 {
-            Some(normalize3(radial))
-        } else {
-            None
-        }
-    })?;
-    let tangent = normalize3(cross3(axis_direction, reference_radial));
-
-    let mut min_angle = 0.0;
-    let mut max_angle = 0.0;
-    let mut initialized = false;
-    for candidate in candidates {
-        let radial = subtract3(
-            candidate.midpoint,
-            add3(
-                axis_origin,
-                scale3(
-                    axis_direction,
-                    dot3(subtract3(candidate.midpoint, axis_origin), axis_direction),
-                ),
-            ),
-        );
-        if norm3(radial) <= 1.0e-9 {
-            continue;
-        }
-        let angle = dot3(radial, tangent).atan2(dot3(radial, reference_radial));
-        if !initialized {
-            min_angle = angle;
-            max_angle = angle;
-            initialized = true;
-        } else {
-            min_angle = min_angle.min(angle);
-            max_angle = max_angle.max(angle);
-        }
-    }
-
-    if !initialized || (max_angle - min_angle).abs() <= 1.0e-9 {
-        None
-    } else {
-        Some(max_angle - min_angle)
-    }
-}
-
-fn revolution_basis_and_sweep(
-    candidates: &[FaceCurveCandidate],
-    face_geometry: FaceGeometry,
-    axis_origin: [f64; 3],
-    axis_direction: [f64; 3],
-) -> Option<(FaceCurveCandidate, f64)> {
-    if let Some(span) = periodic_face_span(face_geometry) {
-        return Some((*candidates.first()?, span.abs()));
-    }
-    if candidates.len() < 2 {
-        return None;
-    }
-
-    let axis_direction = normalize3(axis_direction);
-    let reference_radial = candidates
-        .iter()
-        .find_map(|candidate| radial_direction(candidate.midpoint, axis_origin, axis_direction))?;
-    let tangent = normalize3(cross3(axis_direction, reference_radial));
-
-    let mut angular_candidates = candidates
-        .iter()
-        .copied()
-        .filter_map(|candidate| {
-            let radial = radial_direction(candidate.midpoint, axis_origin, axis_direction)?;
-            Some((
-                candidate,
-                dot3(radial, tangent).atan2(dot3(radial, reference_radial)),
-            ))
-        })
-        .collect::<Vec<_>>();
-    angular_candidates.sort_by(|lhs, rhs| lhs.1.total_cmp(&rhs.1));
-
-    let (basis, min_angle) = *angular_candidates.first()?;
-    let (_, max_angle) = *angular_candidates.last()?;
-    let sweep = max_angle - min_angle;
-    if sweep.abs() <= 1.0e-9 {
-        None
-    } else {
-        Some((basis, sweep))
-    }
-}
-
 fn radial_direction(
     point: [f64; 3],
     axis_origin: [f64; 3],
@@ -1436,6 +2967,13 @@ where
     let fm = integrand(0.5 * (a + b));
     let fb = integrand(b);
     sign * adaptive_simpson(&integrand, a, b, fa, fm, fb, 1.0e-8, 12)
+}
+
+fn positive_scalar_integral<F>(start: f64, end: f64, integrand: F) -> f64
+where
+    F: Fn(f64) -> f64,
+{
+    signed_scalar_integral(start, end, |value| integrand(value).abs()).abs()
 }
 
 fn adaptive_simpson<F>(
@@ -1521,7 +3059,35 @@ fn append_edge_sample_points(
             Some(curve) => curve.sample_with_geometry(geometry, parameter).position,
             None => {
                 context
-                    .edge_sample_at_parameter(edge_shape, parameter)?
+                    .edge_sample_at_parameter_occt(edge_shape, parameter)?
+                    .position
+            }
+        };
+        out_points.push(position);
+    }
+    Ok(())
+}
+
+fn append_root_edge_sample_points(
+    context: &Context,
+    edge_shape: &Shape,
+    edge: &RootEdgeTopology,
+    geometry: EdgeGeometry,
+    out_points: &mut Vec<[f64; 3]>,
+) -> Result<(), Error> {
+    let ported_curve = PortedCurve::from_context_with_geometry(context, edge_shape, edge.geometry)?;
+    let segment_count = root_edge_sample_count(edge.geometry.kind, geometry);
+    for step in 0..=segment_count {
+        if !out_points.is_empty() && step == 0 {
+            continue;
+        }
+        let t = step as f64 / segment_count as f64;
+        let parameter = interpolate_range(geometry.start_parameter, geometry.end_parameter, t);
+        let position = match ported_curve {
+            Some(curve) => curve.sample_with_geometry(geometry, parameter).position,
+            None => {
+                context
+                    .edge_sample_at_parameter_occt(edge_shape, parameter)?
                     .position
             }
         };
@@ -1561,6 +3127,18 @@ fn reversed_orientation(orientation: Orientation) -> Orientation {
 fn edge_sample_count(edge: &BrepEdge, geometry: EdgeGeometry) -> usize {
     let span = (geometry.end_parameter - geometry.start_parameter).abs();
     let base = match edge.geometry.kind {
+        crate::CurveKind::Line => 8,
+        crate::CurveKind::Circle | crate::CurveKind::Ellipse => {
+            (span / (std::f64::consts::TAU / 32.0)).ceil() as usize
+        }
+        _ => 48,
+    };
+    base.clamp(8, 256)
+}
+
+fn root_edge_sample_count(kind: crate::CurveKind, geometry: EdgeGeometry) -> usize {
+    let span = (geometry.end_parameter - geometry.start_parameter).abs();
+    let base = match kind {
         crate::CurveKind::Line => 8,
         crate::CurveKind::Circle | crate::CurveKind::Ellipse => {
             (span / (std::f64::consts::TAU / 32.0)).ceil() as usize
@@ -1645,6 +3223,61 @@ fn polyhedral_mesh_area(mesh: &Mesh) -> Option<f64> {
     Some(area)
 }
 
+fn polyhedral_mesh_sample(mesh: &Mesh) -> Option<FaceSample> {
+    if mesh.positions.is_empty() {
+        return None;
+    }
+
+    let mut weighted_area = 0.0;
+    let mut weighted_centroid = [0.0; 3];
+    let mut weighted_normal = [0.0; 3];
+
+    for triangle in mesh.triangle_indices.chunks_exact(3) {
+        let i0 = usize::try_from(triangle[0]).ok()?;
+        let i1 = usize::try_from(triangle[1]).ok()?;
+        let i2 = usize::try_from(triangle[2]).ok()?;
+        let a = *mesh.positions.get(i0)?;
+        let b = *mesh.positions.get(i1)?;
+        let c = *mesh.positions.get(i2)?;
+        let face_cross = cross3(subtract3(b, a), subtract3(c, a));
+        let triangle_area = 0.5 * norm3(face_cross);
+        if triangle_area <= 1.0e-12 {
+            continue;
+        }
+
+        let averaged_normal = add3(
+            add3(
+                mesh.normals.get(i0).copied().unwrap_or([0.0; 3]),
+                mesh.normals.get(i1).copied().unwrap_or([0.0; 3]),
+            ),
+            mesh.normals.get(i2).copied().unwrap_or([0.0; 3]),
+        );
+        let triangle_normal = if norm3(averaged_normal) > 1.0e-12 {
+            normalize3(averaged_normal)
+        } else {
+            normalize3(face_cross)
+        };
+        let centroid = scale3(add3(add3(a, b), c), 1.0 / 3.0);
+        weighted_area += triangle_area;
+        weighted_centroid = add3(weighted_centroid, scale3(centroid, triangle_area));
+        weighted_normal = add3(weighted_normal, scale3(triangle_normal, triangle_area));
+    }
+
+    if weighted_area > 1.0e-12 {
+        return Some(FaceSample {
+            position: scale3(weighted_centroid, weighted_area.recip()),
+            normal: normalize3(weighted_normal),
+        });
+    }
+
+    let position = scale3(
+        mesh.positions.iter().copied().fold([0.0; 3], add3),
+        (mesh.positions.len() as f64).recip(),
+    );
+    let normal = normalize3(mesh.normals.iter().copied().fold([0.0; 3], add3));
+    Some(FaceSample { position, normal })
+}
+
 fn mesh_bbox(mesh: &Mesh) -> Option<([f64; 3], [f64; 3])> {
     let mut points = mesh.positions.clone();
     for segment in &mesh.edge_segments {
@@ -1668,6 +3301,16 @@ fn bbox_from_points(points: Vec<[f64; 3]>) -> Option<([f64; 3], [f64; 3])> {
     }
 
     Some((min, max))
+}
+
+fn union_bbox(lhs: ([f64; 3], [f64; 3]), rhs: ([f64; 3], [f64; 3])) -> ([f64; 3], [f64; 3]) {
+    let mut min = lhs.0;
+    let mut max = lhs.1;
+    for axis in 0..3 {
+        min[axis] = min[axis].min(rhs.0[axis]);
+        max[axis] = max[axis].max(rhs.1[axis]);
+    }
+    (min, max)
 }
 
 fn add3(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
@@ -1714,6 +3357,12 @@ fn approx_eq(lhs: f64, rhs: f64, relative_tolerance: f64, absolute_tolerance: f6
     }
     let scale = lhs.abs().max(rhs.abs()).max(1.0);
     delta <= relative_tolerance * scale
+}
+
+fn approx_points_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
+    (lhs[0] - rhs[0]).abs() <= tolerance
+        && (lhs[1] - rhs[1]).abs() <= tolerance
+        && (lhs[2] - rhs[2]).abs() <= tolerance
 }
 
 fn oriented_edge_geometry(mut geometry: EdgeGeometry, orientation: Orientation) -> EdgeGeometry {
