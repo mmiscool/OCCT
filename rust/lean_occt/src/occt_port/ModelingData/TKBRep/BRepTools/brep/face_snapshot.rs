@@ -39,6 +39,39 @@ fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Re
     Ok(true)
 }
 
+fn classify_face_wire_roles(
+    face_wire_count: usize,
+    face_wire_areas: &[f64],
+) -> Option<Vec<LoopRole>> {
+    match face_wire_count {
+        1 => Some(vec![LoopRole::Outer]),
+        _ => {
+            let (outer_offset, outer_area) = face_wire_areas
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs))?;
+            if outer_area <= 1.0e-9 {
+                return None;
+            }
+
+            Some(
+                face_wire_areas
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, _)| {
+                        if offset == outer_offset {
+                            LoopRole::Outer
+                        } else {
+                            LoopRole::Inner
+                        }
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
 fn append_ported_face_topology(
     context: &Context,
     face_index: usize,
@@ -107,33 +140,8 @@ fn append_ported_face_topology(
         }
     }
 
-    let wire_roles = match face_wire_shapes.len() {
-        1 => vec![LoopRole::Outer],
-        _ => {
-            let Some((outer_offset, outer_area)) = face_wire_areas
-                .iter()
-                .copied()
-                .enumerate()
-                .max_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs))
-            else {
-                return Ok(None);
-            };
-            if outer_area <= 1.0e-9 {
-                return Ok(None);
-            }
-
-            face_wire_areas
-                .iter()
-                .enumerate()
-                .map(|(offset, _)| {
-                    if offset == outer_offset {
-                        LoopRole::Outer
-                    } else {
-                        LoopRole::Inner
-                    }
-                })
-                .collect()
-        }
+    let Some(wire_roles) = classify_face_wire_roles(face_wire_count, &face_wire_areas) else {
+        return Ok(None);
     };
 
     faces.push(crate::TopologyRange {
