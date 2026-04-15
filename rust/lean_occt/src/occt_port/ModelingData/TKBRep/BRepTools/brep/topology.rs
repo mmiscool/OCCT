@@ -1,5 +1,5 @@
-use super::face_snapshot::load_ported_face_snapshot;
-use super::root_topology::load_root_topology_snapshot;
+use super::face_snapshot::{load_ported_face_snapshot, PackedFaceTopologySnapshot};
+use super::root_topology::{load_root_topology_snapshot, RootTopologySnapshot};
 use super::*;
 
 pub(super) fn ported_topology_snapshot(
@@ -22,7 +22,17 @@ pub(super) fn ported_topology_snapshot(
         return Ok(None);
     };
 
-    Ok(Some(TopologySnapshot {
+    Ok(Some(build_ported_topology_snapshot(
+        root_topology,
+        face_topology,
+    )))
+}
+
+fn build_ported_topology_snapshot(
+    root_topology: RootTopologySnapshot,
+    face_topology: PackedFaceTopologySnapshot,
+) -> TopologySnapshot {
+    TopologySnapshot {
         vertex_positions: root_topology.vertex_positions,
         edges: root_topology.edges,
         edge_faces: face_topology.edge_faces,
@@ -36,5 +46,5 @@ pub(super) fn ported_topology_snapshot(
         face_wire_indices: face_topology.face_wire_indices,
         face_wire_orientations: face_topology.face_wire_orientations,
         face_wire_roles: face_topology.face_wire_roles,
-    }))
+    }
 }
