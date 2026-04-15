@@ -97,6 +97,11 @@ struct MatchedFaceWires {
     used_edges: BTreeSet<usize>,
 }
 
+struct PreparedFaceTopology {
+    matched_face_wires: MatchedFaceWires,
+    wire_roles: Vec<LoopRole>,
+}
+
 struct FaceSnapshotAccumulator {
     edge_face_lists: Vec<Vec<usize>>,
     faces: Vec<crate::TopologyRange>,
@@ -183,39 +188,15 @@ fn append_ported_face_topology(
     vertex_positions: &[[f64; 3]],
     accumulator: &mut FaceSnapshotAccumulator,
 ) -> Result<Option<()>, Error> {
-    let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-    if root_wires.is_empty() || face_wire_shapes.is_empty() {
-        return Ok(None);
-    }
-
     let face_wire_offset = accumulator.face_wire_indices.len();
-    let planar_face = if face_wire_shapes.len() > 1 {
-        let Some(planar_face) =
-            load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
-        else {
-            return Ok(None);
-        };
-        Some(planar_face)
-    } else {
-        None
-    };
-
-    let Some(matched_face_wires) = collect_face_wire_matches(
+    let Some(prepared_face_topology) = prepare_ported_face_topology(
         context,
-        &face_wire_shapes,
+        face_shape,
         root_wires,
         root_edges,
         edge_shapes,
         vertex_positions,
-        planar_face,
     )?
-    else {
-        return Ok(None);
-    };
-    let face_wire_count = matched_face_wires.face_wire_indices.len();
-
-    let Some(wire_roles) =
-        classify_face_wire_roles(face_wire_count, &matched_face_wires.face_wire_areas)
     else {
         return Ok(None);
     };
@@ -223,8 +204,8 @@ fn append_ported_face_topology(
     let Some(()) = accumulator.append_face_topology_outputs(
         face_index,
         face_wire_offset,
-        matched_face_wires,
-        wire_roles,
+        prepared_face_topology.matched_face_wires,
+        prepared_face_topology.wire_roles,
     ) else {
         return Ok(None);
     };
@@ -286,6 +267,57 @@ pub(super) fn load_ported_face_snapshot(
         edge_count,
     )
 }
+
+fn prepare_ported_face_topology(
+    context: &Context,
+    face_shape: &Shape,
+    root_wires: &[RootWireTopology],
+    root_edges: &[RootEdgeTopology],
+    edge_shapes: &[Shape],
+    vertex_positions: &[[f64; 3]],
+) -> Result<Option<PreparedFaceTopology>, Error> {
+    let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
+    if root_wires.is_empty() || face_wire_shapes.is_empty() {
+        return Ok(None);
+    }
+
+    let planar_face = if face_wire_shapes.len() > 1 {
+        let Some(planar_face) =
+            load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
+        else {
+            return Ok(None);
+        };
+        Some(planar_face)
+    } else {
+        None
+    };
+
+    let Some(matched_face_wires) = collect_face_wire_matches(
+        context,
+        &face_wire_shapes,
+        root_wires,
+        root_edges,
+        edge_shapes,
+        vertex_positions,
+        planar_face,
+    )?
+    else {
+        return Ok(None);
+    };
+    let face_wire_count = matched_face_wires.face_wire_indices.len();
+
+    let Some(wire_roles) =
+        classify_face_wire_roles(face_wire_count, &matched_face_wires.face_wire_areas)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(PreparedFaceTopology {
+        matched_face_wires,
+        wire_roles,
+    }))
+}
+
 fn collect_face_wire_matches(
     context: &Context,
     face_wire_shapes: &[Shape],
