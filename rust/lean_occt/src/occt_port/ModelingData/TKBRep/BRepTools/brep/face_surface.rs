@@ -1,16 +1,10 @@
 use super::face_metrics::ported_face_area_from_surface;
+use super::face_prepare::{prepare_face_surface_with_geometry, prepare_face_surface_with_route};
 use super::summary::LazyMeshFaceFallback;
-use super::swept_face::ported_swept_face_surface_with_route;
 use super::topology::{
     face_adjacent_face_indices, face_loops, single_face_topology_with_route, FaceSurfaceRoute,
 };
 use super::*;
-
-struct PreparedFaceSurface {
-    geometry: FaceGeometry,
-    ported_surface: Option<PortedSurface>,
-    ported_face_surface: Option<PortedFaceSurface>,
-}
 
 pub(crate) fn ported_face_surface_descriptor(
     context: &Context,
@@ -105,70 +99,6 @@ fn ported_brep_face(
         loops,
         adjacent_face_indices,
     })
-}
-
-fn ported_face_surface_descriptor_from_surface_with_route(
-    context: &Context,
-    face_shape: &Shape,
-    face_geometry: FaceGeometry,
-    ported_surface: Option<PortedSurface>,
-    route: FaceSurfaceRoute,
-) -> Result<Option<PortedFaceSurface>, Error> {
-    if let Some(surface) = ported_surface {
-        return Ok(Some(PortedFaceSurface::Analytic(surface)));
-    }
-
-    if let Some(surface) = context.ported_offset_surface(face_shape)? {
-        return Ok(Some(PortedFaceSurface::Offset(surface)));
-    }
-
-    Ok(
-        ported_swept_face_surface_with_route(context, face_shape, face_geometry, route)?
-            .map(PortedFaceSurface::Swept),
-    )
-}
-
-fn prepare_face_surface_with_route(
-    context: &Context,
-    face_shape: &Shape,
-    route: FaceSurfaceRoute,
-) -> Result<PreparedFaceSurface, Error> {
-    let face_geometry = face_geometry_with_route(context, face_shape, route)?;
-    prepare_face_surface_with_geometry(context, face_shape, face_geometry, route)
-}
-
-fn prepare_face_surface_with_geometry(
-    context: &Context,
-    face_shape: &Shape,
-    face_geometry: FaceGeometry,
-    route: FaceSurfaceRoute,
-) -> Result<PreparedFaceSurface, Error> {
-    let ported_surface =
-        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    let ported_face_surface = ported_face_surface_descriptor_from_surface_with_route(
-        context,
-        face_shape,
-        face_geometry,
-        ported_surface,
-        route,
-    )?;
-
-    Ok(PreparedFaceSurface {
-        geometry: face_geometry,
-        ported_surface,
-        ported_face_surface,
-    })
-}
-
-fn face_geometry_with_route(
-    context: &Context,
-    face_shape: &Shape,
-    route: FaceSurfaceRoute,
-) -> Result<FaceGeometry, Error> {
-    match route {
-        FaceSurfaceRoute::Raw => context.face_geometry_occt(face_shape),
-        FaceSurfaceRoute::Public => context.face_geometry(face_shape),
-    }
 }
 
 pub(crate) fn ported_face_area(
