@@ -103,28 +103,26 @@ impl PreparedFaceTopology {
             return Ok(None);
         }
 
-        let planar_face = prepared_face_shape.planar_face(context)?;
-
         Self::collect_matched_face_wires(
             context,
-            prepared_face_shape.wire_shapes(),
+            prepared_face_shape,
             root_wires,
             root_edges,
             edge_shapes,
             vertex_positions,
-            planar_face,
         )
     }
 
     fn collect_matched_face_wires(
         context: &Context,
-        face_wire_shapes: &[Shape],
+        prepared_face_shape: &PreparedFaceShape,
         root_wires: &[RootWireTopology],
         root_edges: &[RootEdgeTopology],
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
-        planar_face: Option<(PlanePayload, FaceGeometry)>,
     ) -> Result<Option<Self>, Error> {
+        let face_wire_shapes = prepared_face_shape.wire_shapes();
+        let planar_face = prepared_face_shape.planar_face(context)?;
         let mut used_root_wire_indices = BTreeSet::new();
         let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
         let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
