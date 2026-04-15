@@ -83,7 +83,7 @@ struct PreparedFaceTopology {
 }
 
 impl PreparedFaceTopology {
-    fn load(
+    fn collect_matched_face_wires(
         context: &Context,
         prepared_face_shape: &PreparedFaceShape,
         root_wires: &[RootWireTopology],
@@ -95,24 +95,6 @@ impl PreparedFaceTopology {
             return Ok(None);
         }
 
-        Self::collect_matched_face_wires(
-            context,
-            prepared_face_shape,
-            root_wires,
-            root_edges,
-            edge_shapes,
-            vertex_positions,
-        )
-    }
-
-    fn collect_matched_face_wires(
-        context: &Context,
-        prepared_face_shape: &PreparedFaceShape,
-        root_wires: &[RootWireTopology],
-        root_edges: &[RootEdgeTopology],
-        edge_shapes: &[Shape],
-        vertex_positions: &[[f64; 3]],
-    ) -> Result<Option<Self>, Error> {
         let face_wire_shapes = &prepared_face_shape.face_wire_shapes;
         let planar_face = prepared_face_shape.planar_face(context)?;
         let mut used_root_wire_indices = BTreeSet::new();
@@ -305,7 +287,7 @@ fn pack_ported_face_snapshot(
     let mut accumulator = FaceSnapshotAccumulator::new(edge_count, prepared_face_shapes.len());
 
     for (face_index, prepared_face_shape) in prepared_face_shapes.iter().enumerate() {
-        let Some(prepared_face_topology) = PreparedFaceTopology::load(
+        let Some(prepared_face_topology) = PreparedFaceTopology::collect_matched_face_wires(
             context,
             prepared_face_shape,
             root_wires,
