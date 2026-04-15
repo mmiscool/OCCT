@@ -166,18 +166,41 @@ impl PreparedFaceTopologyBuilder {
         let mut builder = Self::new(face_wire_shapes.len());
 
         for face_wire_shape in face_wire_shapes {
-            let Some(()) = builder.collect_face_wire(
+            let Some(matched_face_wire) = builder.match_face_wire(
                 context,
                 face_wire_shape,
-                planar_face,
                 root_wires,
                 root_edges,
-                edge_shapes,
                 vertex_positions,
             )?
             else {
                 return Ok(None);
             };
+
+            let wire_area = if let Some(planar_face) = planar_face {
+                let Some(wire_area) = matched_face_wire.planar_area_magnitude(
+                    context,
+                    planar_face,
+                    root_wires,
+                    edge_shapes,
+                    root_edges,
+                )?
+                else {
+                    return Ok(None);
+                };
+                Some(wire_area)
+            } else {
+                None
+            };
+            matched_face_wire.append_to(
+                &mut builder.used_root_wire_indices,
+                &mut builder.face_wire_indices,
+                &mut builder.face_wire_orientations,
+                &mut builder.used_edges,
+            );
+            if let Some(wire_area) = wire_area {
+                builder.face_wire_areas.push(wire_area);
+            }
         }
 
         Ok(builder.finish())
@@ -191,54 +214,6 @@ impl PreparedFaceTopologyBuilder {
             face_wire_areas: Vec::new(),
             used_edges: BTreeSet::new(),
         }
-    }
-
-    fn collect_face_wire(
-        &mut self,
-        context: &Context,
-        face_wire_shape: &Shape,
-        planar_face: Option<PreparedPlanarFace>,
-        root_wires: &[RootWireTopology],
-        root_edges: &[RootEdgeTopology],
-        edge_shapes: &[Shape],
-        vertex_positions: &[[f64; 3]],
-    ) -> Result<Option<()>, Error> {
-        let Some(matched_face_wire) = self.match_face_wire(
-            context,
-            face_wire_shape,
-            root_wires,
-            root_edges,
-            vertex_positions,
-        )?
-        else {
-            return Ok(None);
-        };
-        let wire_area = if let Some(planar_face) = planar_face {
-            let Some(wire_area) = matched_face_wire.planar_area_magnitude(
-                context,
-                planar_face,
-                root_wires,
-                edge_shapes,
-                root_edges,
-            )?
-            else {
-                return Ok(None);
-            };
-            Some(wire_area)
-        } else {
-            None
-        };
-        matched_face_wire.append_to(
-            &mut self.used_root_wire_indices,
-            &mut self.face_wire_indices,
-            &mut self.face_wire_orientations,
-            &mut self.used_edges,
-        );
-        if let Some(wire_area) = wire_area {
-            self.face_wire_areas.push(wire_area);
-        }
-
-        Ok(Some(()))
     }
 
     fn match_face_wire(
