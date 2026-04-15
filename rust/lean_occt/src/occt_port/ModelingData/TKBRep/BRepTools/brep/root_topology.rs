@@ -1,3 +1,4 @@
+use super::topology::TopologySnapshotRootFields;
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -8,19 +9,6 @@ pub(super) struct RootEdgeTopology {
     pub(super) length: f64,
 }
 
-pub(super) struct RootTopologySnapshot {
-    pub(super) vertex_positions: Vec<[f64; 3]>,
-    pub(super) edge_shapes: Vec<Shape>,
-    pub(super) edges: Vec<crate::TopologyEdge>,
-    pub(super) root_edges: Vec<RootEdgeTopology>,
-    pub(super) root_wires: Vec<RootWireTopology>,
-    pub(super) wires: Vec<crate::TopologyRange>,
-    pub(super) wire_edge_indices: Vec<usize>,
-    pub(super) wire_edge_orientations: Vec<Orientation>,
-    pub(super) wire_vertices: Vec<crate::TopologyRange>,
-    pub(super) wire_vertex_indices: Vec<usize>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RootWireTopology {
     pub(super) edge_indices: Vec<usize>,
@@ -28,7 +16,7 @@ pub(super) struct RootWireTopology {
     pub(super) vertex_indices: Vec<usize>,
 }
 
-pub(super) fn pack_wire_topology(
+fn pack_wire_topology(
     root_wires: &[RootWireTopology],
 ) -> (
     Vec<crate::TopologyRange>,
@@ -69,7 +57,7 @@ pub(super) fn pack_wire_topology(
 pub(super) fn load_root_topology_snapshot(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<RootTopologySnapshot>, Error> {
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
     let vertex_positions = vertex_shapes
         .iter()
@@ -103,7 +91,7 @@ pub(super) fn load_root_topology_snapshot(
     let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
         pack_wire_topology(&root_wires);
 
-    Ok(Some(RootTopologySnapshot {
+    Ok(Some(TopologySnapshotRootFields {
         vertex_positions,
         edge_shapes,
         edges,
@@ -125,7 +113,7 @@ struct WireOccurrence {
     end_vertex: usize,
 }
 
-pub(super) fn root_edge_topology(
+fn root_edge_topology(
     context: &Context,
     edge_shape: &Shape,
     vertex_positions: &[[f64; 3]],
