@@ -30,12 +30,10 @@ struct LazyMeshFaceFallback<'a> {
 }
 
 #[derive(Clone, Copy)]
-enum FaceSurfaceDescriptorRoute {
+enum FaceSurfaceRoute {
     Raw,
     Public,
 }
-
-type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
 
 impl<'a> LazyMeshFaceFallback<'a> {
     fn new(
@@ -194,12 +192,7 @@ fn prepare_raw_face_surface(
     face_shape: &Shape,
 ) -> Result<PreparedFaceSurface, Error> {
     let geometry = context.face_geometry_occt(face_shape)?;
-    prepare_face_surface(
-        context,
-        face_shape,
-        geometry,
-        FaceSurfaceDescriptorRoute::Raw,
-    )
+    prepare_face_surface(context, face_shape, geometry, FaceSurfaceRoute::Raw)
 }
 
 fn ported_face_area_from_surface(
@@ -242,9 +235,8 @@ fn ported_face_surface_descriptor_from_surface_with_route(
     face_shape: &Shape,
     face_geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
-    route: FaceSurfaceDescriptorRoute,
+    route: FaceSurfaceRoute,
 ) -> Result<Option<PortedFaceSurface>, Error> {
-    let topology_builder = face_surface_topology_builder(route);
     if let Some(surface) = ported_surface {
         return Ok(Some(PortedFaceSurface::Analytic(surface)));
     }
@@ -253,29 +245,19 @@ fn ported_face_surface_descriptor_from_surface_with_route(
         return Ok(Some(PortedFaceSurface::Offset(surface)));
     }
 
-    Ok(ported_swept_face_surface_with_topology(
-        context,
-        face_shape,
-        face_geometry,
-        topology_builder,
-    )?
-    .map(PortedFaceSurface::Swept))
+    Ok(
+        ported_swept_face_surface_with_route(context, face_shape, face_geometry, route)?
+            .map(PortedFaceSurface::Swept),
+    )
 }
 
-fn face_surface_topology_builder(route: FaceSurfaceDescriptorRoute) -> SingleFaceTopologyBuilder {
-    match route {
-        FaceSurfaceDescriptorRoute::Raw => single_face_topology,
-        FaceSurfaceDescriptorRoute::Public => single_face_topology_public,
-    }
-}
-
-fn ported_swept_face_surface_with_topology(
+fn ported_swept_face_surface_with_route(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
-    topology_builder: SingleFaceTopologyBuilder,
+    route: FaceSurfaceRoute,
 ) -> Result<Option<PortedSweptSurface>, Error> {
-    let topology = match topology_builder(context, face_shape)? {
+    let topology = match single_face_topology_with_route(context, face_shape, route)? {
         Some(topology) => topology,
         None => return Ok(None),
     };
@@ -380,19 +362,14 @@ fn prepare_public_face_surface(
     face_shape: &Shape,
     face_geometry: FaceGeometry,
 ) -> Result<PreparedFaceSurface, Error> {
-    prepare_face_surface(
-        context,
-        face_shape,
-        face_geometry,
-        FaceSurfaceDescriptorRoute::Public,
-    )
+    prepare_face_surface(context, face_shape, face_geometry, FaceSurfaceRoute::Public)
 }
 
 fn prepare_face_surface(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
-    route: FaceSurfaceDescriptorRoute,
+    route: FaceSurfaceRoute,
 ) -> Result<PreparedFaceSurface, Error> {
     let ported_surface =
         PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
@@ -415,10 +392,11 @@ pub(crate) fn ported_face_area(
     context: &Context,
     face_shape: &Shape,
 ) -> Result<Option<f64>, Error> {
-    let topology = match single_face_topology_public(context, face_shape)? {
-        Some(topology) => topology,
-        None => return Ok(None),
-    };
+    let topology =
+        match single_face_topology_with_route(context, face_shape, FaceSurfaceRoute::Public)? {
+            Some(topology) => topology,
+            None => return Ok(None),
+        };
 
     let prepared =
         prepare_public_face_surface(context, face_shape, context.face_geometry(face_shape)?)?;
@@ -434,24 +412,10 @@ pub(crate) fn ported_face_area(
     ))
 }
 
-fn single_face_topology(
+fn single_face_topology_with_route(
     context: &Context,
     face_shape: &Shape,
-) -> Result<Option<SingleFaceTopology>, Error> {
-    single_face_topology_with_edges(context, face_shape, single_face_edge_raw)
-}
-
-fn single_face_topology_public(
-    context: &Context,
-    face_shape: &Shape,
-) -> Result<Option<SingleFaceTopology>, Error> {
-    single_face_topology_with_edges(context, face_shape, single_face_edge_public)
-}
-
-fn single_face_topology_with_edges(
-    context: &Context,
-    face_shape: &Shape,
-    edge_builder: fn(&Context, usize, &Shape) -> Result<BrepEdge, Error>,
+    route: FaceSurfaceRoute,
 ) -> Result<Option<SingleFaceTopology>, Error> {
     let topology = match single_face_topology_snapshot(context, face_shape)? {
         Some(topology) => topology,
@@ -463,7 +427,7 @@ fn single_face_topology_with_edges(
     let edges = edge_shapes
         .iter()
         .enumerate()
-        .map(|(index, edge_shape)| edge_builder(context, index, edge_shape))
+        .map(|(index, edge_shape)| single_face_edge_with_route(context, index, edge_shape, route))
         .collect::<Result<Vec<_>, Error>>()?;
 
     Ok(Some(SingleFaceTopology {
@@ -488,30 +452,35 @@ fn single_face_topology_snapshot(
     Ok(Some(topology))
 }
 
-fn single_face_edge_raw(
+fn single_face_edge_with_route(
     context: &Context,
     index: usize,
     edge_shape: &Shape,
+    route: FaceSurfaceRoute,
 ) -> Result<BrepEdge, Error> {
-    let geometry = context.edge_geometry_occt(edge_shape)?;
-    let ported_curve = PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
-    Ok(single_face_edge(index, geometry, ported_curve))
-}
-
-fn single_face_edge_public(
-    context: &Context,
-    index: usize,
-    edge_shape: &Shape,
-) -> Result<BrepEdge, Error> {
-    let geometry = match context.edge_geometry(edge_shape) {
-        Ok(geometry) => geometry,
-        Err(_) => context.edge_geometry_occt(edge_shape)?,
+    let (geometry, ported_curve) = match route {
+        FaceSurfaceRoute::Raw => {
+            let geometry = context.edge_geometry_occt(edge_shape)?;
+            let ported_curve =
+                PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
+            (geometry, ported_curve)
+        }
+        FaceSurfaceRoute::Public => {
+            let geometry = match context.edge_geometry(edge_shape) {
+                Ok(geometry) => geometry,
+                Err(_) => context.edge_geometry_occt(edge_shape)?,
+            };
+            let ported_curve =
+                match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)
+                {
+                    Ok(ported_curve) => ported_curve,
+                    Err(_) => {
+                        PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?
+                    }
+                };
+            (geometry, ported_curve)
+        }
     };
-    let ported_curve =
-        match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry) {
-            Ok(ported_curve) => ported_curve,
-            Err(_) => PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?,
-        };
     Ok(single_face_edge(index, geometry, ported_curve))
 }
 
