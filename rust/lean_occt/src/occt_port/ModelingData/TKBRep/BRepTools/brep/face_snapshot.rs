@@ -97,6 +97,38 @@ struct MatchedFaceWires {
     used_edges: BTreeSet<usize>,
 }
 
+struct FaceSnapshotAccumulator {
+    edge_face_lists: Vec<Vec<usize>>,
+    faces: Vec<crate::TopologyRange>,
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
+    face_wire_roles: Vec<LoopRole>,
+}
+
+impl FaceSnapshotAccumulator {
+    fn new(edge_count: usize, face_count: usize) -> Self {
+        Self {
+            edge_face_lists: vec![Vec::new(); edge_count],
+            faces: Vec::with_capacity(face_count),
+            face_wire_indices: Vec::new(),
+            face_wire_orientations: Vec::new(),
+            face_wire_roles: Vec::new(),
+        }
+    }
+
+    fn into_fields(self) -> TopologySnapshotFaceFields {
+        let (edge_faces, edge_face_indices) = flatten_edge_face_lists(self.edge_face_lists);
+        TopologySnapshotFaceFields {
+            edge_faces,
+            edge_face_indices,
+            faces: self.faces,
+            face_wire_indices: self.face_wire_indices,
+            face_wire_orientations: self.face_wire_orientations,
+            face_wire_roles: self.face_wire_roles,
+        }
+    }
+}
+
 fn append_ported_face_topology(
     context: &Context,
     face_index: usize,
@@ -105,18 +137,14 @@ fn append_ported_face_topology(
     root_edges: &[RootEdgeTopology],
     edge_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
-    edge_face_lists: &mut [Vec<usize>],
-    faces: &mut Vec<crate::TopologyRange>,
-    face_wire_indices: &mut Vec<usize>,
-    face_wire_orientations: &mut Vec<Orientation>,
-    face_wire_roles: &mut Vec<LoopRole>,
+    accumulator: &mut FaceSnapshotAccumulator,
 ) -> Result<Option<()>, Error> {
     let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
     if root_wires.is_empty() || face_wire_shapes.is_empty() {
         return Ok(None);
     }
 
-    let face_wire_offset = face_wire_indices.len();
+    let face_wire_offset = accumulator.face_wire_indices.len();
     let planar_face = if face_wire_shapes.len() > 1 {
         let Some(planar_face) =
             load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
@@ -153,11 +181,7 @@ fn append_ported_face_topology(
         face_wire_offset,
         matched_face_wires,
         wire_roles,
-        edge_face_lists,
-        faces,
-        face_wire_indices,
-        face_wire_orientations,
-        face_wire_roles,
+        accumulator,
     ) else {
         return Ok(None);
     };
@@ -174,11 +198,7 @@ fn pack_ported_face_snapshot(
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let mut edge_face_lists = vec![Vec::new(); edge_count];
-    let mut faces = Vec::with_capacity(face_shapes.len());
-    let mut face_wire_indices = Vec::new();
-    let mut face_wire_orientations = Vec::new();
-    let mut face_wire_roles = Vec::new();
+    let mut accumulator = FaceSnapshotAccumulator::new(edge_count, face_shapes.len());
 
     for (face_index, face_shape) in face_shapes.iter().enumerate() {
         let Some(()) = append_ported_face_topology(
@@ -189,27 +209,14 @@ fn pack_ported_face_snapshot(
             root_edges,
             edge_shapes,
             vertex_positions,
-            &mut edge_face_lists,
-            &mut faces,
-            &mut face_wire_indices,
-            &mut face_wire_orientations,
-            &mut face_wire_roles,
+            &mut accumulator,
         )?
         else {
             return Ok(None);
         };
     }
 
-    let (edge_faces, edge_face_indices) = flatten_edge_face_lists(edge_face_lists);
-
-    Ok(Some(TopologySnapshotFaceFields {
-        edge_faces,
-        edge_face_indices,
-        faces,
-        face_wire_indices,
-        face_wire_orientations,
-        face_wire_roles,
-    }))
+    Ok(Some(accumulator.into_fields()))
 }
 
 pub(super) fn load_ported_face_snapshot(
@@ -260,23 +267,23 @@ fn append_face_topology_outputs(
     face_wire_offset: usize,
     matched_face_wires: MatchedFaceWires,
     wire_roles: Vec<LoopRole>,
-    edge_face_lists: &mut [Vec<usize>],
-    faces: &mut Vec<crate::TopologyRange>,
-    face_wire_indices: &mut Vec<usize>,
-    face_wire_orientations: &mut Vec<Orientation>,
-    face_wire_roles: &mut Vec<LoopRole>,
+    accumulator: &mut FaceSnapshotAccumulator,
 ) -> Option<()> {
     let face_wire_count = matched_face_wires.face_wire_indices.len();
-    face_wire_indices.extend(matched_face_wires.face_wire_indices);
-    face_wire_orientations.extend(matched_face_wires.face_wire_orientations);
-    faces.push(crate::TopologyRange {
+    accumulator
+        .face_wire_indices
+        .extend(matched_face_wires.face_wire_indices);
+    accumulator
+        .face_wire_orientations
+        .extend(matched_face_wires.face_wire_orientations);
+    accumulator.faces.push(crate::TopologyRange {
         offset: face_wire_offset,
         count: face_wire_count,
     });
-    face_wire_roles.extend(wire_roles);
+    accumulator.face_wire_roles.extend(wire_roles);
 
     for edge_index in matched_face_wires.used_edges {
-        let edge_faces = edge_face_lists.get_mut(edge_index)?;
+        let edge_faces = accumulator.edge_face_lists.get_mut(edge_index)?;
         edge_faces.push(face_index);
     }
 
