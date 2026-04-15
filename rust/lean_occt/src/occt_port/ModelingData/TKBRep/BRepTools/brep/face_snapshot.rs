@@ -201,16 +201,6 @@ struct FaceSnapshotAccumulator {
 }
 
 impl FaceSnapshotAccumulator {
-    fn new(edge_count: usize, face_count: usize) -> Self {
-        Self {
-            edge_face_lists: vec![Vec::new(); edge_count],
-            faces: Vec::with_capacity(face_count),
-            face_wire_indices: Vec::new(),
-            face_wire_orientations: Vec::new(),
-            face_wire_roles: Vec::new(),
-        }
-    }
-
     fn into_fields(self) -> TopologySnapshotFaceFields {
         let (edge_faces, edge_face_indices) = Self::flatten_edge_face_lists(self.edge_face_lists);
         TopologySnapshotFaceFields {
@@ -280,7 +270,13 @@ fn pack_ported_face_snapshot(
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let mut accumulator = FaceSnapshotAccumulator::new(edge_count, prepared_face_shapes.len());
+    let mut accumulator = FaceSnapshotAccumulator {
+        edge_face_lists: vec![Vec::new(); edge_count],
+        faces: Vec::with_capacity(prepared_face_shapes.len()),
+        face_wire_indices: Vec::new(),
+        face_wire_orientations: Vec::new(),
+        face_wire_roles: Vec::new(),
+    };
 
     for (face_index, prepared_face_shape) in prepared_face_shapes.iter().enumerate() {
         let Some(prepared_face_topology) = PreparedFaceTopologyBuilder::build(
