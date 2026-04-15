@@ -17,24 +17,6 @@ struct PreparedFaceShape {
     face_wire_shapes: Vec<Shape>,
 }
 
-impl PreparedFaceShape {
-    fn multi_wire_face_is_planar(
-        context: &Context,
-        face_shape: &Shape,
-        face_wire_count: usize,
-    ) -> Result<bool, Error> {
-        if face_wire_count <= 1 {
-            return Ok(true);
-        }
-
-        let geometry = match context.face_geometry(face_shape) {
-            Ok(geometry) => geometry,
-            Err(_) => context.face_geometry_occt(face_shape)?,
-        };
-        Ok(geometry.kind == crate::SurfaceKind::Plane)
-    }
-}
-
 struct PreparedFaceTopology {
     face_wire_indices: Vec<usize>,
     face_wire_orientations: Vec<Orientation>,
@@ -271,12 +253,14 @@ pub(super) fn load_ported_face_snapshot(
     let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
     for face_shape in face_shapes {
         let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
-        if !PreparedFaceShape::multi_wire_face_is_planar(
-            context,
-            &face_shape,
-            face_wire_shapes.len(),
-        )? {
-            return Ok(None);
+        if face_wire_shapes.len() > 1 {
+            let geometry = match context.face_geometry(&face_shape) {
+                Ok(geometry) => geometry,
+                Err(_) => context.face_geometry_occt(&face_shape)?,
+            };
+            if geometry.kind != crate::SurfaceKind::Plane {
+                return Ok(None);
+            }
         }
         prepared_face_shapes.push(PreparedFaceShape {
             face_shape,
