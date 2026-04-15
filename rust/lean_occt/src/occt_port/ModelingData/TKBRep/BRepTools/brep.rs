@@ -11,7 +11,6 @@ mod face_surface;
 mod face_topology;
 mod math;
 mod mesh;
-mod root_topology;
 mod shape_queries;
 mod snapshot_build;
 mod summary;
