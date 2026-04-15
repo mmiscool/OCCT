@@ -10,6 +10,77 @@ pub(super) struct MeshFaceProperties {
     pub(super) sample: FaceSample,
 }
 
+pub(super) struct LazyMeshFaceFallback<'a> {
+    context: &'a Context,
+    face_shape: &'a Shape,
+    orientation: Orientation,
+    properties: Option<MeshFaceProperties>,
+    loaded: bool,
+}
+
+impl<'a> LazyMeshFaceFallback<'a> {
+    pub(super) fn new(
+        context: &'a Context,
+        face_shape: &'a Shape,
+        orientation: Orientation,
+        eagerly_load: bool,
+    ) -> Self {
+        let properties = if eagerly_load {
+            mesh_face_properties(context, face_shape, orientation)
+        } else {
+            None
+        };
+
+        Self {
+            context,
+            face_shape,
+            orientation,
+            properties,
+            loaded: eagerly_load,
+        }
+    }
+
+    pub(super) fn resolve_sample(
+        &mut self,
+        sample: Option<FaceSample>,
+        index: usize,
+        geometry: FaceGeometry,
+    ) -> Result<FaceSample, Error> {
+        sample
+            .or_else(|| self.load().map(|fallback| fallback.sample))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "failed to derive a Rust-owned sample for face {index} ({:?})",
+                    geometry.kind
+                ))
+            })
+    }
+
+    pub(super) fn resolve_area(
+        &mut self,
+        area: Option<f64>,
+        index: usize,
+        geometry: FaceGeometry,
+    ) -> Result<f64, Error> {
+        area.or_else(|| self.load().map(|fallback| fallback.area))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "failed to derive a Rust-owned area for face {index} ({:?})",
+                    geometry.kind
+                ))
+            })
+    }
+
+    fn load(&mut self) -> Option<MeshFaceProperties> {
+        if !self.loaded {
+            self.properties = mesh_face_properties(self.context, self.face_shape, self.orientation);
+            self.loaded = true;
+        }
+
+        self.properties
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ExactPrimitiveSummary {
     surface_area: f64,

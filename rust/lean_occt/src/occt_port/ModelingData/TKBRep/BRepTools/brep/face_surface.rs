@@ -1,5 +1,5 @@
 use super::face_metrics::ported_face_area_from_surface;
-use super::summary::{mesh_face_properties, MeshFaceProperties};
+use super::summary::LazyMeshFaceFallback;
 use super::swept_face::ported_swept_face_surface_with_route;
 use super::topology::{
     face_adjacent_face_indices, face_loops, single_face_topology_with_route, FaceSurfaceRoute,
@@ -10,77 +10,6 @@ struct PreparedFaceSurface {
     geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
     ported_face_surface: Option<PortedFaceSurface>,
-}
-
-struct LazyMeshFaceFallback<'a> {
-    context: &'a Context,
-    face_shape: &'a Shape,
-    orientation: Orientation,
-    properties: Option<MeshFaceProperties>,
-    loaded: bool,
-}
-
-impl<'a> LazyMeshFaceFallback<'a> {
-    fn new(
-        context: &'a Context,
-        face_shape: &'a Shape,
-        orientation: Orientation,
-        eagerly_load: bool,
-    ) -> Self {
-        let properties = if eagerly_load {
-            mesh_face_properties(context, face_shape, orientation)
-        } else {
-            None
-        };
-
-        Self {
-            context,
-            face_shape,
-            orientation,
-            properties,
-            loaded: eagerly_load,
-        }
-    }
-
-    fn resolve_sample(
-        &mut self,
-        sample: Option<FaceSample>,
-        index: usize,
-        geometry: FaceGeometry,
-    ) -> Result<FaceSample, Error> {
-        sample
-            .or_else(|| self.load().map(|fallback| fallback.sample))
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "failed to derive a Rust-owned sample for face {index} ({:?})",
-                    geometry.kind
-                ))
-            })
-    }
-
-    fn resolve_area(
-        &mut self,
-        area: Option<f64>,
-        index: usize,
-        geometry: FaceGeometry,
-    ) -> Result<f64, Error> {
-        area.or_else(|| self.load().map(|fallback| fallback.area))
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "failed to derive a Rust-owned area for face {index} ({:?})",
-                    geometry.kind
-                ))
-            })
-    }
-
-    fn load(&mut self) -> Option<MeshFaceProperties> {
-        if !self.loaded {
-            self.properties = mesh_face_properties(self.context, self.face_shape, self.orientation);
-            self.loaded = true;
-        }
-
-        self.properties
-    }
 }
 
 pub(crate) fn ported_face_surface_descriptor(
