@@ -12,14 +12,26 @@ pub(super) struct TopologySnapshotFaceFields {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
+fn multi_wire_face_is_planar(
+    context: &Context,
+    face_shape: &Shape,
+    face_wire_count: usize,
+) -> Result<bool, Error> {
+    if face_wire_count <= 1 {
+        return Ok(true);
+    }
+
+    let geometry = match context.face_geometry(face_shape) {
+        Ok(geometry) => geometry,
+        Err(_) => context.face_geometry_occt(face_shape)?,
+    };
+    Ok(geometry.kind == crate::SurfaceKind::Plane)
+}
+
 fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Result<bool, Error> {
     for face_shape in face_shapes {
         let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
-        let geometry = match context.face_geometry(face_shape) {
-            Ok(geometry) => geometry,
-            Err(_) => context.face_geometry_occt(face_shape)?,
-        };
-        if face_wire_shapes.len() > 1 && geometry.kind != crate::SurfaceKind::Plane {
+        if !multi_wire_face_is_planar(context, face_shape, face_wire_shapes.len())? {
             return Ok(false);
         }
     }
@@ -54,10 +66,10 @@ fn append_ported_face_topology(
 
     let mut planar_face = None;
     if face_wire_shapes.len() > 1 {
-        let face_geometry = context.face_geometry_occt(face_shape)?;
-        if face_geometry.kind != crate::SurfaceKind::Plane {
+        if !multi_wire_face_is_planar(context, face_shape, face_wire_shapes.len())? {
             return Ok(None);
         }
+        let face_geometry = context.face_geometry_occt(face_shape)?;
         planar_face = Some((context.face_plane_payload_occt(face_shape)?, face_geometry));
     }
 
