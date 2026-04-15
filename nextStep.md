@@ -1,14 +1,14 @@
 # Next Task
 
-Extract shared swept-face basis selection from `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs`.
+Extract swept extrusion/revolution surface builders from `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs`.
 
 ## Focus
 
-- Pull the repeated basis-curve candidate lookup and `select_swept_face_basis_curve()` wiring out of the `SurfaceKind::Extrusion` and `SurfaceKind::Revolution` branches in `ported_swept_face_surface_from_topology()`.
-- Keep the two payload fetches (`face_extrusion_payload_occt()` and `face_revolution_payload_occt()`) and the two `PortedSweptSurface` constructors explicit, but share the candidate selection/error-shaping path underneath them.
+- Split the remaining `SurfaceKind::Extrusion` and `SurfaceKind::Revolution` construction bodies in `ported_swept_face_surface_from_topology()` into dedicated helpers.
+- Keep the new shared swept-basis selection helper in place, and let each new helper own only its payload fetch plus `PortedSweptSurface` assembly.
 - Leave the surrounding topology builder and face-surface descriptor routing unchanged.
 - Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the extraction.
 
 ## Why This Is Next
 
-The face-preparation helpers now share one implementation path, so the clearest remaining duplication in this module is the near-identical swept-basis selection logic for extrusion and revolution faces. Extracting that helper is the next small cleanup that reduces drift without changing behavior.
+The branch-local basis selection duplication is gone, so the next small cleanup is isolating the two payload-specific swept-surface constructors. That keeps `ported_swept_face_surface_from_topology()` moving toward a thin dispatcher without changing any geometry behavior.

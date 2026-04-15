@@ -3,7 +3,7 @@ use super::face_metrics::{
 };
 use super::summary::{mesh_face_properties, MeshFaceProperties};
 use super::swept_face::{
-    face_curve_candidates, select_swept_face_basis_curve, SweptBasisSelection,
+    face_curve_candidates, select_swept_face_basis_curve, FaceCurveCandidate, SweptBasisSelection,
 };
 use super::topology::{face_adjacent_face_indices, face_loops, ported_brep_wires};
 use super::*;
@@ -314,24 +314,15 @@ fn ported_swept_face_surface_from_topology(
     match face_geometry.kind {
         crate::SurfaceKind::Extrusion => {
             let payload = context.face_extrusion_payload_occt(face_shape)?;
-            let basis = select_swept_face_basis_curve(
-                face_curve_candidates(
-                    &topology.loops,
-                    &topology.wires,
-                    &topology.edges,
-                    payload.basis_curve_kind,
-                )
-                .ok_or_else(|| {
-                    Error::new("failed to identify a Rust-owned basis curve for extrusion face")
-                })?,
+            let basis = select_swept_face_basis(
+                &topology,
                 face_geometry,
+                payload.basis_curve_kind,
                 SweptBasisSelection::Extrusion {
                     direction: payload.direction,
                 },
-            )
-            .ok_or_else(|| {
-                Error::new("failed to select a Rust-owned basis curve for extrusion face")
-            })?;
+                "extrusion",
+            )?;
             Ok(Some(PortedSweptSurface::Extrusion {
                 payload,
                 basis_curve: basis.curve,
@@ -340,25 +331,16 @@ fn ported_swept_face_surface_from_topology(
         }
         crate::SurfaceKind::Revolution => {
             let payload = context.face_revolution_payload_occt(face_shape)?;
-            let basis = select_swept_face_basis_curve(
-                face_curve_candidates(
-                    &topology.loops,
-                    &topology.wires,
-                    &topology.edges,
-                    payload.basis_curve_kind,
-                )
-                .ok_or_else(|| {
-                    Error::new("failed to identify a Rust-owned basis curve for revolution face")
-                })?,
+            let basis = select_swept_face_basis(
+                &topology,
                 face_geometry,
+                payload.basis_curve_kind,
                 SweptBasisSelection::Revolution {
                     axis_origin: payload.axis_origin,
                     axis_direction: payload.axis_direction,
                 },
-            )
-            .ok_or_else(|| {
-                Error::new("failed to select a Rust-owned basis curve for revolution face")
-            })?;
+                "revolution",
+            )?;
             Ok(Some(PortedSweptSurface::Revolution {
                 payload,
                 basis_curve: basis.curve,
@@ -367,6 +349,32 @@ fn ported_swept_face_surface_from_topology(
         }
         _ => Ok(None),
     }
+}
+
+fn select_swept_face_basis(
+    topology: &SingleFaceTopology,
+    face_geometry: FaceGeometry,
+    basis_curve_kind: crate::CurveKind,
+    selection: SweptBasisSelection,
+    face_kind: &'static str,
+) -> Result<FaceCurveCandidate, Error> {
+    let candidates = face_curve_candidates(
+        &topology.loops,
+        &topology.wires,
+        &topology.edges,
+        basis_curve_kind,
+    )
+    .ok_or_else(|| {
+        Error::new(format!(
+            "failed to identify a Rust-owned basis curve for {face_kind} face"
+        ))
+    })?;
+
+    select_swept_face_basis_curve(candidates, face_geometry, selection).ok_or_else(|| {
+        Error::new(format!(
+            "failed to select a Rust-owned basis curve for {face_kind} face"
+        ))
+    })
 }
 
 fn prepare_public_face_surface(
