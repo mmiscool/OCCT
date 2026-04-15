@@ -1,6 +1,12 @@
 use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
-use super::root_topology::RootWireTopology;
 use super::*;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RootWireTopology {
+    pub(super) edge_indices: Vec<usize>,
+    pub(super) edge_orientations: Vec<Orientation>,
+    pub(super) vertex_indices: Vec<usize>,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct WireOccurrence {
@@ -37,6 +43,44 @@ pub(super) fn root_wire_topology(
         edge_orientations,
         vertex_indices,
     }))
+}
+
+pub(super) fn pack_wire_topology(
+    root_wires: &[RootWireTopology],
+) -> (
+    Vec<crate::TopologyRange>,
+    Vec<usize>,
+    Vec<Orientation>,
+    Vec<crate::TopologyRange>,
+    Vec<usize>,
+) {
+    let mut wires = Vec::with_capacity(root_wires.len());
+    let mut wire_edge_indices = Vec::new();
+    let mut wire_edge_orientations = Vec::new();
+    let mut wire_vertices = Vec::with_capacity(root_wires.len());
+    let mut wire_vertex_indices = Vec::new();
+
+    for wire in root_wires {
+        wires.push(crate::TopologyRange {
+            offset: wire_edge_indices.len(),
+            count: wire.edge_indices.len(),
+        });
+        wire_edge_indices.extend(&wire.edge_indices);
+        wire_edge_orientations.extend(&wire.edge_orientations);
+        wire_vertices.push(crate::TopologyRange {
+            offset: wire_vertex_indices.len(),
+            count: wire.vertex_indices.len(),
+        });
+        wire_vertex_indices.extend(&wire.vertex_indices);
+    }
+
+    (
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    )
 }
 
 fn ported_wire_occurrences(
