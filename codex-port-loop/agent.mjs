@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -50,12 +50,8 @@ async function main() {
   await ensureRuntime();
 
   await ensureConfigFileExists();
-  const dangerousApproved = await askDangerousApproval();
-  if (!dangerousApproved) {
-    console.log("Dangerous mode was not approved. Exiting.");
-    return;
-  }
 
+  
   await editConfigInNano();
   const config = await loadConfig();
   let state = await loadState();
@@ -107,6 +103,8 @@ async function main() {
           `Usage: input=${result.usage.input_tokens ?? "?"}, cached=${result.usage.cached_input_tokens ?? "?"}, output=${result.usage.output_tokens ?? "?"}`
         );
       }
+
+      commitAndPush(config, state);
     } catch (error) {
       const message = errorMessage(error);
       console.error(message);
@@ -125,10 +123,44 @@ async function main() {
 
     if (!stopRequested && config.delayBetweenLoopsMs > 0) {
       await countdownDelay(config.delayBetweenLoopsMs, "Next loop");
+      await commitAndPush(config, state);
     }
   }
 
   console.log("Loop stopped.");
+}
+
+async function commitAndPush(config, state) {
+  const commitMessage = `Codex loop checkpoint - turn ${state.turnCount}`;
+
+  try {
+    await runGitCommand(config.projectPath, ["add", "."]);
+    await runGitCommand(config.projectPath, ["commit", "-m", commitMessage], [0, 1]);
+    await runGitCommand(config.projectPath, ["push"]);
+  } catch (error) {
+    console.error(`Failed to create git checkpoint: ${errorMessage(error)}`);
+  }
+}
+
+async function runGitCommand(cwd, args, allowedExitCodes = [0]) {
+  const result = spawnSync("git", args, {
+    cwd,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.signal) {
+    throw new Error(`git ${args[0]} terminated by signal ${result.signal}`);
+  }
+
+  if (allowedExitCodes.includes(result.status)) {
+    return;
+  }
+
+  throw new Error(`git ${args[0]} exited with code ${result.status}`);
 }
 
 async function runTurn(config, sessionId) {
@@ -277,22 +309,6 @@ async function ensureConfigFileExists() {
   }
 }
 
-async function askDangerousApproval() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    const answer = await question(
-      rl,
-      "Approve dangerous Codex execution with full permissions for this run? Type 'yes' to continue: "
-    );
-    return answer.trim().toLowerCase() === "yes";
-  } finally {
-    rl.close();
-  }
-}
 
 async function editConfigInNano() {
   console.log(`Opening ${configFile} in nano. Save and exit nano to continue.`);

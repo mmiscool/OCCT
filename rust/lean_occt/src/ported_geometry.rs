@@ -79,7 +79,10 @@ impl PortedCurve {
         geometry: EdgeGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            CurveKind::Line => Ok(Some(Self::Line(context.edge_line_payload_occt(shape)?))),
+            CurveKind::Line => Ok(Some(Self::Line(
+                ported_line_payload(context, shape, geometry)?
+                    .unwrap_or(context.edge_line_payload_occt(shape)?),
+            ))),
             CurveKind::Circle => Ok(Some(Self::Circle(context.edge_circle_payload_occt(shape)?))),
             CurveKind::Ellipse => Ok(Some(Self::Ellipse(
                 context.edge_ellipse_payload_occt(shape)?,
@@ -1499,6 +1502,35 @@ fn ported_analytic_face_geometry(kind: SurfaceKind, bounds: FaceUvBounds) -> Fac
         u_period,
         v_period,
     }
+}
+
+fn ported_line_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: EdgeGeometry,
+) -> Result<Option<LinePayload>, Error> {
+    if geometry.kind != CurveKind::Line {
+        return Ok(None);
+    }
+
+    let delta_parameter = geometry.end_parameter - geometry.start_parameter;
+    if delta_parameter.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let endpoints = context.edge_endpoints(shape)?;
+    let direction = scale3(
+        subtract3(endpoints.end, endpoints.start),
+        1.0 / delta_parameter,
+    );
+    if norm3(direction) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    Ok(Some(LinePayload {
+        origin: subtract3(endpoints.start, scale3(direction, geometry.start_parameter)),
+        direction,
+    }))
 }
 
 fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
