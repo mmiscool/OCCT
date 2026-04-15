@@ -69,7 +69,7 @@ pub enum PortedFaceSurface {
 
 impl PortedCurve {
     pub fn from_context(context: &Context, shape: &Shape) -> Result<Option<Self>, Error> {
-        let geometry = context.edge_geometry_occt(shape)?;
+        let geometry = context.edge_geometry(shape)?;
         Self::from_context_with_ported_payloads(context, shape, geometry)
     }
 
