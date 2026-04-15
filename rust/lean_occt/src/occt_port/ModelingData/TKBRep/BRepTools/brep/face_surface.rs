@@ -1,7 +1,7 @@
 use super::face_metrics::{
     analytic_face_area, analytic_offset_face_area, analytic_ported_swept_face_area,
 };
-use super::summary::mesh_face_properties;
+use super::summary::{mesh_face_properties, MeshFaceProperties};
 use super::swept_face::{
     face_curve_candidates, select_swept_face_basis_curve, SweptBasisSelection,
 };
@@ -20,7 +20,78 @@ struct PreparedPublicFaceSurface {
     ported_face_surface: Option<PortedFaceSurface>,
 }
 
+struct LazyMeshFaceFallback<'a> {
+    context: &'a Context,
+    face_shape: &'a Shape,
+    orientation: Orientation,
+    properties: Option<MeshFaceProperties>,
+    loaded: bool,
+}
+
 type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
+
+impl<'a> LazyMeshFaceFallback<'a> {
+    fn new(
+        context: &'a Context,
+        face_shape: &'a Shape,
+        orientation: Orientation,
+        eagerly_load: bool,
+    ) -> Self {
+        let properties = if eagerly_load {
+            mesh_face_properties(context, face_shape, orientation)
+        } else {
+            None
+        };
+
+        Self {
+            context,
+            face_shape,
+            orientation,
+            properties,
+            loaded: eagerly_load,
+        }
+    }
+
+    fn resolve_sample(
+        &mut self,
+        sample: Option<FaceSample>,
+        index: usize,
+        geometry: FaceGeometry,
+    ) -> Result<FaceSample, Error> {
+        sample
+            .or_else(|| self.load().map(|fallback| fallback.sample))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "failed to derive a Rust-owned sample for face {index} ({:?})",
+                    geometry.kind
+                ))
+            })
+    }
+
+    fn resolve_area(
+        &mut self,
+        area: Option<f64>,
+        index: usize,
+        geometry: FaceGeometry,
+    ) -> Result<f64, Error> {
+        area.or_else(|| self.load().map(|fallback| fallback.area))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "failed to derive a Rust-owned area for face {index} ({:?})",
+                    geometry.kind
+                ))
+            })
+    }
+
+    fn load(&mut self) -> Option<MeshFaceProperties> {
+        if !self.loaded {
+            self.properties = mesh_face_properties(self.context, self.face_shape, self.orientation);
+            self.loaded = true;
+        }
+
+        self.properties
+    }
+}
 
 pub(crate) fn ported_face_surface_descriptor(
     context: &Context,
@@ -73,30 +144,19 @@ fn ported_brep_face(
         ported_face_surface_descriptor_from_surface(context, face_shape, geometry, ported_surface)?;
     let orientation = context.shape_orientation(face_shape)?;
     let loops = face_loops(topology, index)?;
-    let mut mesh_fallback = if ported_face_surface.is_none() {
-        mesh_face_properties(context, face_shape, orientation)
-    } else {
-        None
-    };
-    let mut mesh_fallback_loaded = ported_face_surface.is_none();
-    let mut load_mesh_fallback = || {
-        if !mesh_fallback_loaded {
-            mesh_fallback = mesh_face_properties(context, face_shape, orientation);
-            mesh_fallback_loaded = true;
-        }
-        mesh_fallback
-    };
-    let sample = ported_face_surface
-        .map(|surface| {
+    let mut mesh_fallback = LazyMeshFaceFallback::new(
+        context,
+        face_shape,
+        orientation,
+        ported_face_surface.is_none(),
+    );
+    let sample = mesh_fallback.resolve_sample(
+        ported_face_surface.map(|surface| {
             surface.sample_normalized_with_orientation(geometry, [0.5, 0.5], orientation)
-        })
-        .or_else(|| load_mesh_fallback().map(|fallback| fallback.sample))
-        .ok_or_else(|| {
-            Error::new(format!(
-                "failed to derive a Rust-owned sample for face {index} ({:?})",
-                geometry.kind
-            ))
-        })?;
+        }),
+        index,
+        geometry,
+    )?;
     let area = ported_face_area_from_surface(
         context,
         ported_face_surface,
@@ -105,14 +165,8 @@ fn ported_brep_face(
         wires,
         edges,
         edge_shapes,
-    )
-    .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
-    .ok_or_else(|| {
-        Error::new(format!(
-            "failed to derive a Rust-owned area for face {index} ({:?})",
-            geometry.kind
-        ))
-    })?;
+    );
+    let area = mesh_fallback.resolve_area(area, index, geometry)?;
     let adjacent_face_indices = face_adjacent_face_indices(topology, wires, index)?;
 
     Ok(BrepFace {
