@@ -201,24 +201,6 @@ struct FaceSnapshotAccumulator {
 }
 
 impl FaceSnapshotAccumulator {
-    fn flatten_edge_face_lists(
-        edge_face_lists: Vec<Vec<usize>>,
-    ) -> (Vec<crate::TopologyRange>, Vec<usize>) {
-        let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
-        let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
-        let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
-
-        for face_indices in edge_face_lists {
-            edge_faces.push(crate::TopologyRange {
-                offset: edge_face_indices.len(),
-                count: face_indices.len(),
-            });
-            edge_face_indices.extend(face_indices);
-        }
-
-        (edge_faces, edge_face_indices)
-    }
-
     fn append_face_topology_outputs(
         &mut self,
         face_index: usize,
@@ -291,8 +273,17 @@ fn pack_ported_face_snapshot(
         face_wire_orientations,
         face_wire_roles,
     } = accumulator;
-    let (edge_faces, edge_face_indices) =
-        FaceSnapshotAccumulator::flatten_edge_face_lists(edge_face_lists);
+    let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
+    let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
+    let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
+
+    for face_indices in edge_face_lists {
+        edge_faces.push(crate::TopologyRange {
+            offset: edge_face_indices.len(),
+            count: face_indices.len(),
+        });
+        edge_face_indices.extend(face_indices);
+    }
 
     Ok(Some(TopologySnapshotFaceFields {
         edge_faces,
