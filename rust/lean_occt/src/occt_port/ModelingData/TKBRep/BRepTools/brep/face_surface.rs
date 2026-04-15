@@ -78,58 +78,22 @@ pub(super) fn ported_brep_faces(
                         geometry.kind
                     ))
                 })?;
-            let area = match ported_face_surface {
-                Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
-                    context,
-                    surface,
-                    geometry,
-                    &loops,
-                    wires,
-                    edges,
-                    edge_shapes,
-                )
-                .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
-                .ok_or_else(|| {
-                    Error::new(format!(
-                        "failed to derive a Rust-owned area for face {index} ({:?})",
-                        geometry.kind
-                    ))
-                })?,
-                Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
-                    context,
-                    surface,
-                    geometry,
-                    &loops,
-                    wires,
-                    edges,
-                    edge_shapes,
-                )
-                .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
-                .ok_or_else(|| {
-                    Error::new(format!(
-                        "failed to derive a Rust-owned area for face {index} ({:?})",
-                        geometry.kind
-                    ))
-                })?,
-                Some(PortedFaceSurface::Swept(surface)) => {
-                    analytic_ported_swept_face_area(surface, geometry)
-                        .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
-                        .ok_or_else(|| {
-                            Error::new(format!(
-                                "failed to derive a Rust-owned area for face {index} ({:?})",
-                                geometry.kind
-                            ))
-                        })?
-                }
-                None => load_mesh_fallback()
-                    .map(|fallback| fallback.area)
-                    .ok_or_else(|| {
-                        Error::new(format!(
-                            "failed to derive a Rust-owned area for face {index} ({:?})",
-                            geometry.kind
-                        ))
-                    })?,
-            };
+            let area = ported_face_area_from_surface(
+                context,
+                ported_face_surface,
+                geometry,
+                &loops,
+                wires,
+                edges,
+                edge_shapes,
+            )
+            .or_else(|| load_mesh_fallback().map(|fallback| fallback.area))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "failed to derive a Rust-owned area for face {index} ({:?})",
+                    geometry.kind
+                ))
+            })?;
             let adjacent_face_indices = face_adjacent_face_indices(topology, wires, index)?;
 
             Ok(BrepFace {
@@ -147,6 +111,41 @@ pub(super) fn ported_brep_faces(
         .collect::<Result<Vec<_>, Error>>()?;
 
     Ok((face_shapes, faces))
+}
+
+fn ported_face_area_from_surface(
+    context: &Context,
+    ported_face_surface: Option<PortedFaceSurface>,
+    face_geometry: FaceGeometry,
+    loops: &[BrepFaceLoop],
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    match ported_face_surface {
+        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
+            context,
+            surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
+            context,
+            surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        Some(PortedFaceSurface::Swept(surface)) => {
+            analytic_ported_swept_face_area(surface, face_geometry)
+        }
+        None => None,
+    }
 }
 
 pub(super) fn ported_face_surface_descriptor_from_surface(
@@ -312,32 +311,15 @@ pub(crate) fn ported_face_area(
     let prepared =
         prepare_public_face_surface(context, face_shape, context.face_geometry(face_shape)?)?;
     let face_geometry = prepared.geometry;
-    let ported_face_surface = prepared.ported_face_surface;
-
-    Ok(match ported_face_surface {
-        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
-            context,
-            surface,
-            face_geometry,
-            &topology.loops,
-            &topology.wires,
-            &topology.edges,
-            &topology.edge_shapes,
-        ),
-        Some(PortedFaceSurface::Swept(surface)) => {
-            analytic_ported_swept_face_area(surface, face_geometry)
-        }
-        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
-            context,
-            surface,
-            face_geometry,
-            &topology.loops,
-            &topology.wires,
-            &topology.edges,
-            &topology.edge_shapes,
-        ),
-        None => None,
-    })
+    Ok(ported_face_area_from_surface(
+        context,
+        prepared.ported_face_surface,
+        face_geometry,
+        &topology.loops,
+        &topology.wires,
+        &topology.edges,
+        &topology.edge_shapes,
+    ))
 }
 
 fn single_face_topology(
