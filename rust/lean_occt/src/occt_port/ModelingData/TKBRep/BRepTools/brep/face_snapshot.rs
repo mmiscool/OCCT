@@ -287,15 +287,13 @@ impl PreparedFaceTopologyBuilder {
     }
 
     fn finish(self) -> Option<PreparedFaceTopology> {
+        let wire_roles = self.classify_wire_roles()?;
         let Self {
             face_wire_indices,
             face_wire_orientations,
-            face_wire_areas,
             used_edges,
             ..
         } = self;
-        let wire_roles =
-            PreparedFaceTopology::classify_wire_roles(face_wire_indices.len(), &face_wire_areas)?;
 
         Some(PreparedFaceTopology {
             face_wire_indices,
@@ -303,6 +301,37 @@ impl PreparedFaceTopologyBuilder {
             wire_roles,
             used_edges,
         })
+    }
+
+    fn classify_wire_roles(&self) -> Option<Vec<LoopRole>> {
+        match self.face_wire_indices.len() {
+            1 => Some(vec![LoopRole::Outer]),
+            _ => {
+                let (outer_offset, outer_area) = self
+                    .face_wire_areas
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .max_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs))?;
+                if outer_area <= 1.0e-9 {
+                    return None;
+                }
+
+                Some(
+                    self.face_wire_areas
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, _)| {
+                            if offset == outer_offset {
+                                LoopRole::Outer
+                            } else {
+                                LoopRole::Inner
+                            }
+                        })
+                        .collect(),
+                )
+            }
+        }
     }
 }
 
@@ -323,39 +352,6 @@ impl PreparedFaceTopology {
             edge_shapes,
             vertex_positions,
         )
-    }
-
-    fn classify_wire_roles(
-        face_wire_count: usize,
-        face_wire_areas: &[f64],
-    ) -> Option<Vec<LoopRole>> {
-        match face_wire_count {
-            1 => Some(vec![LoopRole::Outer]),
-            _ => {
-                let (outer_offset, outer_area) = face_wire_areas
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .max_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs))?;
-                if outer_area <= 1.0e-9 {
-                    return None;
-                }
-
-                Some(
-                    face_wire_areas
-                        .iter()
-                        .enumerate()
-                        .map(|(offset, _)| {
-                            if offset == outer_offset {
-                                LoopRole::Outer
-                            } else {
-                                LoopRole::Inner
-                            }
-                        })
-                        .collect(),
-                )
-            }
-        }
     }
 }
 
