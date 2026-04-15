@@ -1,4 +1,4 @@
-use super::face_snapshot::{load_ported_face_snapshot_shapes, pack_ported_face_snapshot};
+use super::face_snapshot::load_ported_face_snapshot;
 use super::root_topology::load_root_topology_snapshot;
 use super::*;
 
@@ -6,16 +6,12 @@ pub(super) fn ported_topology_snapshot(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<TopologySnapshot>, Error> {
-    let Some(face_shapes) = load_ported_face_snapshot_shapes(context, shape)? else {
-        return Ok(None);
-    };
-
     let Some(root_topology) = load_root_topology_snapshot(context, shape)? else {
         return Ok(None);
     };
-    let Some(face_topology) = pack_ported_face_snapshot(
+    let Some(face_topology) = load_ported_face_snapshot(
         context,
-        &face_shapes,
+        shape,
         &root_topology.root_wires,
         &root_topology.root_edges,
         &root_topology.edge_shapes,

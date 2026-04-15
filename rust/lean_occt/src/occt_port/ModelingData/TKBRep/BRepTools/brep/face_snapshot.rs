@@ -20,7 +20,7 @@ pub(super) struct PackedFaceTopologySnapshot {
     pub(super) face_wire_roles: Vec<LoopRole>,
 }
 
-pub(super) fn load_ported_face_snapshot_shapes(
+fn load_ported_face_snapshot_shapes(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<Vec<Shape>>, Error> {
@@ -207,6 +207,29 @@ pub(super) fn pack_ported_face_snapshot(
         face_wire_orientations,
         face_wire_roles,
     }))
+}
+
+pub(super) fn load_ported_face_snapshot(
+    context: &Context,
+    shape: &Shape,
+    root_wires: &[RootWireTopology],
+    root_edges: &[RootEdgeTopology],
+    edge_shapes: &[Shape],
+    vertex_positions: &[[f64; 3]],
+    edge_count: usize,
+) -> Result<Option<PackedFaceTopologySnapshot>, Error> {
+    let Some(face_shapes) = load_ported_face_snapshot_shapes(context, shape)? else {
+        return Ok(None);
+    };
+    pack_ported_face_snapshot(
+        context,
+        &face_shapes,
+        root_wires,
+        root_edges,
+        edge_shapes,
+        vertex_positions,
+        edge_count,
+    )
 }
 
 fn match_root_wire_index(
