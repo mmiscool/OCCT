@@ -1223,7 +1223,7 @@ pub(crate) fn ported_face_area(
     context: &Context,
     face_shape: &Shape,
 ) -> Result<Option<f64>, Error> {
-    let face_geometry = context.face_geometry_occt(face_shape)?;
+    let face_geometry = context.face_geometry(face_shape)?;
     let topology = match single_face_topology(context, face_shape)? {
         Some(topology) => topology,
         None => return Ok(None),
