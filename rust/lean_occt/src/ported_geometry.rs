@@ -712,40 +712,40 @@ impl Context {
 
     pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
         let bounds = self.face_uv_bounds_occt(shape)?;
+        let plane_geometry = ported_analytic_face_geometry(SurfaceKind::Plane, bounds);
+        let cylinder_geometry = ported_analytic_face_geometry(SurfaceKind::Cylinder, bounds);
+        let cone_geometry = ported_analytic_face_geometry(SurfaceKind::Cone, bounds);
+        let sphere_geometry = ported_analytic_face_geometry(SurfaceKind::Sphere, bounds);
+        let torus_geometry = ported_analytic_face_geometry(SurfaceKind::Torus, bounds);
 
-        if self.face_plane_payload_occt(shape).is_ok() {
-            return Ok(Some(ported_analytic_face_geometry(
-                SurfaceKind::Plane,
-                bounds,
-            )));
+        if ported_plane_payload(self, shape, plane_geometry)?.is_some()
+            || self.face_plane_payload_occt(shape).is_ok()
+        {
+            return Ok(Some(plane_geometry));
         }
 
-        if self.face_cylinder_payload_occt(shape).is_ok() {
-            return Ok(Some(ported_analytic_face_geometry(
-                SurfaceKind::Cylinder,
-                bounds,
-            )));
+        if ported_cylinder_payload(self, shape, cylinder_geometry)?.is_some()
+            || self.face_cylinder_payload_occt(shape).is_ok()
+        {
+            return Ok(Some(cylinder_geometry));
         }
 
-        if self.face_cone_payload_occt(shape).is_ok() {
-            return Ok(Some(ported_analytic_face_geometry(
-                SurfaceKind::Cone,
-                bounds,
-            )));
+        if ported_cone_payload(self, shape, cone_geometry)?.is_some()
+            || self.face_cone_payload_occt(shape).is_ok()
+        {
+            return Ok(Some(cone_geometry));
         }
 
-        if self.face_sphere_payload_occt(shape).is_ok() {
-            return Ok(Some(ported_analytic_face_geometry(
-                SurfaceKind::Sphere,
-                bounds,
-            )));
+        if ported_sphere_payload(self, shape, sphere_geometry)?.is_some()
+            || self.face_sphere_payload_occt(shape).is_ok()
+        {
+            return Ok(Some(sphere_geometry));
         }
 
-        if self.face_torus_payload_occt(shape).is_ok() {
-            return Ok(Some(ported_analytic_face_geometry(
-                SurfaceKind::Torus,
-                bounds,
-            )));
+        if ported_torus_payload(self, shape, torus_geometry)?.is_some()
+            || self.face_torus_payload_occt(shape).is_ok()
+        {
+            return Ok(Some(torus_geometry));
         }
 
         Ok(None)
@@ -1771,6 +1771,7 @@ fn ported_cylinder_payload(
     let base_sample = context.face_sample_occt(shape, [u0, geometry.v_min])?;
     let axis_sample = context.face_sample_occt(shape, [u0, geometry.v_max])?;
     let probe_sample = context.face_sample_occt(shape, [u1, geometry.v_min])?;
+    let probe_top_sample = context.face_sample_occt(shape, [u1, geometry.v_max])?;
     let normal_sign = if matches!(orientation, Orientation::Reversed) {
         -1.0
     } else {
@@ -1830,6 +1831,10 @@ fn ported_cylinder_payload(
     ) || !approx_points_eq(
         sample_cylinder(payload, [u0, geometry.v_max]).position,
         axis_sample.position,
+        1.0e-7,
+    ) || !approx_points_eq(
+        sample_cylinder(payload, [u1, geometry.v_max]).position,
+        probe_top_sample.position,
         1.0e-7,
     ) {
         return Ok(None);
