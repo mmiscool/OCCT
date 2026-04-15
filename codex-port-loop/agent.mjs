@@ -16,9 +16,9 @@ const codexBin = process.platform === "win32"
   ? path.join(packageRoot, "node_modules", ".bin", "codex.cmd")
   : path.join(packageRoot, "node_modules", ".bin", "codex");
 
-const retryDelayMs = 10000;
+const retryDelaySeconds = 10;
 const autoCompactTokenLimit = 120000;
-const startupDelayMs = 20000;
+const startupDelaySeconds = 20;
 const validReasoningLevels = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const eventDivider = "-".repeat(100);
 const subagentPermissionSuffix =
@@ -28,7 +28,7 @@ const defaultConfig = {
   model: "gpt-5.4",
   reasoningLevel: "xhigh",
   loopPrompt: `Keep going porting from C++ to rust.${subagentPermissionSuffix}`,
-  delayBetweenLoopsMs: 1000,
+  delayBetweenLoopsSeconds: 1,
 };
 
 let stopRequested = false;
@@ -71,13 +71,13 @@ async function main() {
   console.log(`Prompt: ${config.loopPrompt}`);
   console.log(`Model: ${config.model}`);
   console.log(`Reasoning: ${config.reasoningLevel}`);
-  console.log(`Delay between loops: ${config.delayBetweenLoopsMs} ms`);
+  console.log(`Delay between loops: ${config.delayBetweenLoopsSeconds} seconds`);
   console.log("Sandbox: danger-full-access");
   console.log("Approval policy: never");
   console.log(`Auto compaction threshold: ${autoCompactTokenLimit} tokens`);
-  console.log(`Loop starts in ${Math.floor(startupDelayMs / 1000)} seconds unless you press Enter to skip...`);
+  console.log(`Loop starts in ${startupDelaySeconds} seconds unless you press Enter to skip...`);
 
-  await countdownDelay(startupDelayMs, "Loop start");
+  await countdownDelay(startupDelaySeconds, "Loop start");
 
   if (stopRequested) {
     console.log("Loop stopped.");
@@ -126,15 +126,15 @@ async function main() {
         state = {};
         await saveState(state);
       } else if (!stopRequested) {
-        console.error(`Turn failed. Retrying in ${retryDelayMs} ms.`);
-        await countdownDelay(retryDelayMs, "Retry");
+        console.error(`Turn failed. Retrying in ${retryDelaySeconds} seconds.`);
+        await countdownDelay(retryDelaySeconds, "Retry");
       }
 
       continue;
     }
 
-    if (!stopRequested && config.delayBetweenLoopsMs > 0) {
-      await countdownDelay(config.delayBetweenLoopsMs, "Next loop");
+    if (!stopRequested && config.delayBetweenLoopsSeconds > 0) {
+      await countdownDelay(config.delayBetweenLoopsSeconds, "Next loop");
       await commitAndPush(config, state);
     }
   }
@@ -347,7 +347,7 @@ function normalizeConfig(config) {
   const model = String(merged.model ?? "").trim();
   const reasoningLevel = String(merged.reasoningLevel ?? "").trim();
   const loopPrompt = String(merged.loopPrompt ?? "").trim();
-  const delayBetweenLoopsMs = Number.parseInt(String(merged.delayBetweenLoopsMs ?? ""), 10);
+  const delayBetweenLoopsSeconds = parseDelayBetweenLoopsSeconds(merged);
 
   if (!model) {
     throw new Error(`Invalid config in ${configFile}: "model" must be a non-empty string.`);
@@ -357,10 +357,6 @@ function normalizeConfig(config) {
     throw new Error(
       `Invalid config in ${configFile}: "reasoningLevel" must be one of ${Array.from(validReasoningLevels).join(", ")}.`
     );
-  }
-
-  if (!Number.isFinite(delayBetweenLoopsMs) || delayBetweenLoopsMs < 0) {
-    throw new Error(`Invalid config in ${configFile}: "delayBetweenLoopsMs" must be a non-negative integer.`);
   }
 
   if (!loopPrompt) {
@@ -376,7 +372,7 @@ function normalizeConfig(config) {
     model,
     reasoningLevel,
     loopPrompt: normalizedLoopPrompt,
-    delayBetweenLoopsMs,
+    delayBetweenLoopsSeconds,
   };
 }
 
@@ -418,8 +414,8 @@ function question(rl, prompt) {
   return new Promise((resolve) => rl.question(prompt, resolve));
 }
 
-async function countdownDelay(ms, label) {
-  const totalSeconds = Math.ceil(ms / 1000);
+async function countdownDelay(seconds, label) {
+  const totalSeconds = Math.ceil(seconds);
   if (totalSeconds <= 0 || stopRequested) {
     return;
   }
@@ -673,4 +669,12 @@ function delay(ms, signal) {
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function parseDelayBetweenLoopsSeconds(config) {
+  const secondsValue = String(config.delayBetweenLoopsSeconds ?? "").trim();
+  if (/^\d+$/.test(secondsValue)) {
+    return Number(secondsValue);
+  }
+  throw new Error(`Invalid config in ${configFile}: "delayBetweenLoopsSeconds" must be set to a non-negative integer.`);
 }

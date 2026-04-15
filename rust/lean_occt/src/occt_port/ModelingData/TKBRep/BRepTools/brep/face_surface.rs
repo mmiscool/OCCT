@@ -29,13 +29,13 @@ struct LazyMeshFaceFallback<'a> {
     loaded: bool,
 }
 
+#[derive(Clone, Copy)]
+enum FaceSurfaceDescriptorRoute {
+    Raw,
+    Public,
+}
+
 type SingleFaceTopologyBuilder = fn(&Context, &Shape) -> Result<Option<SingleFaceTopology>, Error>;
-type FaceSurfaceDescriptorBuilder = fn(
-    &Context,
-    &Shape,
-    FaceGeometry,
-    Option<PortedSurface>,
-) -> Result<Option<PortedFaceSurface>, Error>;
 
 impl<'a> LazyMeshFaceFallback<'a> {
     fn new(
@@ -198,7 +198,7 @@ fn prepare_raw_face_surface(
         context,
         face_shape,
         geometry,
-        ported_face_surface_descriptor_from_surface,
+        FaceSurfaceDescriptorRoute::Raw,
     )
 }
 
@@ -237,43 +237,14 @@ fn ported_face_area_from_surface(
     }
 }
 
-pub(super) fn ported_face_surface_descriptor_from_surface(
+fn ported_face_surface_descriptor_from_surface_with_route(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
     ported_surface: Option<PortedSurface>,
+    route: FaceSurfaceDescriptorRoute,
 ) -> Result<Option<PortedFaceSurface>, Error> {
-    ported_face_surface_descriptor_from_surface_with_topology(
-        context,
-        face_shape,
-        face_geometry,
-        ported_surface,
-        single_face_topology,
-    )
-}
-
-fn ported_face_surface_descriptor_from_surface_public(
-    context: &Context,
-    face_shape: &Shape,
-    face_geometry: FaceGeometry,
-    ported_surface: Option<PortedSurface>,
-) -> Result<Option<PortedFaceSurface>, Error> {
-    ported_face_surface_descriptor_from_surface_with_topology(
-        context,
-        face_shape,
-        face_geometry,
-        ported_surface,
-        single_face_topology_public,
-    )
-}
-
-fn ported_face_surface_descriptor_from_surface_with_topology(
-    context: &Context,
-    face_shape: &Shape,
-    face_geometry: FaceGeometry,
-    ported_surface: Option<PortedSurface>,
-    topology_builder: SingleFaceTopologyBuilder,
-) -> Result<Option<PortedFaceSurface>, Error> {
+    let topology_builder = face_surface_topology_builder(route);
     if let Some(surface) = ported_surface {
         return Ok(Some(PortedFaceSurface::Analytic(surface)));
     }
@@ -289,6 +260,13 @@ fn ported_face_surface_descriptor_from_surface_with_topology(
         topology_builder,
     )?
     .map(PortedFaceSurface::Swept))
+}
+
+fn face_surface_topology_builder(route: FaceSurfaceDescriptorRoute) -> SingleFaceTopologyBuilder {
+    match route {
+        FaceSurfaceDescriptorRoute::Raw => single_face_topology,
+        FaceSurfaceDescriptorRoute::Public => single_face_topology_public,
+    }
 }
 
 fn ported_swept_face_surface_with_topology(
@@ -406,7 +384,7 @@ fn prepare_public_face_surface(
         context,
         face_shape,
         face_geometry,
-        ported_face_surface_descriptor_from_surface_public,
+        FaceSurfaceDescriptorRoute::Public,
     )
 }
 
@@ -414,12 +392,17 @@ fn prepare_face_surface(
     context: &Context,
     face_shape: &Shape,
     face_geometry: FaceGeometry,
-    descriptor_builder: FaceSurfaceDescriptorBuilder,
+    route: FaceSurfaceDescriptorRoute,
 ) -> Result<PreparedFaceSurface, Error> {
     let ported_surface =
         PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
-    let ported_face_surface =
-        descriptor_builder(context, face_shape, face_geometry, ported_surface)?;
+    let ported_face_surface = ported_face_surface_descriptor_from_surface_with_route(
+        context,
+        face_shape,
+        face_geometry,
+        ported_surface,
+        route,
+    )?;
 
     Ok(PreparedFaceSurface {
         geometry: face_geometry,

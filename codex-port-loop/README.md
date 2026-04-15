@@ -30,7 +30,7 @@ Default generated config:
   "model": "gpt-5.4",
   "reasoningLevel": "xhigh",
   "loopPrompt": "Keep going porting from C++ to rust. You may use subagents, delegation, and parallel agent work when useful. Prefer bounded, non-overlapping subtasks.",
-  "delayBetweenLoopsMs": 1000
+  "delayBetweenLoopsSeconds": 1
 }
 ```
 
@@ -40,7 +40,7 @@ Fields:
 - `model`: Codex model name.
 - `reasoningLevel`: one of `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
 - `loopPrompt`: the prompt sent on each loop iteration. If it does not already authorize delegation, the runner appends a subagent-permission suffix automatically.
-- `delayBetweenLoopsMs`: non-negative integer delay between completed turns.
+- `delayBetweenLoopsSeconds`: non-negative integer delay between completed turns.
 
 ## Behavior
 
