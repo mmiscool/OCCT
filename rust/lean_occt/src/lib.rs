@@ -1561,6 +1561,13 @@ impl Context {
     }
 
     pub fn vertex_point(&self, shape: &Shape) -> Result<[f64; 3], Error> {
+        match self.ported_vertex_point(shape)? {
+            Some(point) => Ok(point),
+            None => self.vertex_point_occt(shape),
+        }
+    }
+
+    pub fn vertex_point_occt(&self, shape: &Shape) -> Result<[f64; 3], Error> {
         let mut xyz = [0.0_f64; 3];
         let result = unsafe {
             ffi::lean_occt_shape_vertex_point(
@@ -1577,6 +1584,13 @@ impl Context {
     }
 
     pub fn edge_endpoints(&self, shape: &Shape) -> Result<EdgeEndpoints, Error> {
+        match self.ported_edge_endpoints(shape)? {
+            Some(endpoints) => Ok(endpoints),
+            None => self.edge_endpoints_occt(shape),
+        }
+    }
+
+    pub fn edge_endpoints_occt(&self, shape: &Shape) -> Result<EdgeEndpoints, Error> {
         let mut start = [0.0_f64; 3];
         let mut end = [0.0_f64; 3];
         let result = unsafe {
@@ -1658,6 +1672,13 @@ impl Context {
     }
 
     pub fn edge_geometry(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
+        match self.ported_edge_geometry(shape)? {
+            Some(geometry) => Ok(geometry),
+            None => self.edge_geometry_occt(shape),
+        }
+    }
+
+    pub fn edge_geometry_occt(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
         let mut geometry = ffi::LeanOcctEdgeGeometry {
             kind: ffi::LeanOcctCurveKind::Unknown,
             start_parameter: 0.0,
@@ -1684,6 +1705,13 @@ impl Context {
     }
 
     pub fn edge_line_payload(&self, shape: &Shape) -> Result<LinePayload, Error> {
+        match self.ported_edge_curve(shape)? {
+            Some(PortedCurve::Line(payload)) => Ok(payload),
+            _ => self.edge_line_payload_occt(shape),
+        }
+    }
+
+    pub fn edge_line_payload_occt(&self, shape: &Shape) -> Result<LinePayload, Error> {
         let mut payload = ffi::LeanOcctLinePayload {
             origin: [0.0; 3],
             direction: [0.0; 3],
@@ -1706,6 +1734,13 @@ impl Context {
     }
 
     pub fn edge_circle_payload(&self, shape: &Shape) -> Result<CirclePayload, Error> {
+        match self.ported_edge_curve(shape)? {
+            Some(PortedCurve::Circle(payload)) => Ok(payload),
+            _ => self.edge_circle_payload_occt(shape),
+        }
+    }
+
+    pub fn edge_circle_payload_occt(&self, shape: &Shape) -> Result<CirclePayload, Error> {
         let mut payload = ffi::LeanOcctCirclePayload {
             center: [0.0; 3],
             normal: [0.0; 3],
@@ -1734,6 +1769,13 @@ impl Context {
     }
 
     pub fn edge_ellipse_payload(&self, shape: &Shape) -> Result<EllipsePayload, Error> {
+        match self.ported_edge_curve(shape)? {
+            Some(PortedCurve::Ellipse(payload)) => Ok(payload),
+            _ => self.edge_ellipse_payload_occt(shape),
+        }
+    }
+
+    pub fn edge_ellipse_payload_occt(&self, shape: &Shape) -> Result<EllipsePayload, Error> {
         let mut payload = ffi::LeanOcctEllipsePayload {
             center: [0.0; 3],
             normal: [0.0; 3],
@@ -1764,6 +1806,16 @@ impl Context {
     }
 
     pub fn face_uv_bounds(&self, shape: &Shape) -> Result<FaceUvBounds, Error> {
+        let geometry = self.face_geometry(shape)?;
+        Ok(FaceUvBounds {
+            u_min: geometry.u_min,
+            u_max: geometry.u_max,
+            v_min: geometry.v_min,
+            v_max: geometry.v_max,
+        })
+    }
+
+    pub fn face_uv_bounds_occt(&self, shape: &Shape) -> Result<FaceUvBounds, Error> {
         let mut bounds = ffi::LeanOcctFaceUvBounds {
             u_min: 0.0,
             u_max: 0.0,
@@ -1856,6 +1908,13 @@ impl Context {
     }
 
     pub fn face_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
+        match self.ported_face_geometry(shape)? {
+            Some(geometry) => Ok(geometry),
+            None => self.face_geometry_occt(shape),
+        }
+    }
+
+    pub fn face_geometry_occt(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
         let mut geometry = ffi::LeanOcctFaceGeometry {
             kind: ffi::LeanOcctSurfaceKind::Unknown,
             u_min: 0.0,
@@ -1892,6 +1951,13 @@ impl Context {
     }
 
     pub fn face_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
+        match self.ported_face_surface(shape)? {
+            Some(PortedSurface::Plane(payload)) => Ok(payload),
+            _ => self.face_plane_payload_occt(shape),
+        }
+    }
+
+    pub fn face_plane_payload_occt(&self, shape: &Shape) -> Result<PlanePayload, Error> {
         let mut payload = ffi::LeanOcctPlanePayload {
             origin: [0.0; 3],
             normal: [0.0; 3],
@@ -1918,6 +1984,13 @@ impl Context {
     }
 
     pub fn face_cylinder_payload(&self, shape: &Shape) -> Result<CylinderPayload, Error> {
+        match self.ported_face_surface(shape)? {
+            Some(PortedSurface::Cylinder(payload)) => Ok(payload),
+            _ => self.face_cylinder_payload_occt(shape),
+        }
+    }
+
+    pub fn face_cylinder_payload_occt(&self, shape: &Shape) -> Result<CylinderPayload, Error> {
         let mut payload = ffi::LeanOcctCylinderPayload {
             origin: [0.0; 3],
             axis: [0.0; 3],
@@ -1946,6 +2019,13 @@ impl Context {
     }
 
     pub fn face_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
+        match self.ported_face_surface(shape)? {
+            Some(PortedSurface::Cone(payload)) => Ok(payload),
+            _ => self.face_cone_payload_occt(shape),
+        }
+    }
+
+    pub fn face_cone_payload_occt(&self, shape: &Shape) -> Result<ConePayload, Error> {
         let mut payload = ffi::LeanOcctConePayload {
             origin: [0.0; 3],
             axis: [0.0; 3],
@@ -1976,6 +2056,13 @@ impl Context {
     }
 
     pub fn face_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
+        match self.ported_face_surface(shape)? {
+            Some(PortedSurface::Sphere(payload)) => Ok(payload),
+            _ => self.face_sphere_payload_occt(shape),
+        }
+    }
+
+    pub fn face_sphere_payload_occt(&self, shape: &Shape) -> Result<SpherePayload, Error> {
         let mut payload = ffi::LeanOcctSpherePayload {
             center: [0.0; 3],
             normal: [0.0; 3],
@@ -2004,6 +2091,13 @@ impl Context {
     }
 
     pub fn face_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
+        match self.ported_face_surface(shape)? {
+            Some(PortedSurface::Torus(payload)) => Ok(payload),
+            _ => self.face_torus_payload_occt(shape),
+        }
+    }
+
+    pub fn face_torus_payload_occt(&self, shape: &Shape) -> Result<TorusPayload, Error> {
         let mut payload = ffi::LeanOcctTorusPayload {
             center: [0.0; 3],
             axis: [0.0; 3],
@@ -2037,6 +2131,18 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<RevolutionSurfacePayload, Error> {
+        match self.ported_face_surface_descriptor(shape)? {
+            Some(PortedFaceSurface::Swept(PortedSweptSurface::Revolution { payload, .. })) => {
+                Ok(payload)
+            }
+            _ => self.face_revolution_payload_occt(shape),
+        }
+    }
+
+    pub fn face_revolution_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<RevolutionSurfacePayload, Error> {
         let mut payload = ffi::LeanOcctRevolutionSurfacePayload {
             axis_origin: [0.0; 3],
             axis_direction: [0.0; 3],
@@ -2061,6 +2167,18 @@ impl Context {
     }
 
     pub fn face_extrusion_payload(&self, shape: &Shape) -> Result<ExtrusionSurfacePayload, Error> {
+        match self.ported_face_surface_descriptor(shape)? {
+            Some(PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { payload, .. })) => {
+                Ok(payload)
+            }
+            _ => self.face_extrusion_payload_occt(shape),
+        }
+    }
+
+    pub fn face_extrusion_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<ExtrusionSurfacePayload, Error> {
         let mut payload = ffi::LeanOcctExtrusionSurfacePayload {
             direction: [0.0; 3],
             basis_curve_kind: ffi::LeanOcctCurveKind::Unknown,
@@ -2083,6 +2201,13 @@ impl Context {
     }
 
     pub fn face_offset_payload(&self, shape: &Shape) -> Result<OffsetSurfacePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => Ok(surface.payload),
+            None => self.face_offset_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_payload_occt(&self, shape: &Shape) -> Result<OffsetSurfacePayload, Error> {
         let mut payload = ffi::LeanOcctOffsetSurfacePayload {
             offset_value: 0.0,
             basis_surface_kind: ffi::LeanOcctSurfaceKind::Unknown,
@@ -2105,6 +2230,13 @@ impl Context {
     }
 
     pub fn face_offset_basis_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => Ok(surface.basis_geometry),
+            None => self.face_offset_basis_geometry_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_geometry_occt(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
         let mut geometry = ffi::LeanOcctFaceGeometry {
             kind: ffi::LeanOcctSurfaceKind::Unknown,
             u_min: 0.0,
@@ -2145,6 +2277,19 @@ impl Context {
     }
 
     pub fn face_offset_basis_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)) => Ok(payload),
+                _ => self.face_offset_basis_plane_payload_occt(shape),
+            },
+            None => self.face_offset_basis_plane_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_plane_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<PlanePayload, Error> {
         let mut payload = ffi::LeanOcctPlanePayload {
             origin: [0.0; 3],
             normal: [0.0; 3],
@@ -2171,6 +2316,19 @@ impl Context {
     }
 
     pub fn face_offset_basis_cylinder_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<CylinderPayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(payload)) => Ok(payload),
+                _ => self.face_offset_basis_cylinder_payload_occt(shape),
+            },
+            None => self.face_offset_basis_cylinder_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_cylinder_payload_occt(
         &self,
         shape: &Shape,
     ) -> Result<CylinderPayload, Error> {
@@ -2202,6 +2360,16 @@ impl Context {
     }
 
     pub fn face_offset_basis_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(payload)) => Ok(payload),
+                _ => self.face_offset_basis_cone_payload_occt(shape),
+            },
+            None => self.face_offset_basis_cone_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_cone_payload_occt(&self, shape: &Shape) -> Result<ConePayload, Error> {
         let mut payload = ffi::LeanOcctConePayload {
             origin: [0.0; 3],
             axis: [0.0; 3],
@@ -2232,6 +2400,19 @@ impl Context {
     }
 
     pub fn face_offset_basis_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(payload)) => Ok(payload),
+                _ => self.face_offset_basis_sphere_payload_occt(shape),
+            },
+            None => self.face_offset_basis_sphere_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_sphere_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<SpherePayload, Error> {
         let mut payload = ffi::LeanOcctSpherePayload {
             center: [0.0; 3],
             normal: [0.0; 3],
@@ -2260,6 +2441,19 @@ impl Context {
     }
 
     pub fn face_offset_basis_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(payload)) => Ok(payload),
+                _ => self.face_offset_basis_torus_payload_occt(shape),
+            },
+            None => self.face_offset_basis_torus_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_torus_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<TorusPayload, Error> {
         let mut payload = ffi::LeanOcctTorusPayload {
             center: [0.0; 3],
             axis: [0.0; 3],
@@ -2293,6 +2487,21 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<RevolutionSurfacePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    payload, ..
+                }) => Ok(payload),
+                _ => self.face_offset_basis_revolution_payload_occt(shape),
+            },
+            None => self.face_offset_basis_revolution_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_revolution_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<RevolutionSurfacePayload, Error> {
         let mut payload = ffi::LeanOcctRevolutionSurfacePayload {
             axis_origin: [0.0; 3],
             axis_direction: [0.0; 3],
@@ -2320,6 +2529,21 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<ExtrusionSurfacePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    payload, ..
+                }) => Ok(payload),
+                _ => self.face_offset_basis_extrusion_payload_occt(shape),
+            },
+            None => self.face_offset_basis_extrusion_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_extrusion_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<ExtrusionSurfacePayload, Error> {
         let mut payload = ffi::LeanOcctExtrusionSurfacePayload {
             direction: [0.0; 3],
             basis_curve_kind: ffi::LeanOcctCurveKind::Unknown,
@@ -2342,6 +2566,26 @@ impl Context {
     }
 
     pub fn face_offset_basis_curve_geometry(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    basis_geometry,
+                    ..
+                })
+                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    basis_geometry,
+                    ..
+                }) => Ok(basis_geometry),
+                _ => self.face_offset_basis_curve_geometry_occt(shape),
+            },
+            None => self.face_offset_basis_curve_geometry_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_curve_geometry_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<EdgeGeometry, Error> {
         let mut geometry = ffi::LeanOcctEdgeGeometry {
             kind: ffi::LeanOcctCurveKind::Unknown,
             start_parameter: 0.0,
@@ -2375,6 +2619,26 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<LinePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    basis_curve: PortedCurve::Line(payload),
+                    ..
+                })
+                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    basis_curve: PortedCurve::Line(payload),
+                    ..
+                }) => Ok(payload),
+                _ => self.face_offset_basis_curve_line_payload_occt(shape),
+            },
+            None => self.face_offset_basis_curve_line_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_curve_line_payload_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<LinePayload, Error> {
         let mut payload = ffi::LeanOcctLinePayload {
             origin: [0.0; 3],
             direction: [0.0; 3],
@@ -2397,6 +2661,26 @@ impl Context {
     }
 
     pub fn face_offset_basis_curve_circle_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<CirclePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    basis_curve: PortedCurve::Circle(payload),
+                    ..
+                })
+                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    basis_curve: PortedCurve::Circle(payload),
+                    ..
+                }) => Ok(payload),
+                _ => self.face_offset_basis_curve_circle_payload_occt(shape),
+            },
+            None => self.face_offset_basis_curve_circle_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_curve_circle_payload_occt(
         &self,
         shape: &Shape,
     ) -> Result<CirclePayload, Error> {
@@ -2428,6 +2712,26 @@ impl Context {
     }
 
     pub fn face_offset_basis_curve_ellipse_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<EllipsePayload, Error> {
+        match self.ported_offset_surface(shape)? {
+            Some(surface) => match surface.basis {
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    basis_curve: PortedCurve::Ellipse(payload),
+                    ..
+                })
+                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    basis_curve: PortedCurve::Ellipse(payload),
+                    ..
+                }) => Ok(payload),
+                _ => self.face_offset_basis_curve_ellipse_payload_occt(shape),
+            },
+            None => self.face_offset_basis_curve_ellipse_payload_occt(shape),
+        }
+    }
+
+    pub fn face_offset_basis_curve_ellipse_payload_occt(
         &self,
         shape: &Shape,
     ) -> Result<EllipsePayload, Error> {

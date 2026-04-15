@@ -70,6 +70,93 @@ fn assert_vec3_close(
     }
 }
 
+fn assert_scalar_close(
+    lhs: f64,
+    rhs: f64,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let delta = (lhs - rhs).abs();
+    if delta <= tolerance {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "{label} mismatch: lhs={lhs:?} rhs={rhs:?} delta={delta:?}"
+        ))
+        .into())
+    }
+}
+
+fn assert_face_geometry_close(
+    lhs: lean_occt::FaceGeometry,
+    rhs: lean_occt::FaceGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind
+        || lhs.is_u_closed != rhs.is_u_closed
+        || lhs.is_v_closed != rhs.is_v_closed
+        || lhs.is_u_periodic != rhs.is_u_periodic
+        || lhs.is_v_periodic != rhs.is_v_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    assert_scalar_close(lhs.u_min, rhs.u_min, tolerance, &format!("{label} u_min"))?;
+    assert_scalar_close(lhs.u_max, rhs.u_max, tolerance, &format!("{label} u_max"))?;
+    assert_scalar_close(lhs.v_min, rhs.v_min, tolerance, &format!("{label} v_min"))?;
+    assert_scalar_close(lhs.v_max, rhs.v_max, tolerance, &format!("{label} v_max"))?;
+    assert_scalar_close(
+        lhs.u_period,
+        rhs.u_period,
+        tolerance,
+        &format!("{label} u_period"),
+    )?;
+    assert_scalar_close(
+        lhs.v_period,
+        rhs.v_period,
+        tolerance,
+        &format!("{label} v_period"),
+    )?;
+    Ok(())
+}
+
+fn assert_edge_geometry_close(
+    lhs: lean_occt::EdgeGeometry,
+    rhs: lean_occt::EdgeGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind || lhs.is_closed != rhs.is_closed || lhs.is_periodic != rhs.is_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    assert_scalar_close(
+        lhs.start_parameter,
+        rhs.start_parameter,
+        tolerance,
+        &format!("{label} start_parameter"),
+    )?;
+    assert_scalar_close(
+        lhs.end_parameter,
+        rhs.end_parameter,
+        tolerance,
+        &format!("{label} end_parameter"),
+    )?;
+    assert_scalar_close(
+        lhs.period,
+        rhs.period,
+        tolerance,
+        &format!("{label} period"),
+    )?;
+    Ok(())
+}
+
 fn normalized_uv_to_uv(geometry: lean_occt::FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
     [
         geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
@@ -112,6 +199,31 @@ fn revolved_ellipse_area(
 }
 
 #[test]
+fn ported_vertex_points_match_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+
+    for (index, vertex) in kernel
+        .context()
+        .subshapes(&cut, ShapeKind::Vertex)?
+        .into_iter()
+        .enumerate()
+    {
+        let context_point = kernel.context().vertex_point(&vertex)?;
+        let occt_point = kernel.context().vertex_point_occt(&vertex)?;
+        assert_vec3_close(
+            context_point,
+            occt_point,
+            1.0e-12,
+            &format!("vertex {index}"),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
@@ -145,6 +257,9 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
         ("ellipse", ellipse_edge),
     ] {
         let geometry = kernel.context().edge_geometry(&edge)?;
+        let geometry_occt = kernel.context().edge_geometry_occt(&edge)?;
+        let context_endpoints = kernel.context().edge_endpoints(&edge)?;
+        let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
         let parameter = 0.5 * (geometry.start_parameter + geometry.end_parameter);
         let ported = kernel
             .context()
@@ -175,6 +290,19 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
         let occt_normalized_sample = kernel.context().edge_sample_occt(&edge, 0.5)?;
         let occt_length = kernel.context().describe_shape_occt(&edge)?.linear_length;
 
+        assert_edge_geometry_close(geometry, geometry_occt, 1.0e-8, label)?;
+        assert_vec3_close(
+            context_endpoints.start,
+            occt_endpoints.start,
+            1.0e-12,
+            &format!("{label} start endpoint"),
+        )?;
+        assert_vec3_close(
+            context_endpoints.end,
+            occt_endpoints.end,
+            1.0e-12,
+            &format!("{label} end endpoint"),
+        )?;
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-8, label)?;
         assert_vec3_close(rust_sample.tangent, occt_sample.tangent, 1.0e-8, label)?;
         assert_vec3_close(
@@ -305,6 +433,9 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
         ),
     ] {
         let geometry = kernel.context().face_geometry(&face)?;
+        println!("{label} geometry: {geometry:?}");
+        let context_bounds = kernel.context().face_uv_bounds(&face)?;
+        let occt_bounds = kernel.context().face_uv_bounds_occt(&face)?;
         let uv = geometry.center_uv();
         let rust_sample = kernel
             .context()
@@ -321,6 +452,20 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
             .face_sample_normalized_occt(&face, [0.5, 0.5])?;
         let occt_uv_sample = kernel.context().face_sample_occt(&face, uv)?;
 
+        assert!(
+            (context_bounds.u_min - geometry.u_min).abs() <= 1.0e-12
+                && (context_bounds.u_max - geometry.u_max).abs() <= 1.0e-12
+                && (context_bounds.v_min - geometry.v_min).abs() <= 1.0e-12
+                && (context_bounds.v_max - geometry.v_max).abs() <= 1.0e-12,
+            "{label} bounds mismatch: context={context_bounds:?} geometry={geometry:?}"
+        );
+        assert!(
+            (context_bounds.u_min - occt_bounds.u_min).abs() <= 1.0e-12
+                && (context_bounds.u_max - occt_bounds.u_max).abs() <= 1.0e-12
+                && (context_bounds.v_min - occt_bounds.v_min).abs() <= 1.0e-12
+                && (context_bounds.v_max - occt_bounds.v_max).abs() <= 1.0e-12,
+            "{label} bounds mismatch: context={context_bounds:?} occt={occt_bounds:?}"
+        );
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-7, label)?;
         assert_vec3_close(rust_sample.normal, occt_sample.normal, 1.0e-7, label)?;
         assert_vec3_close(
@@ -505,6 +650,550 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             1.0e-12,
             &format!("{label} context UV sample normal"),
         )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let context = kernel.context();
+    let extrusion_payload = context.face_extrusion_payload(&extrusion_face)?;
+    let extrusion_payload_occt = context.face_extrusion_payload_occt(&extrusion_face)?;
+
+    assert_eq!(
+        extrusion_payload.basis_curve_kind,
+        extrusion_payload_occt.basis_curve_kind
+    );
+    assert_vec3_close(
+        extrusion_payload.direction,
+        extrusion_payload_occt.direction,
+        1.0e-12,
+        "extrusion payload direction",
+    )?;
+
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let revolution_payload = context.face_revolution_payload(&revolution_face)?;
+    let revolution_payload_occt = context.face_revolution_payload_occt(&revolution_face)?;
+
+    assert_eq!(
+        revolution_payload.basis_curve_kind,
+        revolution_payload_occt.basis_curve_kind
+    );
+    assert_vec3_close(
+        revolution_payload.axis_origin,
+        revolution_payload_occt.axis_origin,
+        1.0e-12,
+        "revolution payload axis origin",
+    )?;
+    assert_vec3_close(
+        revolution_payload.axis_direction,
+        revolution_payload_occt.axis_direction,
+        1.0e-12,
+        "revolution payload axis direction",
+    )?;
+
+    let offset_shape = kernel.make_offset(
+        &revolution_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let offset_face = find_first_face_by_kind(&kernel, &offset_shape, SurfaceKind::Offset)?;
+    let offset_payload = context.face_offset_payload(&offset_face)?;
+    let offset_payload_occt = context.face_offset_payload_occt(&offset_face)?;
+
+    assert_eq!(
+        offset_payload.basis_surface_kind,
+        offset_payload_occt.basis_surface_kind
+    );
+    assert!(
+        (offset_payload.offset_value - offset_payload_occt.offset_value).abs() <= 1.0e-12,
+        "offset payload mismatch: rust={offset_payload:?} occt={offset_payload_occt:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn public_analytic_curve_and_surface_payload_queries_match_occt(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 15.0,
+        top_radius: 5.0,
+        height: 30.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 14.0,
+    })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 25.0,
+        minor_radius: 6.0,
+    })?;
+
+    let context = kernel.context();
+
+    let line_edge = find_first_edge_by_kind(&kernel, &cut, CurveKind::Line)?;
+    let line_payload = context.edge_line_payload(&line_edge)?;
+    let line_payload_occt = context.edge_line_payload_occt(&line_edge)?;
+    assert_vec3_close(
+        line_payload.origin,
+        line_payload_occt.origin,
+        1.0e-12,
+        "line payload origin",
+    )?;
+    assert_vec3_close(
+        line_payload.direction,
+        line_payload_occt.direction,
+        1.0e-12,
+        "line payload direction",
+    )?;
+
+    let circle_edge = find_first_edge_by_kind(&kernel, &cut, CurveKind::Circle)?;
+    let circle_payload = context.edge_circle_payload(&circle_edge)?;
+    let circle_payload_occt = context.edge_circle_payload_occt(&circle_edge)?;
+    assert_vec3_close(
+        circle_payload.center,
+        circle_payload_occt.center,
+        1.0e-12,
+        "circle payload center",
+    )?;
+    assert_vec3_close(
+        circle_payload.normal,
+        circle_payload_occt.normal,
+        1.0e-12,
+        "circle payload normal",
+    )?;
+    assert_vec3_close(
+        circle_payload.x_direction,
+        circle_payload_occt.x_direction,
+        1.0e-12,
+        "circle payload x direction",
+    )?;
+    assert_vec3_close(
+        circle_payload.y_direction,
+        circle_payload_occt.y_direction,
+        1.0e-12,
+        "circle payload y direction",
+    )?;
+    assert_scalar_close(
+        circle_payload.radius,
+        circle_payload_occt.radius,
+        1.0e-12,
+        "circle payload radius",
+    )?;
+
+    let ellipse_payload = context.edge_ellipse_payload(&ellipse_edge)?;
+    let ellipse_payload_occt = context.edge_ellipse_payload_occt(&ellipse_edge)?;
+    assert_vec3_close(
+        ellipse_payload.center,
+        ellipse_payload_occt.center,
+        1.0e-12,
+        "ellipse payload center",
+    )?;
+    assert_vec3_close(
+        ellipse_payload.normal,
+        ellipse_payload_occt.normal,
+        1.0e-12,
+        "ellipse payload normal",
+    )?;
+    assert_vec3_close(
+        ellipse_payload.x_direction,
+        ellipse_payload_occt.x_direction,
+        1.0e-12,
+        "ellipse payload x direction",
+    )?;
+    assert_vec3_close(
+        ellipse_payload.y_direction,
+        ellipse_payload_occt.y_direction,
+        1.0e-12,
+        "ellipse payload y direction",
+    )?;
+    assert_scalar_close(
+        ellipse_payload.major_radius,
+        ellipse_payload_occt.major_radius,
+        1.0e-12,
+        "ellipse payload major radius",
+    )?;
+    assert_scalar_close(
+        ellipse_payload.minor_radius,
+        ellipse_payload_occt.minor_radius,
+        1.0e-12,
+        "ellipse payload minor radius",
+    )?;
+
+    let plane_face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?;
+    let plane_payload = context.face_plane_payload(&plane_face)?;
+    let plane_payload_occt = context.face_plane_payload_occt(&plane_face)?;
+    assert_vec3_close(
+        plane_payload.origin,
+        plane_payload_occt.origin,
+        1.0e-12,
+        "plane payload origin",
+    )?;
+    assert_vec3_close(
+        plane_payload.normal,
+        plane_payload_occt.normal,
+        1.0e-12,
+        "plane payload normal",
+    )?;
+    assert_vec3_close(
+        plane_payload.x_direction,
+        plane_payload_occt.x_direction,
+        1.0e-12,
+        "plane payload x direction",
+    )?;
+    assert_vec3_close(
+        plane_payload.y_direction,
+        plane_payload_occt.y_direction,
+        1.0e-12,
+        "plane payload y direction",
+    )?;
+
+    let cylinder_face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Cylinder)?;
+    let cylinder_payload = context.face_cylinder_payload(&cylinder_face)?;
+    let cylinder_payload_occt = context.face_cylinder_payload_occt(&cylinder_face)?;
+    assert_vec3_close(
+        cylinder_payload.origin,
+        cylinder_payload_occt.origin,
+        1.0e-12,
+        "cylinder payload origin",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.axis,
+        cylinder_payload_occt.axis,
+        1.0e-12,
+        "cylinder payload axis",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.x_direction,
+        cylinder_payload_occt.x_direction,
+        1.0e-12,
+        "cylinder payload x direction",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.y_direction,
+        cylinder_payload_occt.y_direction,
+        1.0e-12,
+        "cylinder payload y direction",
+    )?;
+    assert_scalar_close(
+        cylinder_payload.radius,
+        cylinder_payload_occt.radius,
+        1.0e-12,
+        "cylinder payload radius",
+    )?;
+
+    let cone_face = find_first_face_by_kind(&kernel, &cone, SurfaceKind::Cone)?;
+    let cone_payload = context.face_cone_payload(&cone_face)?;
+    let cone_payload_occt = context.face_cone_payload_occt(&cone_face)?;
+    assert_vec3_close(
+        cone_payload.origin,
+        cone_payload_occt.origin,
+        1.0e-12,
+        "cone payload origin",
+    )?;
+    assert_vec3_close(
+        cone_payload.axis,
+        cone_payload_occt.axis,
+        1.0e-12,
+        "cone payload axis",
+    )?;
+    assert_vec3_close(
+        cone_payload.x_direction,
+        cone_payload_occt.x_direction,
+        1.0e-12,
+        "cone payload x direction",
+    )?;
+    assert_vec3_close(
+        cone_payload.y_direction,
+        cone_payload_occt.y_direction,
+        1.0e-12,
+        "cone payload y direction",
+    )?;
+    assert_scalar_close(
+        cone_payload.reference_radius,
+        cone_payload_occt.reference_radius,
+        1.0e-12,
+        "cone payload reference radius",
+    )?;
+    assert_scalar_close(
+        cone_payload.semi_angle,
+        cone_payload_occt.semi_angle,
+        1.0e-12,
+        "cone payload semi angle",
+    )?;
+
+    let sphere_face = find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?;
+    let sphere_payload = context.face_sphere_payload(&sphere_face)?;
+    let sphere_payload_occt = context.face_sphere_payload_occt(&sphere_face)?;
+    assert_vec3_close(
+        sphere_payload.center,
+        sphere_payload_occt.center,
+        1.0e-12,
+        "sphere payload center",
+    )?;
+    assert_vec3_close(
+        sphere_payload.normal,
+        sphere_payload_occt.normal,
+        1.0e-12,
+        "sphere payload normal",
+    )?;
+    assert_vec3_close(
+        sphere_payload.x_direction,
+        sphere_payload_occt.x_direction,
+        1.0e-12,
+        "sphere payload x direction",
+    )?;
+    assert_vec3_close(
+        sphere_payload.y_direction,
+        sphere_payload_occt.y_direction,
+        1.0e-12,
+        "sphere payload y direction",
+    )?;
+    assert_scalar_close(
+        sphere_payload.radius,
+        sphere_payload_occt.radius,
+        1.0e-12,
+        "sphere payload radius",
+    )?;
+
+    let torus_face = find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?;
+    let torus_payload = context.face_torus_payload(&torus_face)?;
+    let torus_payload_occt = context.face_torus_payload_occt(&torus_face)?;
+    assert_vec3_close(
+        torus_payload.center,
+        torus_payload_occt.center,
+        1.0e-12,
+        "torus payload center",
+    )?;
+    assert_vec3_close(
+        torus_payload.axis,
+        torus_payload_occt.axis,
+        1.0e-12,
+        "torus payload axis",
+    )?;
+    assert_vec3_close(
+        torus_payload.x_direction,
+        torus_payload_occt.x_direction,
+        1.0e-12,
+        "torus payload x direction",
+    )?;
+    assert_vec3_close(
+        torus_payload.y_direction,
+        torus_payload_occt.y_direction,
+        1.0e-12,
+        "torus payload y direction",
+    )?;
+    assert_scalar_close(
+        torus_payload.major_radius,
+        torus_payload_occt.major_radius,
+        1.0e-12,
+        "torus payload major radius",
+    )?;
+    assert_scalar_close(
+        torus_payload.minor_radius,
+        torus_payload_occt.minor_radius,
+        1.0e-12,
+        "torus payload minor radius",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse_edge,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse_edge,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+
+    let context = kernel.context();
+    for (label, basis_kind, source_face) in [
+        (
+            "extrusion",
+            SurfaceKind::Extrusion,
+            find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?,
+        ),
+        (
+            "revolution",
+            SurfaceKind::Revolution,
+            find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?,
+        ),
+    ] {
+        let offset_shape = kernel.make_offset(
+            &source_face,
+            OffsetParams {
+                offset: 2.5,
+                tolerance: 1.0e-4,
+            },
+        )?;
+        let offset_face = find_first_face_by_kind(&kernel, &offset_shape, SurfaceKind::Offset)?;
+        let offset_payload = context.face_offset_payload(&offset_face)?;
+
+        assert_eq!(offset_payload.basis_surface_kind, basis_kind);
+
+        let basis_geometry = context.face_offset_basis_geometry(&offset_face)?;
+        let basis_geometry_occt = context.face_offset_basis_geometry_occt(&offset_face)?;
+        assert_face_geometry_close(
+            basis_geometry,
+            basis_geometry_occt,
+            1.0e-12,
+            &format!("{label} basis geometry"),
+        )?;
+
+        let basis_curve_geometry = context.face_offset_basis_curve_geometry(&offset_face)?;
+        let basis_curve_geometry_occt =
+            context.face_offset_basis_curve_geometry_occt(&offset_face)?;
+        assert_edge_geometry_close(
+            basis_curve_geometry,
+            basis_curve_geometry_occt,
+            1.0e-12,
+            &format!("{label} basis curve geometry"),
+        )?;
+        assert_eq!(basis_curve_geometry.kind, CurveKind::Ellipse);
+
+        let ellipse_payload = context.face_offset_basis_curve_ellipse_payload(&offset_face)?;
+        let ellipse_payload_occt =
+            context.face_offset_basis_curve_ellipse_payload_occt(&offset_face)?;
+        assert_vec3_close(
+            ellipse_payload.center,
+            ellipse_payload_occt.center,
+            1.0e-12,
+            &format!("{label} basis ellipse center"),
+        )?;
+        assert_vec3_close(
+            ellipse_payload.normal,
+            ellipse_payload_occt.normal,
+            1.0e-12,
+            &format!("{label} basis ellipse normal"),
+        )?;
+        assert_vec3_close(
+            ellipse_payload.x_direction,
+            ellipse_payload_occt.x_direction,
+            1.0e-12,
+            &format!("{label} basis ellipse x direction"),
+        )?;
+        assert_vec3_close(
+            ellipse_payload.y_direction,
+            ellipse_payload_occt.y_direction,
+            1.0e-12,
+            &format!("{label} basis ellipse y direction"),
+        )?;
+        assert_scalar_close(
+            ellipse_payload.major_radius,
+            ellipse_payload_occt.major_radius,
+            1.0e-12,
+            &format!("{label} basis ellipse major radius"),
+        )?;
+        assert_scalar_close(
+            ellipse_payload.minor_radius,
+            ellipse_payload_occt.minor_radius,
+            1.0e-12,
+            &format!("{label} basis ellipse minor radius"),
+        )?;
+
+        match basis_kind {
+            SurfaceKind::Extrusion => {
+                let payload = context.face_offset_basis_extrusion_payload(&offset_face)?;
+                let payload_occt =
+                    context.face_offset_basis_extrusion_payload_occt(&offset_face)?;
+                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
+                assert_eq!(payload.basis_curve_kind, payload_occt.basis_curve_kind);
+                assert_vec3_close(
+                    payload.direction,
+                    payload_occt.direction,
+                    1.0e-12,
+                    "extrusion basis direction",
+                )?;
+            }
+            SurfaceKind::Revolution => {
+                let payload = context.face_offset_basis_revolution_payload(&offset_face)?;
+                let payload_occt =
+                    context.face_offset_basis_revolution_payload_occt(&offset_face)?;
+                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
+                assert_eq!(payload.basis_curve_kind, payload_occt.basis_curve_kind);
+                assert_vec3_close(
+                    payload.axis_origin,
+                    payload_occt.axis_origin,
+                    1.0e-12,
+                    "revolution basis axis origin",
+                )?;
+                assert_vec3_close(
+                    payload.axis_direction,
+                    payload_occt.axis_direction,
+                    1.0e-12,
+                    "revolution basis axis direction",
+                )?;
+            }
+            _ => unreachable!("unexpected swept basis kind"),
+        }
     }
 
     Ok(())

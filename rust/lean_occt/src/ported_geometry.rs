@@ -1,12 +1,14 @@
+use std::f64::consts::TAU;
+
 use crate::brep::{
     ported_face_area as ported_face_area_value,
     ported_face_surface_descriptor as ported_face_surface_descriptor_value,
 };
 use crate::{
-    CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry, EdgeSample,
-    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, LinePayload,
-    OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
-    SpherePayload, SurfaceKind, TorusPayload,
+    CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry,
+    EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample,
+    FaceUvBounds, LinePayload, OffsetSurfacePayload, Orientation, PlanePayload,
+    RevolutionSurfacePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -77,9 +79,11 @@ impl PortedCurve {
         geometry: EdgeGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            CurveKind::Line => Ok(Some(Self::Line(context.edge_line_payload(shape)?))),
-            CurveKind::Circle => Ok(Some(Self::Circle(context.edge_circle_payload(shape)?))),
-            CurveKind::Ellipse => Ok(Some(Self::Ellipse(context.edge_ellipse_payload(shape)?))),
+            CurveKind::Line => Ok(Some(Self::Line(context.edge_line_payload_occt(shape)?))),
+            CurveKind::Circle => Ok(Some(Self::Circle(context.edge_circle_payload_occt(shape)?))),
+            CurveKind::Ellipse => Ok(Some(Self::Ellipse(
+                context.edge_ellipse_payload_occt(shape)?,
+            ))),
             _ => Ok(None),
         }
     }
@@ -282,13 +286,13 @@ impl PortedSurface {
         geometry: FaceGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            SurfaceKind::Plane => Ok(Some(Self::Plane(context.face_plane_payload(shape)?))),
-            SurfaceKind::Cylinder => {
-                Ok(Some(Self::Cylinder(context.face_cylinder_payload(shape)?)))
-            }
-            SurfaceKind::Cone => Ok(Some(Self::Cone(context.face_cone_payload(shape)?))),
-            SurfaceKind::Sphere => Ok(Some(Self::Sphere(context.face_sphere_payload(shape)?))),
-            SurfaceKind::Torus => Ok(Some(Self::Torus(context.face_torus_payload(shape)?))),
+            SurfaceKind::Plane => Ok(Some(Self::Plane(context.face_plane_payload_occt(shape)?))),
+            SurfaceKind::Cylinder => Ok(Some(Self::Cylinder(
+                context.face_cylinder_payload_occt(shape)?,
+            ))),
+            SurfaceKind::Cone => Ok(Some(Self::Cone(context.face_cone_payload_occt(shape)?))),
+            SurfaceKind::Sphere => Ok(Some(Self::Sphere(context.face_sphere_payload_occt(shape)?))),
+            SurfaceKind::Torus => Ok(Some(Self::Torus(context.face_torus_payload_occt(shape)?))),
             _ => Ok(None),
         }
     }
@@ -611,6 +615,104 @@ impl PortedFaceSurface {
 }
 
 impl Context {
+    pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
+        let endpoints = self.edge_endpoints_occt(shape)?;
+
+        if let Ok(payload) = self.edge_line_payload_occt(shape) {
+            return Ok(ported_line_geometry(payload, endpoints));
+        }
+
+        let edge_length = shape.linear_length();
+        let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
+
+        if let Ok(payload) = self.edge_circle_payload_occt(shape) {
+            return Ok(ported_periodic_curve_geometry(
+                CurveKind::Circle,
+                endpoints,
+                start_tangent,
+                edge_length,
+                TAU,
+                |point| Some(circle_parameter(payload, point)),
+                circle_derivative_from_parameter(payload),
+                |start_parameter, end_parameter| {
+                    PortedCurve::Circle(payload).length_with_geometry(EdgeGeometry {
+                        kind: CurveKind::Circle,
+                        start_parameter,
+                        end_parameter,
+                        is_closed: false,
+                        is_periodic: true,
+                        period: TAU,
+                    })
+                },
+            ));
+        }
+
+        if let Ok(payload) = self.edge_ellipse_payload_occt(shape) {
+            return Ok(ported_periodic_curve_geometry(
+                CurveKind::Ellipse,
+                endpoints,
+                start_tangent,
+                edge_length,
+                TAU,
+                |point| ellipse_parameter(payload, point),
+                ellipse_derivative_from_parameter(payload),
+                |start_parameter, end_parameter| {
+                    PortedCurve::Ellipse(payload).length_with_geometry(EdgeGeometry {
+                        kind: CurveKind::Ellipse,
+                        start_parameter,
+                        end_parameter,
+                        is_closed: false,
+                        is_periodic: true,
+                        period: TAU,
+                    })
+                },
+            ));
+        }
+
+        Ok(None)
+    }
+
+    pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
+        let bounds = self.face_uv_bounds_occt(shape)?;
+
+        if self.face_plane_payload_occt(shape).is_ok() {
+            return Ok(Some(ported_analytic_face_geometry(
+                SurfaceKind::Plane,
+                bounds,
+            )));
+        }
+
+        if self.face_cylinder_payload_occt(shape).is_ok() {
+            return Ok(Some(ported_analytic_face_geometry(
+                SurfaceKind::Cylinder,
+                bounds,
+            )));
+        }
+
+        if self.face_cone_payload_occt(shape).is_ok() {
+            return Ok(Some(ported_analytic_face_geometry(
+                SurfaceKind::Cone,
+                bounds,
+            )));
+        }
+
+        if self.face_sphere_payload_occt(shape).is_ok() {
+            return Ok(Some(ported_analytic_face_geometry(
+                SurfaceKind::Sphere,
+                bounds,
+            )));
+        }
+
+        if self.face_torus_payload_occt(shape).is_ok() {
+            return Ok(Some(ported_analytic_face_geometry(
+                SurfaceKind::Torus,
+                bounds,
+            )));
+        }
+
+        Ok(None)
+    }
+
     pub fn ported_edge_curve(&self, shape: &Shape) -> Result<Option<PortedCurve>, Error> {
         PortedCurve::from_context(self, shape)
     }
@@ -699,41 +801,41 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<Option<PortedOffsetSurface>, Error> {
-        if self.face_geometry(shape)?.kind != SurfaceKind::Offset {
+        if self.face_geometry_occt(shape)?.kind != SurfaceKind::Offset {
             return Ok(None);
         }
 
-        let payload = self.face_offset_payload(shape)?;
-        let basis_geometry = self.face_offset_basis_geometry(shape)?;
+        let payload = self.face_offset_payload_occt(shape)?;
+        let basis_geometry = self.face_offset_basis_geometry_occt(shape)?;
         let basis = match payload.basis_surface_kind {
             SurfaceKind::Plane => PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(
-                self.face_offset_basis_plane_payload(shape)?,
+                self.face_offset_basis_plane_payload_occt(shape)?,
             )),
             SurfaceKind::Cylinder => PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(
-                self.face_offset_basis_cylinder_payload(shape)?,
+                self.face_offset_basis_cylinder_payload_occt(shape)?,
             )),
             SurfaceKind::Cone => PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(
-                self.face_offset_basis_cone_payload(shape)?,
+                self.face_offset_basis_cone_payload_occt(shape)?,
             )),
             SurfaceKind::Sphere => PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(
-                self.face_offset_basis_sphere_payload(shape)?,
+                self.face_offset_basis_sphere_payload_occt(shape)?,
             )),
             SurfaceKind::Torus => PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(
-                self.face_offset_basis_torus_payload(shape)?,
+                self.face_offset_basis_torus_payload_occt(shape)?,
             )),
             SurfaceKind::Revolution => {
-                let payload = self.face_offset_basis_revolution_payload(shape)?;
-                let basis_geometry = self.face_offset_basis_curve_geometry(shape)?;
+                let payload = self.face_offset_basis_revolution_payload_occt(shape)?;
+                let basis_geometry = self.face_offset_basis_curve_geometry_occt(shape)?;
                 let basis_curve = match payload.basis_curve_kind {
                     CurveKind::Line => {
-                        PortedCurve::Line(self.face_offset_basis_curve_line_payload(shape)?)
+                        PortedCurve::Line(self.face_offset_basis_curve_line_payload_occt(shape)?)
                     }
-                    CurveKind::Circle => {
-                        PortedCurve::Circle(self.face_offset_basis_curve_circle_payload(shape)?)
-                    }
-                    CurveKind::Ellipse => {
-                        PortedCurve::Ellipse(self.face_offset_basis_curve_ellipse_payload(shape)?)
-                    }
+                    CurveKind::Circle => PortedCurve::Circle(
+                        self.face_offset_basis_curve_circle_payload_occt(shape)?,
+                    ),
+                    CurveKind::Ellipse => PortedCurve::Ellipse(
+                        self.face_offset_basis_curve_ellipse_payload_occt(shape)?,
+                    ),
                     _ => return Ok(None),
                 };
                 PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
@@ -743,18 +845,18 @@ impl Context {
                 })
             }
             SurfaceKind::Extrusion => {
-                let payload = self.face_offset_basis_extrusion_payload(shape)?;
-                let basis_geometry = self.face_offset_basis_curve_geometry(shape)?;
+                let payload = self.face_offset_basis_extrusion_payload_occt(shape)?;
+                let basis_geometry = self.face_offset_basis_curve_geometry_occt(shape)?;
                 let basis_curve = match payload.basis_curve_kind {
                     CurveKind::Line => {
-                        PortedCurve::Line(self.face_offset_basis_curve_line_payload(shape)?)
+                        PortedCurve::Line(self.face_offset_basis_curve_line_payload_occt(shape)?)
                     }
-                    CurveKind::Circle => {
-                        PortedCurve::Circle(self.face_offset_basis_curve_circle_payload(shape)?)
-                    }
-                    CurveKind::Ellipse => {
-                        PortedCurve::Ellipse(self.face_offset_basis_curve_ellipse_payload(shape)?)
-                    }
+                    CurveKind::Circle => PortedCurve::Circle(
+                        self.face_offset_basis_curve_circle_payload_occt(shape)?,
+                    ),
+                    CurveKind::Ellipse => PortedCurve::Ellipse(
+                        self.face_offset_basis_curve_ellipse_payload_occt(shape)?,
+                    ),
                     _ => return Ok(None),
                 };
                 PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
@@ -1235,4 +1337,234 @@ impl Atan2Components for [f64; 3] {
 
 fn clamp(value: f64, min: f64, max: f64) -> f64 {
     value.max(min).min(max)
+}
+
+fn ported_line_geometry(payload: LinePayload, endpoints: EdgeEndpoints) -> Option<EdgeGeometry> {
+    let start_parameter = line_parameter(payload, endpoints.start)?;
+    let end_parameter = line_parameter(payload, endpoints.end)?;
+    Some(EdgeGeometry {
+        kind: CurveKind::Line,
+        start_parameter,
+        end_parameter,
+        is_closed: approx_points_eq(endpoints.start, endpoints.end, 1.0e-7),
+        is_periodic: false,
+        period: 0.0,
+    })
+}
+
+fn ported_periodic_curve_geometry<F, G, H>(
+    kind: CurveKind,
+    endpoints: EdgeEndpoints,
+    start_tangent: [f64; 3],
+    edge_length: f64,
+    period: f64,
+    parameter_at_point: F,
+    derivative_at_parameter: G,
+    length_with_parameters: H,
+) -> Option<EdgeGeometry>
+where
+    F: Fn([f64; 3]) -> Option<f64>,
+    G: Fn(f64) -> [f64; 3],
+    H: Fn(f64, f64) -> f64,
+{
+    let start_parameter = parameter_at_point(endpoints.start)?;
+    let end_parameter_base = parameter_at_point(endpoints.end)?;
+    let direction_sign = if dot3(derivative_at_parameter(start_parameter), start_tangent) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let closed = approx_points_eq(endpoints.start, endpoints.end, 1.0e-7);
+    let (start_parameter, end_parameter) = if closed && edge_length > 1.0e-9 {
+        if direction_sign >= 0.0 {
+            let start_parameter = normalize_periodic_parameter(start_parameter, period);
+            (start_parameter, start_parameter + period)
+        } else {
+            let end_parameter = normalize_periodic_parameter(end_parameter_base, period);
+            (end_parameter + period, end_parameter)
+        }
+    } else {
+        let end_parameter = select_periodic_end_parameter(
+            direction_sign,
+            edge_length,
+            period,
+            start_parameter,
+            end_parameter_base,
+            length_with_parameters,
+        )?;
+        (start_parameter, end_parameter)
+    };
+    let (start_parameter, end_parameter) =
+        canonicalize_periodic_parameters(start_parameter, end_parameter, period, direction_sign);
+    Some(EdgeGeometry {
+        kind,
+        start_parameter,
+        end_parameter,
+        is_closed: closed,
+        is_periodic: true,
+        period,
+    })
+}
+
+fn select_periodic_end_parameter<H>(
+    direction_sign: f64,
+    edge_length: f64,
+    period: f64,
+    start_parameter: f64,
+    end_parameter_base: f64,
+    length_with_parameters: H,
+) -> Option<f64>
+where
+    H: Fn(f64, f64) -> f64,
+{
+    let candidates = [
+        end_parameter_base - period,
+        end_parameter_base,
+        end_parameter_base + period,
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            let delta = *candidate - start_parameter;
+            if direction_sign >= 0.0 {
+                delta >= -1.0e-9
+            } else {
+                delta <= 1.0e-9
+            }
+        })
+        .min_by(|lhs, rhs| {
+            let lhs_error = (length_with_parameters(start_parameter, *lhs) - edge_length).abs();
+            let rhs_error = (length_with_parameters(start_parameter, *rhs) - edge_length).abs();
+            lhs_error.total_cmp(&rhs_error)
+        })
+}
+
+fn canonicalize_periodic_parameters(
+    mut start_parameter: f64,
+    mut end_parameter: f64,
+    period: f64,
+    direction_sign: f64,
+) -> (f64, f64) {
+    let period = period.abs();
+    start_parameter = snap_periodic_parameter(start_parameter, period);
+    end_parameter = snap_periodic_parameter(end_parameter, period);
+
+    if direction_sign >= 0.0 {
+        while start_parameter < -1.0e-9 {
+            start_parameter += period;
+            end_parameter += period;
+        }
+        while start_parameter >= period - 1.0e-9 && end_parameter >= period + 1.0e-9 {
+            start_parameter -= period;
+            end_parameter -= period;
+        }
+    } else {
+        while end_parameter < -1.0e-9 {
+            start_parameter += period;
+            end_parameter += period;
+        }
+        while end_parameter >= period - 1.0e-9 && start_parameter >= period + 1.0e-9 {
+            start_parameter -= period;
+            end_parameter -= period;
+        }
+    }
+
+    (
+        snap_periodic_parameter(start_parameter, period),
+        snap_periodic_parameter(end_parameter, period),
+    )
+}
+
+fn ported_analytic_face_geometry(kind: SurfaceKind, bounds: FaceUvBounds) -> FaceGeometry {
+    let (is_u_closed, is_v_closed, is_u_periodic, is_v_periodic, u_period, v_period) = match kind {
+        SurfaceKind::Plane => (false, false, false, false, 0.0, 0.0),
+        SurfaceKind::Cylinder | SurfaceKind::Cone | SurfaceKind::Sphere => {
+            (true, false, true, false, TAU, 0.0)
+        }
+        SurfaceKind::Torus => (true, true, true, true, TAU, TAU),
+        _ => (false, false, false, false, 0.0, 0.0),
+    };
+
+    FaceGeometry {
+        kind,
+        u_min: bounds.u_min,
+        u_max: bounds.u_max,
+        v_min: bounds.v_min,
+        v_max: bounds.v_max,
+        is_u_closed,
+        is_v_closed,
+        is_u_periodic,
+        is_v_periodic,
+        u_period,
+        v_period,
+    }
+}
+
+fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
+    let period = period.abs();
+    if period <= 1.0e-12 {
+        return value;
+    }
+
+    let mut normalized = value % period;
+    if normalized < 0.0 {
+        normalized += period;
+    }
+    if normalized >= period - 1.0e-9 {
+        0.0
+    } else {
+        normalized
+    }
+}
+
+fn snap_periodic_parameter(value: f64, period: f64) -> f64 {
+    if value.abs() <= 1.0e-9 {
+        0.0
+    } else if (value - period).abs() <= 1.0e-9 {
+        period
+    } else if (value + period).abs() <= 1.0e-9 {
+        0.0
+    } else {
+        value
+    }
+}
+
+fn line_parameter(payload: LinePayload, point: [f64; 3]) -> Option<f64> {
+    let direction_norm_sq = dot3(payload.direction, payload.direction);
+    if direction_norm_sq <= 1.0e-24 {
+        None
+    } else {
+        Some(dot3(subtract3(point, payload.origin), payload.direction) / direction_norm_sq)
+    }
+}
+
+fn circle_parameter(payload: CirclePayload, point: [f64; 3]) -> f64 {
+    subtract3(point, payload.center).atan2_components(payload.x_direction, payload.y_direction)
+}
+
+fn ellipse_parameter(payload: EllipsePayload, point: [f64; 3]) -> Option<f64> {
+    if payload.major_radius.abs() <= 1.0e-12 || payload.minor_radius.abs() <= 1.0e-12 {
+        return None;
+    }
+
+    let relative = subtract3(point, payload.center);
+    Some(
+        (dot3(relative, payload.y_direction) / payload.minor_radius)
+            .atan2(dot3(relative, payload.x_direction) / payload.major_radius),
+    )
+}
+
+fn circle_derivative_from_parameter(payload: CirclePayload) -> impl Fn(f64) -> [f64; 3] {
+    move |parameter| circle_derivative(payload, parameter)
+}
+
+fn ellipse_derivative_from_parameter(payload: EllipsePayload) -> impl Fn(f64) -> [f64; 3] {
+    move |parameter| ellipse_derivative(payload, parameter)
+}
+
+fn approx_points_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
+    (lhs[0] - rhs[0]).abs() <= tolerance
+        && (lhs[1] - rhs[1]).abs() <= tolerance
+        && (lhs[2] - rhs[2]).abs() <= tolerance
 }

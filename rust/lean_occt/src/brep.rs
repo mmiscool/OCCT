@@ -7,9 +7,9 @@ use crate::ported_geometry::{
     PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
-    ConePayload, Context, CylinderPayload, EdgeGeometry, Error, FaceGeometry, FaceSample, LoopRole,
-    Mesh, MeshParams, Orientation, PlanePayload, PortedCurve, PortedSurface, Shape, ShapeKind,
-    ShapeSummary, SpherePayload, TopologySnapshot, TorusPayload,
+    ConePayload, Context, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error, FaceGeometry,
+    FaceSample, LoopRole, Mesh, MeshParams, Orientation, PlanePayload, PortedCurve, PortedSurface,
+    Shape, ShapeKind, ShapeSummary, SpherePayload, TopologySnapshot, TorusPayload,
 };
 
 const SUMMARY_VOLUME_MESH_PARAMS: MeshParams = MeshParams {
@@ -209,7 +209,7 @@ impl Context {
             .enumerate()
             .map(|(index, edge_shape)| {
                 let topology_edge = topology_edge(&topology, index)?;
-                let geometry = self.edge_geometry(edge_shape)?;
+                let geometry = self.edge_geometry_occt(edge_shape)?;
                 let ported_curve =
                     PortedCurve::from_context_with_geometry(self, edge_shape, geometry)?;
                 let adjacent_face_indices = adjacent_face_indices(&topology, index)?;
@@ -238,7 +238,7 @@ impl Context {
             .iter()
             .enumerate()
             .map(|(index, face_shape)| {
-                let geometry = self.face_geometry(face_shape)?;
+                let geometry = self.face_geometry_occt(face_shape)?;
                 let ported_surface =
                     PortedSurface::from_context_with_geometry(self, face_shape, geometry)?;
                 let ported_face_surface = ported_face_surface_descriptor_from_surface(
@@ -366,6 +366,62 @@ impl Context {
             faces,
         })
     }
+
+    pub fn ported_vertex_point(&self, shape: &Shape) -> Result<Option<[f64; 3]>, Error> {
+        let topology = self.topology(shape)?;
+        let counts = ShapeCounts {
+            compound_count: self.subshape_count(shape, ShapeKind::Compound)?,
+            compsolid_count: self.subshape_count(shape, ShapeKind::CompSolid)?,
+            solid_count: self.subshape_count(shape, ShapeKind::Solid)?,
+            shell_count: self.subshape_count(shape, ShapeKind::Shell)?,
+            face_count: topology.faces.len(),
+            wire_count: topology.wires.len(),
+            edge_count: topology.edges.len(),
+            vertex_count: topology.vertex_positions.len(),
+        };
+        if classify_root_kind(counts) != ShapeKind::Vertex {
+            return Ok(None);
+        }
+
+        let [point] = topology.vertex_positions.as_slice() else {
+            return Err(Error::new(format!(
+                "expected exactly one vertex in vertex topology, found {}",
+                topology.vertex_positions.len()
+            )));
+        };
+        Ok(Some(*point))
+    }
+
+    pub fn ported_edge_endpoints(&self, shape: &Shape) -> Result<Option<EdgeEndpoints>, Error> {
+        let topology = self.topology(shape)?;
+        let counts = ShapeCounts {
+            compound_count: self.subshape_count(shape, ShapeKind::Compound)?,
+            compsolid_count: self.subshape_count(shape, ShapeKind::CompSolid)?,
+            solid_count: self.subshape_count(shape, ShapeKind::Solid)?,
+            shell_count: self.subshape_count(shape, ShapeKind::Shell)?,
+            face_count: topology.faces.len(),
+            wire_count: topology.wires.len(),
+            edge_count: topology.edges.len(),
+            vertex_count: topology.vertex_positions.len(),
+        };
+        if classify_root_kind(counts) != ShapeKind::Edge {
+            return Ok(None);
+        }
+
+        let [edge] = topology.edges.as_slice() else {
+            return Err(Error::new(format!(
+                "expected exactly one edge in edge topology, found {}",
+                topology.edges.len()
+            )));
+        };
+        let (Some(start), Some(end)) = (
+            optional_vertex_position(&topology, edge.start_vertex),
+            optional_vertex_position(&topology, edge.end_vertex),
+        ) else {
+            return Err(Error::new("Edge did not contain two endpoint vertices."));
+        };
+        Ok(Some(EdgeEndpoints { start, end }))
+    }
 }
 
 fn ported_topology_snapshot(
@@ -376,7 +432,7 @@ fn ported_topology_snapshot(
     for face_shape in &face_shapes {
         let face_wire_shapes = context.subshapes_occt(face_shape, ShapeKind::Wire)?;
         if face_wire_shapes.len() > 1
-            && context.face_geometry(face_shape)?.kind != crate::SurfaceKind::Plane
+            && context.face_geometry_occt(face_shape)?.kind != crate::SurfaceKind::Plane
         {
             return Ok(None);
         }
@@ -385,7 +441,7 @@ fn ported_topology_snapshot(
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
     let vertex_positions = vertex_shapes
         .iter()
-        .map(|vertex_shape| context.vertex_point(vertex_shape))
+        .map(|vertex_shape| context.vertex_point_occt(vertex_shape))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let edge_shapes = context.subshapes_occt(shape, ShapeKind::Edge)?;
@@ -481,8 +537,8 @@ fn root_edge_topology(
     edge_shape: &Shape,
     vertex_positions: &[[f64; 3]],
 ) -> Result<RootEdgeTopology, Error> {
-    let geometry = context.edge_geometry(edge_shape)?;
-    let endpoints = context.edge_endpoints(edge_shape)?;
+    let geometry = context.edge_geometry_occt(edge_shape)?;
+    let endpoints = context.edge_endpoints_occt(edge_shape)?;
     Ok(RootEdgeTopology {
         geometry,
         start_vertex: match_vertex_index(vertex_positions, endpoints.start),
@@ -614,7 +670,7 @@ fn root_wire_topology_from_snapshot(
         );
 
         let geometry =
-            oriented_edge_geometry(context.edge_geometry(local_edge_shape)?, orientation);
+            oriented_edge_geometry(context.edge_geometry_occt(local_edge_shape)?, orientation);
         let length = edge_length(local_edge_shape);
         let matches = root_edges
             .iter()
@@ -732,11 +788,11 @@ fn ported_face_topology(
 
     let mut planar_face = None;
     if face_wire_shapes.len() > 1 {
-        let face_geometry = context.face_geometry(face_shape)?;
+        let face_geometry = context.face_geometry_occt(face_shape)?;
         if face_geometry.kind != crate::SurfaceKind::Plane {
             return Ok(None);
         }
-        planar_face = Some((context.face_plane_payload(face_shape)?, face_geometry));
+        planar_face = Some((context.face_plane_payload_occt(face_shape)?, face_geometry));
     }
 
     for face_wire_shape in &face_wire_shapes {
@@ -879,8 +935,8 @@ fn wire_occurrence(
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<WireOccurrence>, Error> {
-    let geometry = context.edge_geometry(edge_shape)?;
-    let endpoints = context.edge_endpoints(edge_shape)?;
+    let geometry = context.edge_geometry_occt(edge_shape)?;
+    let endpoints = context.edge_endpoints_occt(edge_shape)?;
     let Some(mut start_vertex) = match_vertex_index(vertex_positions, endpoints.start) else {
         return Ok(None);
     };
@@ -1107,7 +1163,7 @@ pub(crate) fn ported_swept_face_surface(
 
     match face_geometry.kind {
         crate::SurfaceKind::Extrusion => {
-            let payload = context.face_extrusion_payload(face_shape)?;
+            let payload = context.face_extrusion_payload_occt(face_shape)?;
             let basis = select_swept_face_basis_curve(
                 face_curve_candidates(
                     &topology.loops,
@@ -1133,7 +1189,7 @@ pub(crate) fn ported_swept_face_surface(
             }))
         }
         crate::SurfaceKind::Revolution => {
-            let payload = context.face_revolution_payload(face_shape)?;
+            let payload = context.face_revolution_payload_occt(face_shape)?;
             let basis = select_swept_face_basis_curve(
                 face_curve_candidates(
                     &topology.loops,
@@ -1167,7 +1223,7 @@ pub(crate) fn ported_face_area(
     context: &Context,
     face_shape: &Shape,
 ) -> Result<Option<f64>, Error> {
-    let face_geometry = context.face_geometry(face_shape)?;
+    let face_geometry = context.face_geometry_occt(face_shape)?;
     let topology = match single_face_topology(context, face_shape)? {
         Some(topology) => topology,
         None => return Ok(None),
@@ -1247,7 +1303,7 @@ fn single_face_topology(
         .iter()
         .enumerate()
         .map(|(index, edge_shape)| {
-            let geometry = context.edge_geometry(edge_shape)?;
+            let geometry = context.edge_geometry_occt(edge_shape)?;
             let ported_curve =
                 PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
             Ok(BrepEdge {

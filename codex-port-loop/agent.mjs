@@ -16,7 +16,6 @@ const codexBin = process.platform === "win32"
   ? path.join(packageRoot, "node_modules", ".bin", "codex.cmd")
   : path.join(packageRoot, "node_modules", ".bin", "codex");
 
-const promptText = "Keep going porting from C++ to rust.";
 const retryDelayMs = 10000;
 const autoCompactTokenLimit = 120000;
 const startupDelayMs = 20000;
@@ -26,6 +25,7 @@ const defaultConfig = {
   projectPath: packageRoot,
   model: "gpt-5.4",
   reasoningLevel: "xhigh",
+  loopPrompt: "Keep going porting from C++ to rust.",
   delayBetweenLoopsMs: 1000,
 };
 
@@ -67,16 +67,16 @@ async function main() {
 
   console.log(`Config file: ${configFile}`);
   console.log(`Project path: ${config.projectPath}`);
-  console.log(`Prompt: ${promptText}`);
+  console.log(`Prompt: ${config.loopPrompt}`);
   console.log(`Model: ${config.model}`);
   console.log(`Reasoning: ${config.reasoningLevel}`);
   console.log(`Delay between loops: ${config.delayBetweenLoopsMs} ms`);
   console.log("Sandbox: danger-full-access");
   console.log("Approval policy: never");
   console.log(`Auto compaction threshold: ${autoCompactTokenLimit} tokens`);
-  console.log(`Loop starts in ${Math.floor(startupDelayMs / 1000)} seconds...`);
+  console.log(`Loop starts in ${Math.floor(startupDelayMs / 1000)} seconds unless you press Enter to skip...`);
 
-  await delay(startupDelayMs);
+  await countdownDelay(startupDelayMs, "Loop start");
 
   if (state.sessionId) {
     console.log(`Resuming saved session: ${state.sessionId}`);
@@ -117,14 +117,14 @@ async function main() {
         await saveState(state);
       } else if (!stopRequested) {
         console.error(`Turn failed. Retrying in ${retryDelayMs} ms.`);
-        await delay(retryDelayMs);
+        await countdownDelay(retryDelayMs, "Retry");
       }
 
       continue;
     }
 
     if (!stopRequested && config.delayBetweenLoopsMs > 0) {
-      await delay(config.delayBetweenLoopsMs);
+      await countdownDelay(config.delayBetweenLoopsMs, "Next loop");
     }
   }
 
@@ -203,7 +203,7 @@ function buildNewTurnArgs(config) {
   return [
     "exec",
     ...buildSharedArgs(config),
-    promptText,
+    config.loopPrompt,
   ];
 }
 
@@ -213,7 +213,7 @@ function buildResumeArgs(config, sessionId) {
     "resume",
     ...buildSharedArgs(config),
     sessionId,
-    promptText,
+    config.loopPrompt,
   ];
 }
 
@@ -317,6 +317,7 @@ function normalizeConfig(config) {
   const projectPath = path.resolve(agentDir, String(merged.projectPath ?? "").trim());
   const model = String(merged.model ?? "").trim();
   const reasoningLevel = String(merged.reasoningLevel ?? "").trim();
+  const loopPrompt = String(merged.loopPrompt ?? "").trim();
   const delayBetweenLoopsMs = Number.parseInt(String(merged.delayBetweenLoopsMs ?? ""), 10);
 
   if (!model) {
@@ -333,10 +334,15 @@ function normalizeConfig(config) {
     throw new Error(`Invalid config in ${configFile}: "delayBetweenLoopsMs" must be a non-negative integer.`);
   }
 
+  if (!loopPrompt) {
+    throw new Error(`Invalid config in ${configFile}: "loopPrompt" must be a non-empty string.`);
+  }
+
   return {
     projectPath,
     model,
     reasoningLevel,
+    loopPrompt,
     delayBetweenLoopsMs,
   };
 }
@@ -379,6 +385,54 @@ function question(rl, prompt) {
   return new Promise((resolve) => rl.question(prompt, resolve));
 }
 
+async function countdownDelay(ms, label) {
+  const totalSeconds = Math.ceil(ms / 1000);
+  if (totalSeconds <= 0) {
+    return;
+  }
+
+  printSection("countdown", `${label} begins in ${totalSeconds}s. Press Enter to skip.`);
+
+  if (!process.stdin.isTTY) {
+    for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
+      process.stdout.write(`\r${label} in ${secondsRemaining}s.                    `);
+      await delay(1000);
+    }
+    process.stdout.write(`\r${label} now.                         \n`);
+    return;
+  }
+
+  let skipped = false;
+  const onData = (chunk) => {
+    const text = chunk.toString();
+    if (text === "\n" || text === "\r\n" || text.trim() === "") {
+      skipped = true;
+    }
+  };
+
+  process.stdin.resume();
+  process.stdin.on("data", onData);
+
+  try {
+    for (let secondsRemaining = totalSeconds; secondsRemaining > 0; secondsRemaining -= 1) {
+      process.stdout.write(`\r${label} in ${secondsRemaining}s. Press Enter to skip.   `);
+      await delay(1000);
+      if (skipped) {
+        break;
+      }
+    }
+  } finally {
+    process.stdin.removeListener("data", onData);
+  }
+
+  if (skipped) {
+    process.stdout.write(`\r${label} skipped.                     \n`);
+    return;
+  }
+
+  process.stdout.write(`\r${label} now.                         \n`);
+}
+
 function printEvent(event) {
   const titleParts = [String(event.type ?? "event")];
   if (event.item?.type) {
@@ -389,22 +443,28 @@ function printEvent(event) {
 
   if (typeof event.item?.text === "string" && event.item.text.trim()) {
     body = event.item.text;
-  } else if (event.usage) {
-    body = JSON.stringify(event.usage, null, 2);
+  } else if (event.usage && typeof event.usage === "object") {
+    body = event.usage;
   } else {
-    body = JSON.stringify(event, null, 2);
+    body = event;
   }
 
   printSection(titleParts.join(" | "), body);
 }
 
 function printSection(title, body) {
-  const text = body == null ? "" : String(body).trimEnd();
   console.log("");
   console.log(eventDivider);
   console.log(title);
-  if (text) {
-    console.log(text);
+  if (typeof body === "string") {
+    const text = body.trimEnd();
+    if (text) {
+      console.log(text);
+    }
+    return;
+  }
+  if (body != null) {
+    console.log(body);
   }
 }
 
