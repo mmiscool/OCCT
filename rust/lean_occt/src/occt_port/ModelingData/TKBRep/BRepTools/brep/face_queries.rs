@@ -1,6 +1,6 @@
 use super::face_metrics::ported_face_area_from_surface;
 use super::face_prepare::{prepare_face_surface_with_geometry, prepare_face_surface_with_route};
-use super::topology::{single_face_topology_with_route, FaceSurfaceRoute};
+use super::face_topology::{single_face_topology_with_route, FaceSurfaceRoute};
 use super::*;
 
 pub(crate) fn ported_face_surface_descriptor(

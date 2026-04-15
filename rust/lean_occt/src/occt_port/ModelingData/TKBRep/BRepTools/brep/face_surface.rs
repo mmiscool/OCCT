@@ -1,7 +1,8 @@
 use super::face_metrics::ported_face_area_from_surface;
 use super::face_prepare::prepare_face_surface_with_route;
+use super::face_topology::FaceSurfaceRoute;
 use super::summary::LazyMeshFaceFallback;
-use super::topology::{face_adjacent_face_indices, face_loops, FaceSurfaceRoute};
+use super::topology::{face_adjacent_face_indices, face_loops};
 use super::*;
 
 pub(super) fn ported_brep_faces(

@@ -1,5 +1,5 @@
+use super::face_topology::FaceSurfaceRoute;
 use super::swept_face::ported_swept_face_surface_with_route;
-use super::topology::FaceSurfaceRoute;
 use super::*;
 
 pub(super) struct PreparedFaceSurface {

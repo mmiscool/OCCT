@@ -5,6 +5,7 @@ mod face_metrics;
 mod face_prepare;
 mod face_queries;
 mod face_surface;
+mod face_topology;
 mod math;
 mod mesh;
 mod summary;

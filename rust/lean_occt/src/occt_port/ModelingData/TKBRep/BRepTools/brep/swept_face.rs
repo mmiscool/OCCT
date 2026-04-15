@@ -1,9 +1,6 @@
+use super::face_topology::{single_face_topology_with_route, FaceSurfaceRoute, SingleFaceTopology};
+use super::topology::{oriented_edge_geometry, RootEdgeTopology};
 use super::*;
-
-use super::topology::{
-    oriented_edge_geometry, single_face_topology_with_route, FaceSurfaceRoute, RootEdgeTopology,
-    SingleFaceTopology,
-};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FaceCurveCandidate {
