@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
+mod brep_materialize;
 mod face_metrics;
 mod face_prepare;
 mod face_queries;
@@ -13,6 +14,7 @@ mod summary;
 mod swept_face;
 mod topology;
 
+use self::brep_materialize::{ported_brep_edges, ported_brep_vertices, ported_brep_wires};
 pub(crate) use self::face_queries::{ported_face_area, ported_face_surface_descriptor};
 use self::face_surface::ported_brep_faces;
 use self::math::{add3, approx_eq, cross3, dot3, norm3, normalize3, scale3, subtract3};
@@ -22,9 +24,7 @@ use self::mesh::{
 };
 use self::shape_queries::{ported_edge_endpoints, ported_vertex_point};
 use self::summary::ported_shape_summary;
-use self::topology::{
-    ported_brep_edges, ported_brep_vertices, ported_brep_wires, ported_topology_snapshot,
-};
+use self::topology::ported_topology_snapshot;
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,

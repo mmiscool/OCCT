@@ -1,4 +1,4 @@
-use super::topology::ported_brep_wires;
+use super::brep_materialize::ported_brep_wires;
 use super::*;
 
 #[derive(Clone, Copy)]
