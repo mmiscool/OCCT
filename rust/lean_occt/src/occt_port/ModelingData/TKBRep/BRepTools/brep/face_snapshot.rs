@@ -201,15 +201,7 @@ fn pack_ported_face_snapshot(
         };
     }
 
-    let mut edge_faces = Vec::with_capacity(edge_count);
-    let mut edge_face_indices = Vec::new();
-    for face_indices in edge_face_lists {
-        edge_faces.push(crate::TopologyRange {
-            offset: edge_face_indices.len(),
-            count: face_indices.len(),
-        });
-        edge_face_indices.extend(face_indices);
-    }
+    let (edge_faces, edge_face_indices) = flatten_edge_face_lists(edge_face_lists);
 
     Ok(Some(TopologySnapshotFaceFields {
         edge_faces,
@@ -244,6 +236,24 @@ pub(super) fn load_ported_face_snapshot(
         vertex_positions,
         edge_count,
     )
+}
+
+fn flatten_edge_face_lists(
+    edge_face_lists: Vec<Vec<usize>>,
+) -> (Vec<crate::TopologyRange>, Vec<usize>) {
+    let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
+    let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
+    let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
+
+    for face_indices in edge_face_lists {
+        edge_faces.push(crate::TopologyRange {
+            offset: edge_face_indices.len(),
+            count: face_indices.len(),
+        });
+        edge_face_indices.extend(face_indices);
+    }
+
+    (edge_faces, edge_face_indices)
 }
 
 fn collect_face_wire_matches(
