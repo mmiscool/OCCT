@@ -289,7 +289,10 @@ impl PortedSurface {
         geometry: FaceGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            SurfaceKind::Plane => Ok(Some(Self::Plane(context.face_plane_payload_occt(shape)?))),
+            SurfaceKind::Plane => Ok(Some(Self::Plane(
+                ported_plane_payload(context, shape, geometry)?
+                    .unwrap_or(context.face_plane_payload_occt(shape)?),
+            ))),
             SurfaceKind::Cylinder => Ok(Some(Self::Cylinder(
                 context.face_cylinder_payload_occt(shape)?,
             ))),
@@ -1530,6 +1533,53 @@ fn ported_line_payload(
     Ok(Some(LinePayload {
         origin: subtract3(endpoints.start, scale3(direction, geometry.start_parameter)),
         direction,
+    }))
+}
+
+fn ported_plane_payload(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<PlanePayload>, Error> {
+    if geometry.kind != SurfaceKind::Plane {
+        return Ok(None);
+    }
+
+    let u_span = geometry.u_max - geometry.u_min;
+    let v_span = geometry.v_max - geometry.v_min;
+    if u_span.abs() <= 1.0e-12 || v_span.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let origin_sample = context.face_sample_occt(shape, [geometry.u_min, geometry.v_min])?;
+    let u_sample = context.face_sample_occt(shape, [geometry.u_max, geometry.v_min])?;
+    let v_sample = context.face_sample_occt(shape, [geometry.u_min, geometry.v_max])?;
+
+    let x_direction = scale3(
+        subtract3(u_sample.position, origin_sample.position),
+        1.0 / u_span,
+    );
+    let y_direction = scale3(
+        subtract3(v_sample.position, origin_sample.position),
+        1.0 / v_span,
+    );
+    let normal = cross3(x_direction, y_direction);
+
+    if norm3(x_direction) <= 1.0e-12 || norm3(y_direction) <= 1.0e-12 || norm3(normal) <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    Ok(Some(PlanePayload {
+        origin: subtract3(
+            origin_sample.position,
+            add3(
+                scale3(x_direction, geometry.u_min),
+                scale3(y_direction, geometry.v_min),
+            ),
+        ),
+        normal: normalize3(normal),
+        x_direction,
+        y_direction,
     }))
 }
 
