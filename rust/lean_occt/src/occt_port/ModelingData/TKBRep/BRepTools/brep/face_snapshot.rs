@@ -46,6 +46,12 @@ struct MatchedFaceWires {
     used_edges: BTreeSet<usize>,
 }
 
+enum PreparedPlanarFace {
+    NotRequired,
+    Loaded(PlanePayload, FaceGeometry),
+    Unsupported,
+}
+
 struct PreparedFaceTopology {
     matched_face_wires: MatchedFaceWires,
     wire_roles: Vec<LoopRole>,
@@ -65,10 +71,11 @@ impl PreparedFaceTopology {
             return Ok(None);
         }
 
-        let Some(planar_face) =
-            Self::load_planar_face(context, face_shape, face_wire_shapes.len())?
-        else {
-            return Ok(None);
+        let planar_face = match Self::load_planar_face(context, face_shape, face_wire_shapes.len())?
+        {
+            PreparedPlanarFace::NotRequired => None,
+            PreparedPlanarFace::Loaded(plane, geometry) => Some((plane, geometry)),
+            PreparedPlanarFace::Unsupported => return Ok(None),
         };
 
         let Some(matched_face_wires) = Self::collect_matched_face_wires(
@@ -97,18 +104,18 @@ impl PreparedFaceTopology {
         context: &Context,
         face_shape: &Shape,
         face_wire_count: usize,
-    ) -> Result<Option<Option<(PlanePayload, FaceGeometry)>>, Error> {
+    ) -> Result<PreparedPlanarFace, Error> {
         if face_wire_count <= 1 {
-            return Ok(Some(None));
+            return Ok(PreparedPlanarFace::NotRequired);
         }
         if !multi_wire_face_is_planar(context, face_shape, face_wire_count)? {
-            return Ok(None);
+            return Ok(PreparedPlanarFace::Unsupported);
         }
 
-        Ok(Some(Some((
+        Ok(PreparedPlanarFace::Loaded(
             context.face_plane_payload_occt(face_shape)?,
             context.face_geometry_occt(face_shape)?,
-        ))))
+        ))
     }
 
     fn collect_matched_face_wires(
