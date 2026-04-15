@@ -512,17 +512,7 @@ fn single_face_edge_raw(
 ) -> Result<BrepEdge, Error> {
     let geometry = context.edge_geometry_occt(edge_shape)?;
     let ported_curve = PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
-    Ok(BrepEdge {
-        index,
-        geometry,
-        ported_curve,
-        length: 0.0,
-        start_vertex: None,
-        end_vertex: None,
-        start_point: None,
-        end_point: None,
-        adjacent_face_indices: Vec::new(),
-    })
+    Ok(single_face_edge(index, geometry, ported_curve))
 }
 
 fn single_face_edge_public(
@@ -539,7 +529,15 @@ fn single_face_edge_public(
             Ok(ported_curve) => ported_curve,
             Err(_) => PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?,
         };
-    Ok(BrepEdge {
+    Ok(single_face_edge(index, geometry, ported_curve))
+}
+
+fn single_face_edge(
+    index: usize,
+    geometry: EdgeGeometry,
+    ported_curve: Option<PortedCurve>,
+) -> BrepEdge {
+    BrepEdge {
         index,
         geometry,
         ported_curve,
@@ -549,5 +547,5 @@ fn single_face_edge_public(
         start_point: None,
         end_point: None,
         adjacent_face_indices: Vec::new(),
-    })
+    }
 }
