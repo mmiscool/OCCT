@@ -49,10 +49,15 @@ impl PreparedFaceTopologyBuilder {
         let planar_face = if face_wire_shapes.len() <= 1 {
             None
         } else {
-            Some((
-                context.face_plane_payload_occt(&prepared_face_shape.face_shape)?,
-                context.face_geometry_occt(&prepared_face_shape.face_shape)?,
-            ))
+            let face_geometry = match context.face_geometry(&prepared_face_shape.face_shape) {
+                Ok(geometry) => geometry,
+                Err(_) => context.face_geometry_occt(&prepared_face_shape.face_shape)?,
+            };
+            let plane = match context.face_plane_payload(&prepared_face_shape.face_shape) {
+                Ok(payload) => payload,
+                Err(_) => context.face_plane_payload_occt(&prepared_face_shape.face_shape)?,
+            };
+            Some((plane, face_geometry))
         };
         let mut builder = Self {
             used_root_wire_indices: BTreeSet::new(),
