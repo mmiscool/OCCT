@@ -39,13 +39,6 @@ fn validate_ported_face_snapshot(context: &Context, face_shapes: &[Shape]) -> Re
     Ok(true)
 }
 
-struct MatchedFaceWires {
-    face_wire_indices: Vec<usize>,
-    face_wire_orientations: Vec<Orientation>,
-    face_wire_areas: Vec<f64>,
-    used_edges: BTreeSet<usize>,
-}
-
 enum PreparedPlanarFace {
     NotRequired,
     Loaded(PlanePayload, FaceGeometry),
@@ -53,8 +46,10 @@ enum PreparedPlanarFace {
 }
 
 struct PreparedFaceTopology {
-    matched_face_wires: MatchedFaceWires,
+    face_wire_indices: Vec<usize>,
+    face_wire_orientations: Vec<Orientation>,
     wire_roles: Vec<LoopRole>,
+    used_edges: BTreeSet<usize>,
 }
 
 impl PreparedFaceTopology {
@@ -78,7 +73,11 @@ impl PreparedFaceTopology {
             PreparedPlanarFace::Unsupported => return Ok(None),
         };
 
-        let Some(matched_face_wires) = Self::collect_matched_face_wires(
+        let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
+        let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
+        let mut face_wire_areas = Vec::new();
+        let mut used_edges = BTreeSet::new();
+        let Some(()) = Self::collect_matched_face_wires(
             context,
             &face_wire_shapes,
             root_wires,
@@ -86,17 +85,24 @@ impl PreparedFaceTopology {
             edge_shapes,
             vertex_positions,
             planar_face,
+            &mut face_wire_indices,
+            &mut face_wire_orientations,
+            &mut face_wire_areas,
+            &mut used_edges,
         )?
         else {
             return Ok(None);
         };
-        let Some(wire_roles) = Self::classify_wire_roles(&matched_face_wires) else {
+        let Some(wire_roles) = Self::classify_wire_roles(face_wire_indices.len(), &face_wire_areas)
+        else {
             return Ok(None);
         };
 
         Ok(Some(Self {
-            matched_face_wires,
+            face_wire_indices,
+            face_wire_orientations,
             wire_roles,
+            used_edges,
         }))
     }
 
@@ -126,12 +132,12 @@ impl PreparedFaceTopology {
         edge_shapes: &[Shape],
         vertex_positions: &[[f64; 3]],
         planar_face: Option<(PlanePayload, FaceGeometry)>,
-    ) -> Result<Option<MatchedFaceWires>, Error> {
+        face_wire_indices: &mut Vec<usize>,
+        face_wire_orientations: &mut Vec<Orientation>,
+        face_wire_areas: &mut Vec<f64>,
+        used_edges: &mut BTreeSet<usize>,
+    ) -> Result<Option<()>, Error> {
         let mut used_root_wire_indices = BTreeSet::new();
-        let mut used_edges = BTreeSet::new();
-        let mut face_wire_indices = Vec::with_capacity(face_wire_shapes.len());
-        let mut face_wire_orientations = Vec::with_capacity(face_wire_shapes.len());
-        let mut face_wire_areas = Vec::new();
 
         for face_wire_shape in face_wire_shapes {
             let Some(face_wire_topology) =
@@ -166,20 +172,17 @@ impl PreparedFaceTopology {
             }
         }
 
-        Ok(Some(MatchedFaceWires {
-            face_wire_indices,
-            face_wire_orientations,
-            face_wire_areas,
-            used_edges,
-        }))
+        Ok(Some(()))
     }
 
-    fn classify_wire_roles(matched_face_wires: &MatchedFaceWires) -> Option<Vec<LoopRole>> {
-        match matched_face_wires.face_wire_indices.len() {
+    fn classify_wire_roles(
+        face_wire_count: usize,
+        face_wire_areas: &[f64],
+    ) -> Option<Vec<LoopRole>> {
+        match face_wire_count {
             1 => Some(vec![LoopRole::Outer]),
             _ => {
-                let (outer_offset, outer_area) = matched_face_wires
-                    .face_wire_areas
+                let (outer_offset, outer_area) = face_wire_areas
                     .iter()
                     .copied()
                     .enumerate()
@@ -189,8 +192,7 @@ impl PreparedFaceTopology {
                 }
 
                 Some(
-                    matched_face_wires
-                        .face_wire_areas
+                    face_wire_areas
                         .iter()
                         .enumerate()
                         .map(|(offset, _)| {
@@ -260,21 +262,21 @@ impl FaceSnapshotAccumulator {
         &mut self,
         face_index: usize,
         face_wire_offset: usize,
-        matched_face_wires: MatchedFaceWires,
+        face_wire_indices: Vec<usize>,
+        face_wire_orientations: Vec<Orientation>,
+        used_edges: BTreeSet<usize>,
         wire_roles: Vec<LoopRole>,
     ) -> Option<()> {
-        let face_wire_count = matched_face_wires.face_wire_indices.len();
-        self.face_wire_indices
-            .extend(matched_face_wires.face_wire_indices);
-        self.face_wire_orientations
-            .extend(matched_face_wires.face_wire_orientations);
+        let face_wire_count = face_wire_indices.len();
+        self.face_wire_indices.extend(face_wire_indices);
+        self.face_wire_orientations.extend(face_wire_orientations);
         self.faces.push(crate::TopologyRange {
             offset: face_wire_offset,
             count: face_wire_count,
         });
         self.face_wire_roles.extend(wire_roles);
 
-        for edge_index in matched_face_wires.used_edges {
+        for edge_index in used_edges {
             let edge_faces = self.edge_face_lists.get_mut(edge_index)?;
             edge_faces.push(face_index);
         }
@@ -291,7 +293,9 @@ impl FaceSnapshotAccumulator {
         self.append_face_topology_outputs(
             face_index,
             face_wire_offset,
-            prepared_face_topology.matched_face_wires,
+            prepared_face_topology.face_wire_indices,
+            prepared_face_topology.face_wire_orientations,
+            prepared_face_topology.used_edges,
             prepared_face_topology.wire_roles,
         )
     }
