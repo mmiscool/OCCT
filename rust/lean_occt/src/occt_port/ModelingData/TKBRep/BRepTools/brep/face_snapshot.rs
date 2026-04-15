@@ -117,7 +117,7 @@ impl FaceSnapshotAccumulator {
     }
 
     fn into_fields(self) -> TopologySnapshotFaceFields {
-        let (edge_faces, edge_face_indices) = flatten_edge_face_lists(self.edge_face_lists);
+        let (edge_faces, edge_face_indices) = Self::flatten_edge_face_lists(self.edge_face_lists);
         TopologySnapshotFaceFields {
             edge_faces,
             edge_face_indices,
@@ -126,6 +126,50 @@ impl FaceSnapshotAccumulator {
             face_wire_orientations: self.face_wire_orientations,
             face_wire_roles: self.face_wire_roles,
         }
+    }
+
+    fn flatten_edge_face_lists(
+        edge_face_lists: Vec<Vec<usize>>,
+    ) -> (Vec<crate::TopologyRange>, Vec<usize>) {
+        let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
+        let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
+        let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
+
+        for face_indices in edge_face_lists {
+            edge_faces.push(crate::TopologyRange {
+                offset: edge_face_indices.len(),
+                count: face_indices.len(),
+            });
+            edge_face_indices.extend(face_indices);
+        }
+
+        (edge_faces, edge_face_indices)
+    }
+
+    fn append_face_topology_outputs(
+        &mut self,
+        face_index: usize,
+        face_wire_offset: usize,
+        matched_face_wires: MatchedFaceWires,
+        wire_roles: Vec<LoopRole>,
+    ) -> Option<()> {
+        let face_wire_count = matched_face_wires.face_wire_indices.len();
+        self.face_wire_indices
+            .extend(matched_face_wires.face_wire_indices);
+        self.face_wire_orientations
+            .extend(matched_face_wires.face_wire_orientations);
+        self.faces.push(crate::TopologyRange {
+            offset: face_wire_offset,
+            count: face_wire_count,
+        });
+        self.face_wire_roles.extend(wire_roles);
+
+        for edge_index in matched_face_wires.used_edges {
+            let edge_faces = self.edge_face_lists.get_mut(edge_index)?;
+            edge_faces.push(face_index);
+        }
+
+        Some(())
     }
 }
 
@@ -176,12 +220,11 @@ fn append_ported_face_topology(
         return Ok(None);
     };
 
-    let Some(()) = append_face_topology_outputs(
+    let Some(()) = accumulator.append_face_topology_outputs(
         face_index,
         face_wire_offset,
         matched_face_wires,
         wire_roles,
-        accumulator,
     ) else {
         return Ok(None);
     };
@@ -243,53 +286,6 @@ pub(super) fn load_ported_face_snapshot(
         edge_count,
     )
 }
-
-fn flatten_edge_face_lists(
-    edge_face_lists: Vec<Vec<usize>>,
-) -> (Vec<crate::TopologyRange>, Vec<usize>) {
-    let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
-    let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
-    let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
-
-    for face_indices in edge_face_lists {
-        edge_faces.push(crate::TopologyRange {
-            offset: edge_face_indices.len(),
-            count: face_indices.len(),
-        });
-        edge_face_indices.extend(face_indices);
-    }
-
-    (edge_faces, edge_face_indices)
-}
-
-fn append_face_topology_outputs(
-    face_index: usize,
-    face_wire_offset: usize,
-    matched_face_wires: MatchedFaceWires,
-    wire_roles: Vec<LoopRole>,
-    accumulator: &mut FaceSnapshotAccumulator,
-) -> Option<()> {
-    let face_wire_count = matched_face_wires.face_wire_indices.len();
-    accumulator
-        .face_wire_indices
-        .extend(matched_face_wires.face_wire_indices);
-    accumulator
-        .face_wire_orientations
-        .extend(matched_face_wires.face_wire_orientations);
-    accumulator.faces.push(crate::TopologyRange {
-        offset: face_wire_offset,
-        count: face_wire_count,
-    });
-    accumulator.face_wire_roles.extend(wire_roles);
-
-    for edge_index in matched_face_wires.used_edges {
-        let edge_faces = accumulator.edge_face_lists.get_mut(edge_index)?;
-        edge_faces.push(face_index);
-    }
-
-    Some(())
-}
-
 fn collect_face_wire_matches(
     context: &Context,
     face_wire_shapes: &[Shape],
