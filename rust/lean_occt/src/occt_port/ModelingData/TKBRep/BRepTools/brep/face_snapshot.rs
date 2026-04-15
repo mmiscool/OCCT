@@ -82,17 +82,58 @@ impl PreparedFaceTopologyBuilder {
             let orientation = context.shape_orientation(face_wire_shape)?;
             let used_edges = face_wire_topology.edge_indices;
 
-            let wire_area = if let Some((plane, geometry)) = planar_face {
-                let Some(wire_area) = planar_wire_area_magnitude(
-                    context,
-                    plane,
-                    geometry,
-                    &root_wires[root_wire_index],
-                    edge_shapes,
-                    root_edges,
-                )?
-                else {
-                    return Ok(None);
+            let wire_area = if let Some((plane, face_geometry)) = planar_face {
+                let wire = &root_wires[root_wire_index];
+                let mut curve_segments = Vec::with_capacity(wire.edge_indices.len());
+                let mut sampled_points = Vec::new();
+
+                for (&edge_index, &edge_orientation) in
+                    wire.edge_indices.iter().zip(&wire.edge_orientations)
+                {
+                    let Some(root_edge) = root_edges.get(edge_index) else {
+                        return Ok(None);
+                    };
+                    let Some(edge_shape) = edge_shapes.get(edge_index) else {
+                        return Ok(None);
+                    };
+
+                    let oriented_geometry =
+                        oriented_edge_geometry(root_edge.geometry, edge_orientation);
+                    if let Some(curve) = match PortedCurve::from_context_with_ported_payloads(
+                        context,
+                        edge_shape,
+                        root_edge.geometry,
+                    ) {
+                        Ok(curve) => curve,
+                        Err(_) => PortedCurve::from_context_with_geometry(
+                            context,
+                            edge_shape,
+                            root_edge.geometry,
+                        )?,
+                    } {
+                        curve_segments.push((curve, oriented_geometry));
+                    }
+
+                    append_root_edge_sample_points(
+                        context,
+                        edge_shape,
+                        root_edge,
+                        oriented_geometry,
+                        &mut sampled_points,
+                    )?;
+                }
+
+                let wire_area = if curve_segments.len() == wire.edge_indices.len() {
+                    planar_wire_signed_area(plane, &curve_segments).abs()
+                } else {
+                    let Some(wire_area) = analytic_sampled_wire_signed_area(
+                        PortedSurface::Plane(plane),
+                        face_geometry,
+                        &sampled_points,
+                    ) else {
+                        return Ok(None);
+                    };
+                    wire_area.abs()
                 };
                 Some(wire_area)
             } else {
@@ -281,54 +322,4 @@ pub(super) fn load_ported_face_snapshot(
         vertex_positions,
         edge_count,
     )
-}
-
-fn planar_wire_area_magnitude(
-    context: &Context,
-    plane: PlanePayload,
-    face_geometry: FaceGeometry,
-    wire: &RootWireTopology,
-    edge_shapes: &[Shape],
-    root_edges: &[RootEdgeTopology],
-) -> Result<Option<f64>, Error> {
-    let mut curve_segments = Vec::with_capacity(wire.edge_indices.len());
-    let mut sampled_points = Vec::new();
-
-    for (&edge_index, &edge_orientation) in wire.edge_indices.iter().zip(&wire.edge_orientations) {
-        let Some(root_edge) = root_edges.get(edge_index) else {
-            return Ok(None);
-        };
-        let Some(edge_shape) = edge_shapes.get(edge_index) else {
-            return Ok(None);
-        };
-
-        let geometry = oriented_edge_geometry(root_edge.geometry, edge_orientation);
-        if let Some(curve) =
-            PortedCurve::from_context_with_geometry(context, edge_shape, root_edge.geometry)?
-        {
-            curve_segments.push((curve, geometry));
-        }
-
-        append_root_edge_sample_points(
-            context,
-            edge_shape,
-            root_edge,
-            geometry,
-            &mut sampled_points,
-        )?;
-    }
-
-    let area = if curve_segments.len() == wire.edge_indices.len() {
-        planar_wire_signed_area(plane, &curve_segments).abs()
-    } else {
-        let Some(area) = analytic_sampled_wire_signed_area(
-            PortedSurface::Plane(plane),
-            face_geometry,
-            &sampled_points,
-        ) else {
-            return Ok(None);
-        };
-        area.abs()
-    };
-    Ok(Some(area))
 }
