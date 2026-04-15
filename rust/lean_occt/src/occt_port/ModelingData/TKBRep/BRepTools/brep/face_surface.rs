@@ -4,6 +4,13 @@ use super::swept_face::{
 use super::topology::face_loops;
 use super::*;
 
+struct SingleFaceTopology {
+    loops: Vec<BrepFaceLoop>,
+    wires: Vec<BrepWire>,
+    edges: Vec<BrepEdge>,
+    edge_shapes: Vec<Shape>,
+}
+
 pub(crate) fn ported_face_surface_descriptor(
     context: &Context,
     face_shape: &Shape,

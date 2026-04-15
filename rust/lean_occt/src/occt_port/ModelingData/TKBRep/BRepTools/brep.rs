@@ -130,32 +130,6 @@ struct ShapeCounts {
     vertex_count: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct CurveDifferential {
-    position: [f64; 3],
-    first_derivative: [f64; 3],
-    second_derivative: [f64; 3],
-}
-
-#[derive(Clone, Copy, Debug)]
-struct OffsetCurveDifferential {
-    position: [f64; 3],
-    derivative: [f64; 3],
-}
-
-#[derive(Clone, Copy, Debug)]
-struct MeshFaceProperties {
-    area: f64,
-    sample: FaceSample,
-}
-
-struct SingleFaceTopology {
-    loops: Vec<BrepFaceLoop>,
-    wires: Vec<BrepWire>,
-    edges: Vec<BrepEdge>,
-    edge_shapes: Vec<Shape>,
-}
-
 impl Context {
     pub fn ported_topology(&self, shape: &Shape) -> Result<Option<TopologySnapshot>, Error> {
         ported_topology_snapshot(self, shape)

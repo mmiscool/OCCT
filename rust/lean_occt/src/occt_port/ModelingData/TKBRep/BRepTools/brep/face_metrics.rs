@@ -6,6 +6,19 @@ use super::swept_face::{
 use super::topology::oriented_edge_geometry;
 use super::*;
 
+#[derive(Clone, Copy, Debug)]
+struct CurveDifferential {
+    position: [f64; 3],
+    first_derivative: [f64; 3],
+    second_derivative: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OffsetCurveDifferential {
+    position: [f64; 3],
+    derivative: [f64; 3],
+}
+
 pub(super) fn analytic_face_area(
     context: &Context,
     surface: PortedSurface,

@@ -4,6 +4,12 @@ use super::face_metrics::{
     analytic_face_volume, analytic_offset_face_volume, analytic_ported_swept_face_volume,
 };
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MeshFaceProperties {
+    pub(super) area: f64,
+    pub(super) sample: FaceSample,
+}
+
 pub(super) fn ported_shape_summary(
     context: &Context,
     shape: &Shape,
