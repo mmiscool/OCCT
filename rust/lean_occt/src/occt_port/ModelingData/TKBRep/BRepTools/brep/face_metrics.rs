@@ -1,9 +1,9 @@
+use super::root_topology::oriented_edge_geometry;
 use super::swept_face::{
     append_edge_sample_points, basis_parameter_on_u, oriented_wire_edges, positive_scalar_integral,
     revolution_surface_dv, rotate_point_about_axis, rotate_vector_about_axis,
     signed_scalar_integral,
 };
-use super::topology::oriented_edge_geometry;
 use super::*;
 
 #[derive(Clone, Copy, Debug)]

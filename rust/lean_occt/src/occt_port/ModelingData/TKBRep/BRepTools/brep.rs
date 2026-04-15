@@ -9,6 +9,7 @@ mod face_surface;
 mod face_topology;
 mod math;
 mod mesh;
+mod root_topology;
 mod shape_queries;
 mod summary;
 mod swept_face;
