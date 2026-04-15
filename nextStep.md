@@ -1,10 +1,10 @@
 # Next Task
 
-Collapse the remaining `PreparedPlanarFace` wrapper in `face_snapshot.rs`.
+Tighten the remaining `PreparedFaceShape` to `PreparedFaceTopology::load()` handoff in `face_snapshot.rs`.
 
 ## Focus
 
-- Now that unsupported multi-wire faces are rejected at the snapshot entry, reevaluate whether `PreparedPlanarFace` still needs to exist instead of using a simpler `Option<(PlanePayload, FaceGeometry)>` path.
+- Reevaluate whether the remaining face-shape access and planar-face setup logic should be expressed more directly on `PreparedFaceShape` so `PreparedFaceTopology::load()` stays focused on topology matching and role classification.
 - Keep `PreparedFaceTopology` as the owner of per-face setup and preserve the direct accumulator handoff.
 - Preserve the shared planar-face validation rule, face-wire matching behavior, planar wire area computation, face range offsets, edge-face ordering, and packed snapshot output unchanged.
 - Preserve the downstream `Context::ported_topology()` / `Context::ported_brep()` behavior and existing topology snapshot parity.
@@ -12,4 +12,4 @@ Collapse the remaining `PreparedPlanarFace` wrapper in `face_snapshot.rs`.
 
 ## Why This Is Next
 
-The duplicated face-wire preflight is now centralized at the snapshot entry, so `PreparedPlanarFace` is down to a thin local wrapper around “not required” versus “loaded plane payload and face geometry.” Collapsing that wrapper is the next small cleanup that should simplify the per-face setup path without changing behavior.
+The temporary planar wrapper is gone, but `PreparedFaceTopology::load()` still reaches back into `PreparedFaceShape` for raw face-shape access and planar-face loading details. Tightening that boundary is the next small cleanup that should leave the per-face topology path easier to read without changing behavior.

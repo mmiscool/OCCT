@@ -28,11 +28,6 @@ fn multi_wire_face_is_planar(
     Ok(geometry.kind == crate::SurfaceKind::Plane)
 }
 
-enum PreparedPlanarFace {
-    NotRequired,
-    Loaded(PlanePayload, FaceGeometry),
-}
-
 struct PreparedFaceShape {
     face_shape: Shape,
     face_wire_shapes: Vec<Shape>,
@@ -79,14 +74,11 @@ impl PreparedFaceTopology {
             return Ok(None);
         }
 
-        let planar_face = match Self::load_planar_face(
+        let planar_face = Self::load_planar_face(
             context,
             &prepared_face_shape.face_shape,
             prepared_face_shape.face_wire_shapes.len(),
-        )? {
-            PreparedPlanarFace::NotRequired => None,
-            PreparedPlanarFace::Loaded(plane, geometry) => Some((plane, geometry)),
-        };
+        )?;
 
         Self::collect_matched_face_wires(
             context,
@@ -103,15 +95,15 @@ impl PreparedFaceTopology {
         context: &Context,
         face_shape: &Shape,
         face_wire_count: usize,
-    ) -> Result<PreparedPlanarFace, Error> {
+    ) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
         if face_wire_count <= 1 {
-            return Ok(PreparedPlanarFace::NotRequired);
+            return Ok(None);
         }
 
-        Ok(PreparedPlanarFace::Loaded(
+        Ok(Some((
             context.face_plane_payload_occt(face_shape)?,
             context.face_geometry_occt(face_shape)?,
-        ))
+        )))
     }
 
     fn collect_matched_face_wires(
