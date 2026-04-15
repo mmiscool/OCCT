@@ -20,6 +20,12 @@ struct PreparedPublicFaceSurface {
     ported_face_surface: Option<PortedFaceSurface>,
 }
 
+struct PreparedRawFaceSurface {
+    geometry: FaceGeometry,
+    ported_surface: Option<PortedSurface>,
+    ported_face_surface: Option<PortedFaceSurface>,
+}
+
 struct LazyMeshFaceFallback<'a> {
     context: &'a Context,
     face_shape: &'a Shape,
@@ -138,10 +144,10 @@ fn ported_brep_face(
     index: usize,
     face_shape: &Shape,
 ) -> Result<BrepFace, Error> {
-    let geometry = context.face_geometry_occt(face_shape)?;
-    let ported_surface = PortedSurface::from_context_with_geometry(context, face_shape, geometry)?;
-    let ported_face_surface =
-        ported_face_surface_descriptor_from_surface(context, face_shape, geometry, ported_surface)?;
+    let prepared = prepare_raw_face_surface(context, face_shape)?;
+    let geometry = prepared.geometry;
+    let ported_surface = prepared.ported_surface;
+    let ported_face_surface = prepared.ported_face_surface;
     let orientation = context.shape_orientation(face_shape)?;
     let loops = face_loops(topology, index)?;
     let mut mesh_fallback = LazyMeshFaceFallback::new(
@@ -179,6 +185,22 @@ fn ported_brep_face(
         sample,
         loops,
         adjacent_face_indices,
+    })
+}
+
+fn prepare_raw_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<PreparedRawFaceSurface, Error> {
+    let geometry = context.face_geometry_occt(face_shape)?;
+    let ported_surface = PortedSurface::from_context_with_geometry(context, face_shape, geometry)?;
+    let ported_face_surface =
+        ported_face_surface_descriptor_from_surface(context, face_shape, geometry, ported_surface)?;
+
+    Ok(PreparedRawFaceSurface {
+        geometry,
+        ported_surface,
+        ported_face_surface,
     })
 }
 
