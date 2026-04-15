@@ -852,7 +852,7 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<Option<PortedOffsetSurface>, Error> {
-        if self.face_geometry_occt(shape)?.kind != SurfaceKind::Offset {
+        if self.face_geometry(shape)?.kind != SurfaceKind::Offset {
             return Ok(None);
         }
 
