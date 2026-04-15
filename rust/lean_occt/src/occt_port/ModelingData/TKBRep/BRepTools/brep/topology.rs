@@ -1,8 +1,20 @@
 use super::edge_topology::root_edge_topology;
-use super::face_snapshot::load_ported_face_snapshot;
-use super::snapshot_build::{build_ported_topology_snapshot, TopologySnapshotRootFields};
+use super::face_snapshot::{load_ported_face_snapshot, TopologySnapshotFaceFields};
 use super::wire_topology::{pack_wire_topology, root_wire_topology};
 use super::*;
+
+struct TopologySnapshotRootFields {
+    vertex_positions: Vec<[f64; 3]>,
+    edge_shapes: Vec<Shape>,
+    edges: Vec<crate::TopologyEdge>,
+    root_edges: Vec<super::edge_topology::RootEdgeTopology>,
+    root_wires: Vec<super::wire_topology::RootWireTopology>,
+    wires: Vec<crate::TopologyRange>,
+    wire_edge_indices: Vec<usize>,
+    wire_edge_orientations: Vec<Orientation>,
+    wire_vertices: Vec<crate::TopologyRange>,
+    wire_vertex_indices: Vec<usize>,
+}
 
 fn load_root_topology_snapshot(
     context: &Context,
@@ -59,24 +71,54 @@ pub(super) fn ported_topology_snapshot(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<TopologySnapshot>, Error> {
-    let Some(root_topology) = load_root_topology_snapshot(context, shape)? else {
+    let Some(TopologySnapshotRootFields {
+        vertex_positions,
+        edge_shapes,
+        edges,
+        root_edges,
+        root_wires,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    }) = load_root_topology_snapshot(context, shape)?
+    else {
         return Ok(None);
     };
-    let Some(face_topology) = load_ported_face_snapshot(
+    let Some(TopologySnapshotFaceFields {
+        edge_faces,
+        edge_face_indices,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }) = load_ported_face_snapshot(
         context,
         shape,
-        &root_topology.root_wires,
-        &root_topology.root_edges,
-        &root_topology.edge_shapes,
-        &root_topology.vertex_positions,
-        root_topology.edges.len(),
+        &root_wires,
+        &root_edges,
+        &edge_shapes,
+        &vertex_positions,
+        edges.len(),
     )?
     else {
         return Ok(None);
     };
 
-    Ok(Some(build_ported_topology_snapshot(
-        root_topology,
-        face_topology,
-    )))
+    Ok(Some(TopologySnapshot {
+        vertex_positions,
+        edges,
+        edge_faces,
+        edge_face_indices,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+        faces,
+        face_wire_indices,
+        face_wire_orientations,
+        face_wire_roles,
+    }))
 }

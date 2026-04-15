@@ -1,8 +1,16 @@
 use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
-use super::snapshot_build::TopologySnapshotFaceFields;
 use super::swept_face::append_root_edge_sample_points;
 use super::wire_topology::{root_wire_topology, RootWireTopology};
 use super::*;
+
+pub(super) struct TopologySnapshotFaceFields {
+    pub(super) edge_faces: Vec<crate::TopologyRange>,
+    pub(super) edge_face_indices: Vec<usize>,
+    pub(super) faces: Vec<crate::TopologyRange>,
+    pub(super) face_wire_indices: Vec<usize>,
+    pub(super) face_wire_orientations: Vec<Orientation>,
+    pub(super) face_wire_roles: Vec<LoopRole>,
+}
 
 struct PortedFaceTopology {
     edge_indices: BTreeSet<usize>,
