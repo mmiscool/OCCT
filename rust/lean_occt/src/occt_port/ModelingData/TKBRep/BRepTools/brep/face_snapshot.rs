@@ -34,6 +34,24 @@ struct PreparedFaceShape {
 }
 
 impl PreparedFaceShape {
+    fn load_all(context: &Context, shape: &Shape) -> Result<Option<Vec<Self>>, Error> {
+        let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+        let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
+
+        for face_shape in face_shapes {
+            let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
+            if !multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
+                return Ok(None);
+            }
+            prepared_face_shapes.push(Self {
+                face_shape,
+                face_wire_shapes,
+            });
+        }
+
+        Ok(Some(prepared_face_shapes))
+    }
+
     fn is_empty(&self) -> bool {
         self.face_wire_shapes.is_empty()
     }
@@ -55,27 +73,6 @@ impl PreparedFaceShape {
             context.face_geometry_occt(&self.face_shape)?,
         )))
     }
-}
-
-fn load_prepared_face_shapes(
-    context: &Context,
-    shape: &Shape,
-) -> Result<Option<Vec<PreparedFaceShape>>, Error> {
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
-    let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
-
-    for face_shape in face_shapes {
-        let face_wire_shapes = context.subshapes_occt(&face_shape, ShapeKind::Wire)?;
-        if !multi_wire_face_is_planar(context, &face_shape, face_wire_shapes.len())? {
-            return Ok(None);
-        }
-        prepared_face_shapes.push(PreparedFaceShape {
-            face_shape,
-            face_wire_shapes,
-        });
-    }
-
-    Ok(Some(prepared_face_shapes))
 }
 
 struct PreparedFaceTopology {
@@ -340,7 +337,7 @@ pub(super) fn load_ported_face_snapshot(
     vertex_positions: &[[f64; 3]],
     edge_count: usize,
 ) -> Result<Option<TopologySnapshotFaceFields>, Error> {
-    let Some(prepared_face_shapes) = load_prepared_face_shapes(context, shape)? else {
+    let Some(prepared_face_shapes) = PreparedFaceShape::load_all(context, shape)? else {
         return Ok(None);
     };
 
