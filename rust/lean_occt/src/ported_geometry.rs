@@ -654,16 +654,26 @@ impl PortedFaceSurface {
 
 impl Context {
     pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
-        let endpoints = self.edge_endpoints_occt(shape)?;
+        let geometry = self.edge_geometry_occt(shape)?;
 
-        if let Ok(payload) = self.edge_line_payload_occt(shape) {
-            return Ok(ported_line_geometry(payload, endpoints));
+        if geometry.kind == CurveKind::Line {
+            let endpoints = self.edge_endpoints(shape)?;
+            let line_payload = ported_line_payload_from_endpoints(geometry, endpoints)
+                .or_else(|| self.edge_line_payload_occt(shape).ok());
+            if let Some(payload) = line_payload {
+                return Ok(ported_line_geometry(payload, endpoints));
+            }
         }
 
+        let endpoints = self.edge_endpoints_occt(shape)?;
         let edge_length = shape.linear_length();
         let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
 
-        if let Ok(payload) = self.edge_circle_payload_occt(shape) {
+        let circle_payload = match ported_circle_payload(self, shape, geometry)? {
+            Some(payload) => Some(payload),
+            None => self.edge_circle_payload_occt(shape).ok(),
+        };
+        if let Some(payload) = circle_payload {
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Circle,
                 endpoints,
@@ -685,7 +695,11 @@ impl Context {
             ));
         }
 
-        if let Ok(payload) = self.edge_ellipse_payload_occt(shape) {
+        let ellipse_payload = match ported_ellipse_payload(self, shape, geometry)? {
+            Some(payload) => Some(payload),
+            None => self.edge_ellipse_payload_occt(shape).ok(),
+        };
+        if let Some(payload) = ellipse_payload {
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Ellipse,
                 endpoints,
@@ -1544,28 +1558,35 @@ fn ported_line_payload(
     shape: &Shape,
     geometry: EdgeGeometry,
 ) -> Result<Option<LinePayload>, Error> {
+    let endpoints = context.edge_endpoints(shape)?;
+    Ok(ported_line_payload_from_endpoints(geometry, endpoints))
+}
+
+fn ported_line_payload_from_endpoints(
+    geometry: EdgeGeometry,
+    endpoints: EdgeEndpoints,
+) -> Option<LinePayload> {
     if geometry.kind != CurveKind::Line {
-        return Ok(None);
+        return None;
     }
 
     let delta_parameter = geometry.end_parameter - geometry.start_parameter;
     if delta_parameter.abs() <= 1.0e-12 {
-        return Ok(None);
+        return None;
     }
 
-    let endpoints = context.edge_endpoints(shape)?;
     let direction = scale3(
         subtract3(endpoints.end, endpoints.start),
         1.0 / delta_parameter,
     );
     if norm3(direction) <= 1.0e-12 {
-        return Ok(None);
+        return None;
     }
 
-    Ok(Some(LinePayload {
+    Some(LinePayload {
         origin: subtract3(endpoints.start, scale3(direction, geometry.start_parameter)),
         direction,
-    }))
+    })
 }
 
 fn ported_circle_payload(
