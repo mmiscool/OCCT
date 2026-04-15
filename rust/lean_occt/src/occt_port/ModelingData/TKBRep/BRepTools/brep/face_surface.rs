@@ -1,6 +1,4 @@
-use super::face_metrics::{
-    analytic_face_area, analytic_offset_face_area, analytic_ported_swept_face_area,
-};
+use super::face_metrics::ported_face_area_from_surface;
 use super::summary::{mesh_face_properties, MeshFaceProperties};
 use super::swept_face::ported_swept_face_surface_with_route;
 use super::topology::{
@@ -178,41 +176,6 @@ fn ported_brep_face(
         loops,
         adjacent_face_indices,
     })
-}
-
-fn ported_face_area_from_surface(
-    context: &Context,
-    ported_face_surface: Option<PortedFaceSurface>,
-    face_geometry: FaceGeometry,
-    loops: &[BrepFaceLoop],
-    wires: &[BrepWire],
-    edges: &[BrepEdge],
-    edge_shapes: &[Shape],
-) -> Option<f64> {
-    match ported_face_surface {
-        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
-            context,
-            surface,
-            face_geometry,
-            loops,
-            wires,
-            edges,
-            edge_shapes,
-        ),
-        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
-            context,
-            surface,
-            face_geometry,
-            loops,
-            wires,
-            edges,
-            edge_shapes,
-        ),
-        Some(PortedFaceSurface::Swept(surface)) => {
-            analytic_ported_swept_face_area(surface, face_geometry)
-        }
-        None => None,
-    }
 }
 
 fn ported_face_surface_descriptor_from_surface_with_route(

@@ -208,6 +208,41 @@ pub(super) fn analytic_offset_face_area(
     }
 }
 
+pub(super) fn ported_face_area_from_surface(
+    context: &Context,
+    ported_face_surface: Option<PortedFaceSurface>,
+    face_geometry: FaceGeometry,
+    loops: &[BrepFaceLoop],
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    match ported_face_surface {
+        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_area(
+            context,
+            surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_area(
+            context,
+            surface,
+            face_geometry,
+            loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        Some(PortedFaceSurface::Swept(surface)) => {
+            analytic_ported_swept_face_area(surface, face_geometry)
+        }
+        None => None,
+    }
+}
+
 fn offset_extrusion_swept_area(
     offset: f64,
     surface_geometry: FaceGeometry,
