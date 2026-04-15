@@ -72,6 +72,24 @@ fn classify_face_wire_roles(
     }
 }
 
+fn load_planar_multi_wire_face(
+    context: &Context,
+    face_shape: &Shape,
+    face_wire_count: usize,
+) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
+    if face_wire_count <= 1 {
+        return Ok(None);
+    }
+    if !multi_wire_face_is_planar(context, face_shape, face_wire_count)? {
+        return Ok(None);
+    }
+
+    Ok(Some((
+        context.face_plane_payload_occt(face_shape)?,
+        context.face_geometry_occt(face_shape)?,
+    )))
+}
+
 fn append_ported_face_topology(
     context: &Context,
     face_index: usize,
@@ -97,14 +115,16 @@ fn append_ported_face_topology(
     let mut face_wire_count = 0usize;
     let mut face_wire_areas = Vec::new();
 
-    let mut planar_face = None;
-    if face_wire_shapes.len() > 1 {
-        if !multi_wire_face_is_planar(context, face_shape, face_wire_shapes.len())? {
+    let planar_face = if face_wire_shapes.len() > 1 {
+        let Some(planar_face) =
+            load_planar_multi_wire_face(context, face_shape, face_wire_shapes.len())?
+        else {
             return Ok(None);
-        }
-        let face_geometry = context.face_geometry_occt(face_shape)?;
-        planar_face = Some((context.face_plane_payload_occt(face_shape)?, face_geometry));
-    }
+        };
+        Some(planar_face)
+    } else {
+        None
+    };
 
     for face_wire_shape in &face_wire_shapes {
         let Some(face_wire_topology) =
