@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::EdgeSample;
+
 use super::face_metrics::{
     analytic_face_volume, analytic_offset_face_volume, analytic_ported_swept_face_volume,
 };
@@ -1188,6 +1190,7 @@ fn analytic_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f
 fn boundary_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
     analytic_edge_shape_bbox(context, edge_shape)
         .or_else(|| line_segment_edge_shape_bbox(context, edge_shape))
+        .or_else(|| sampled_edge_shape_bbox(context, edge_shape))
 }
 
 fn ported_curve_bbox(curve: PortedCurve, start: f64, end: f64) -> Option<([f64; 3], [f64; 3])> {
@@ -1245,6 +1248,155 @@ fn line_segment_edge_shape_bbox(
 
     let endpoints = context.edge_endpoints(edge_shape).ok()?;
     bbox_from_points(vec![endpoints.start, endpoints.end])
+}
+
+fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+    let geometry = context.edge_geometry(edge_shape).ok()?;
+    let (sample_count, refinement_depth) = boundary_edge_sampling_plan(geometry.kind)?;
+    let mut points = Vec::with_capacity(sample_count);
+    let mut samples = Vec::with_capacity(sample_count);
+    for sample_index in 0..sample_count {
+        let t = sample_index as f64 / (sample_count.saturating_sub(1)) as f64;
+        let sample = context.edge_sample(edge_shape, t).ok()?;
+        points.push(sample.position);
+        samples.push(NormalizedEdgeSample { t, sample });
+    }
+
+    for window in samples.windows(2) {
+        refine_sampled_edge_interval(
+            context,
+            edge_shape,
+            &window[0],
+            &window[1],
+            refinement_depth,
+            &mut points,
+        )?;
+    }
+
+    bbox_from_points(points)
+}
+
+#[derive(Clone, Copy)]
+struct NormalizedEdgeSample {
+    t: f64,
+    sample: EdgeSample,
+}
+
+fn boundary_edge_sampling_plan(kind: crate::CurveKind) -> Option<(usize, usize)> {
+    match kind {
+        crate::CurveKind::Line | crate::CurveKind::Circle | crate::CurveKind::Ellipse => None,
+        crate::CurveKind::Hyperbola | crate::CurveKind::Parabola => Some((33, 4)),
+        crate::CurveKind::Bezier
+        | crate::CurveKind::BSpline
+        | crate::CurveKind::Offset
+        | crate::CurveKind::Other
+        | crate::CurveKind::Unknown => Some((65, 4)),
+    }
+}
+
+fn refine_sampled_edge_interval(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    remaining_depth: usize,
+    points: &mut Vec<[f64; 3]>,
+) -> Option<()> {
+    if remaining_depth == 0 {
+        return Some(());
+    }
+
+    let midpoint_t = 0.5 * (start.t + end.t);
+    if approx_eq(midpoint_t, start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(midpoint_t, end.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(());
+    }
+
+    let midpoint_sample = NormalizedEdgeSample {
+        t: midpoint_t,
+        sample: context.edge_sample(edge_shape, midpoint_t).ok()?,
+    };
+
+    if !sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
+        return Some(());
+    }
+
+    points.push(midpoint_sample.sample.position);
+    refine_sampled_edge_interval(
+        context,
+        edge_shape,
+        start,
+        &midpoint_sample,
+        remaining_depth - 1,
+        points,
+    )?;
+    refine_sampled_edge_interval(
+        context,
+        edge_shape,
+        &midpoint_sample,
+        end,
+        remaining_depth - 1,
+        points,
+    )
+}
+
+fn sampled_edge_interval_needs_refinement(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> bool {
+    midpoint_expands_edge_interval_bbox(
+        start.sample.position,
+        midpoint.sample.position,
+        end.sample.position,
+    ) || interval_tangent_indicates_axis_turn(
+        start.sample.tangent,
+        midpoint.sample.tangent,
+        end.sample.tangent,
+    ) || interval_midpoint_bends_from_chord(
+        start.sample.position,
+        midpoint.sample.position,
+        end.sample.position,
+    )
+}
+
+fn midpoint_expands_edge_interval_bbox(start: [f64; 3], midpoint: [f64; 3], end: [f64; 3]) -> bool {
+    (0..3).any(|axis| {
+        let interval_min = start[axis].min(end[axis]);
+        let interval_max = start[axis].max(end[axis]);
+        midpoint[axis] < interval_min - 1.0e-9 || midpoint[axis] > interval_max + 1.0e-9
+    })
+}
+
+fn interval_tangent_indicates_axis_turn(
+    start_tangent: [f64; 3],
+    midpoint_tangent: [f64; 3],
+    end_tangent: [f64; 3],
+) -> bool {
+    (0..3).any(|axis| {
+        tangent_sign_changes(start_tangent[axis], midpoint_tangent[axis])
+            || tangent_sign_changes(midpoint_tangent[axis], end_tangent[axis])
+            || tangent_sign_changes(start_tangent[axis], end_tangent[axis])
+    })
+}
+
+fn tangent_sign_changes(lhs: f64, rhs: f64) -> bool {
+    lhs.abs() > 1.0e-9 && rhs.abs() > 1.0e-9 && lhs.signum() != rhs.signum()
+}
+
+fn interval_midpoint_bends_from_chord(start: [f64; 3], midpoint: [f64; 3], end: [f64; 3]) -> bool {
+    let chord = subtract3(end, start);
+    let chord_length = norm3(chord);
+    if chord_length <= 1.0e-12 {
+        return norm3(subtract3(midpoint, start)) > 1.0e-9;
+    }
+
+    let start_to_midpoint = subtract3(midpoint, start);
+    let projection = dot3(start_to_midpoint, chord) / dot3(chord, chord).max(1.0e-18);
+    let closest_point = add3(start, scale3(chord, projection.clamp(0.0, 1.0)));
+    let deviation = norm3(subtract3(midpoint, closest_point));
+    deviation > 1.0e-3 * chord_length.max(1.0)
 }
 
 fn periodic_curve_bbox(
