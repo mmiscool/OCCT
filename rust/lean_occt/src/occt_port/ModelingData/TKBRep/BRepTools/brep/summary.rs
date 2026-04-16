@@ -1523,62 +1523,6 @@ impl PreparedOuterProbeChain {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedRefinementTriplet {
-    start: NormalizedEdgeSample,
-    midpoint: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
-}
-
-impl PreparedRefinementTriplet {
-    fn new(
-        start: NormalizedEdgeSample,
-        midpoint: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
-    ) -> Self {
-        Self {
-            start,
-            midpoint,
-            end,
-        }
-    }
-
-    fn refinement_segment(self) -> Option<RefinementSegment> {
-        RefinementSegment::new(&self.start, &self.midpoint, &self.end)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PreparedRefinementSpan {
-    start: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
-}
-
-impl PreparedRefinementSpan {
-    fn new(start: NormalizedEdgeSample, end: NormalizedEdgeSample) -> Self {
-        Self { start, end }
-    }
-
-    fn midpoint_segment(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        let inner_probe = midpoint_edge_probe(context, edge_shape, &self.start, &self.end)?;
-        Some(
-            inner_probe
-                .as_ref()
-                .and_then(|probe| RefinementSegment::new(&self.start, probe, &self.end)),
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSide {
-    outer: PreparedRefinementTriplet,
-    inner: PreparedRefinementSpan,
-}
-
-#[derive(Clone, Copy)]
 struct PreparedRefinementTripletLayout {
     start: usize,
     end: usize,
@@ -1594,16 +1538,12 @@ impl PreparedRefinementTripletLayout {
         }
     }
 
-    fn from_samples(self, samples: &[NormalizedEdgeSample; 7]) -> PreparedRefinementTriplet {
-        PreparedRefinementTriplet::new(
-            samples[self.start],
-            samples[self.midpoint],
-            samples[self.end],
-        )
-    }
-
     fn refinement_segment(self, samples: &[NormalizedEdgeSample; 7]) -> Option<RefinementSegment> {
-        self.from_samples(samples).refinement_segment()
+        RefinementSegment::new(
+            &samples[self.start],
+            &samples[self.midpoint],
+            &samples[self.end],
+        )
     }
 }
 
@@ -1618,8 +1558,20 @@ impl PreparedRefinementSpanLayout {
         Self { start, end }
     }
 
-    fn from_samples(self, samples: &[NormalizedEdgeSample; 7]) -> PreparedRefinementSpan {
-        PreparedRefinementSpan::new(samples[self.start], samples[self.end])
+    fn midpoint_segment(
+        self,
+        samples: &[NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<Option<RefinementSegment>> {
+        let start = samples[self.start];
+        let end = samples[self.end];
+        let inner_probe = midpoint_edge_probe(context, edge_shape, &start, &end)?;
+        Some(
+            inner_probe
+                .as_ref()
+                .and_then(|probe| RefinementSegment::new(&start, probe, &end)),
+        )
     }
 }
 
@@ -1643,18 +1595,22 @@ impl PreparedIntervalAwareRefinementSideLayout {
         }
     }
 
-    fn from_samples(
-        self,
-        samples: &[NormalizedEdgeSample; 7],
-    ) -> PreparedIntervalAwareRefinementSide {
-        PreparedIntervalAwareRefinementSide {
-            outer: self.outer.from_samples(samples),
-            inner: self.inner.from_samples(samples),
-        }
-    }
-
     fn coarse_segment(self, samples: &[NormalizedEdgeSample; 7]) -> Option<RefinementSegment> {
         self.coarse.refinement_segment(samples)
+    }
+
+    fn prepare_refinement_segment(
+        self,
+        samples: &[NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<Option<RefinementSegment>> {
+        let outer_segment = self.outer.refinement_segment(samples);
+        let inner_segment = self.inner.midpoint_segment(samples, context, edge_shape)?;
+        Some(
+            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
+                .map(|(_, segment)| segment),
+        )
     }
 }
 
@@ -1675,12 +1631,12 @@ impl PreparedIntervalAwareRefinementSideLayouts {
     fn stronger_side(
         self,
         samples: &[NormalizedEdgeSample; 7],
-    ) -> Option<PreparedIntervalAwareRefinementSide> {
+    ) -> Option<PreparedIntervalAwareRefinementSideLayout> {
         RefinementSegment::choose_stronger(
             (self.left, self.left.coarse_segment(samples)),
             (self.right, self.right.coarse_segment(samples)),
         )
-        .map(|(layout, _)| layout.from_samples(samples))
+        .map(|(layout, _)| layout)
     }
 
     fn prepare_refinement_segment(
@@ -1689,11 +1645,10 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let Some(side) = self.stronger_side(samples) else {
+        let Some(layout) = self.stronger_side(samples) else {
             return Some(None);
         };
-
-        side.prepare_refinement_segment(context, edge_shape)
+        layout.prepare_refinement_segment(samples, context, edge_shape)
     }
 }
 
@@ -1710,33 +1665,6 @@ const PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS: PreparedIntervalAwareRefi
             PreparedRefinementSpanLayout::new(3, 4),
         ),
     );
-
-impl PreparedIntervalAwareRefinementSide {
-    fn prepare_refinement_segment(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        let outer_segment = self.outer_segment();
-        let inner_segment = self.inner_segment(context, edge_shape)?;
-        Some(
-            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
-                .map(|(_, segment)| segment),
-        )
-    }
-
-    fn outer_segment(self) -> Option<RefinementSegment> {
-        self.outer.refinement_segment()
-    }
-
-    fn inner_segment(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        self.inner.midpoint_segment(context, edge_shape)
-    }
-}
 
 const HALF_REFINEMENT_MAX_STEPS: usize = 32;
 const HALF_REFINEMENT_RELATIVE_SCORE_FLOOR: f64 = 0.05;
