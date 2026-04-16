@@ -1573,6 +1573,7 @@ fn ported_brep_uses_rust_owned_bounding_boxes() -> Result<(), Box<dyn std::error
         support::export_kernel_shape(&kernel, &helix, "brep_workflows", "bbox_helix_shape")?;
 
     let cut_summary = kernel.summarize(&cut)?;
+    let cut_brep = kernel.brep(&cut)?;
     let cut_occt = kernel.context().describe_shape_occt(&cut)?;
     assert_bbox_close(
         "cut",
@@ -1584,6 +1585,14 @@ fn ported_brep_uses_rust_owned_bounding_boxes() -> Result<(), Box<dyn std::error
     )?;
     assert_eq!(cut_summary.bbox_min, [-30.0, -30.0, -30.0]);
     assert_eq!(cut_summary.bbox_max, [30.0, 30.0, 30.0]);
+    assert_bbox_close(
+        "cut",
+        cut_brep.summary.bbox_min,
+        cut_brep.summary.bbox_max,
+        cut_occt.bbox_min,
+        cut_occt.bbox_max,
+        5.0e-7,
+    )?;
 
     let sphere_summary = kernel.summarize(&sphere)?;
     let sphere_occt = kernel.context().describe_shape_occt(&sphere)?;
