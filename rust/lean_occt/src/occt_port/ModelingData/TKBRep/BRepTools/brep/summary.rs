@@ -1446,6 +1446,19 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             None => Err(None),
         }
     }
+
+    fn continue_with_stage<const NEXT_STAGE_N: usize>(
+        self,
+        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_STAGE_N>,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+    ) -> Result<[NormalizedEdgeSample; NEXT_STAGE_N], Option<bool>> {
+        self.stage_samples_or_refinement(context, edge_shape, source)
+            .and_then(|stage_samples| {
+                next_stage.stage_samples_or_refinement(context, edge_shape, stage_samples)
+            })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1526,23 +1539,17 @@ impl EarlyProbeStagePair {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        let stage_samples = self
-            .midpoint_stage
-            .stage_samples_or_refinement(context, edge_shape, source)
-            .and_then(|midpoint_stage_samples| {
-                self.outer_stage.stage_samples_or_refinement(
+        self.interval_aware_tail
+            .needs_refinement_from_stage_samples_or_refinement(
+                self.midpoint_stage.continue_with_stage(
+                    self.outer_stage,
                     context,
                     edge_shape,
-                    midpoint_stage_samples,
-                )
-            });
-        match stage_samples {
-            Ok(outer_stage_samples) => {
-                self.interval_aware_tail
-                    .needs_refinement(outer_stage_samples, context, edge_shape)
-            }
-            Err(result) => result,
-        }
+                    source,
+                ),
+                context,
+                edge_shape,
+            )
     }
 }
 
@@ -1575,6 +1582,18 @@ impl EarlyProbeIntervalAwareTail {
             edge_shape,
             self.coarse_refinement_checks_before_adaptive_chase,
         )
+    }
+
+    fn needs_refinement_from_stage_samples_or_refinement(
+        self,
+        stage_samples: Result<[NormalizedEdgeSample; 7], Option<bool>>,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        match stage_samples {
+            Ok(samples) => self.needs_refinement(samples, context, edge_shape),
+            Err(result) => result,
+        }
     }
 }
 
