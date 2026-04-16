@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining duplicated midpoint-stage source resolution between `EarlyProbeStageLayout::refinement_result()` and the new triplet-backed midpoint-stage path, so the early unsupported-edge probe entry stops carrying both array-backed and raw-triplet sample mapping for the same stage logic.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining inline midpoint-triplet source resolver inside `EarlyProbeRefinementStages::needs_refinement()`, so the early unsupported-edge probe entry keeps the same shared stage-source path without still open-coding a midpoint-only `match index` closure at the stage runner boundary.
 
 ## Current State
 
@@ -16,14 +16,15 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`sampled_edge_interval_needs_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps each early probe stage on an array-only Rust boundary:
   - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now works directly on `[NormalizedEdgeSample; N]` inputs instead of generic source traits
   - the old `EarlyProbeStageRole` trait and `EarlyProbeStageRoleLayout` helper are gone
-  - [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now only describes stage-local sample ordering over an already-materialized source array
-  - [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns the typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result directly
+  - [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now only describes stage-local sample ordering over a supplied `source index -> sample` resolver
+  - [`EarlyProbeStageLayout::refinement_result_from_source()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result path for both array-backed and triplet-backed midpoint inputs
+  - the midpoint-only `EarlyProbeStageLayout<3, _>` specialization is gone
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
   - [`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OUTER_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now hold direct request-source indices plus sample roles
   - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the full typed midpoint-stage, outer-stage, and terminal dispatch path directly, so the old `prepare_outer_samples()` bounce is gone
   - [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now delegates raw `start` / `midpoint` / `end` probe inputs directly into `EarlyProbeRefinementStages`
   - the temporary `EarlyProbeRefinementSource` carrier and its one-use `stage_source()` view are gone
-  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer rebuilds a local `[start, midpoint, end]` array; the midpoint stage now resolves those raw probe inputs inside [`EarlyProbeStageLayout::refinement_result_from_triplet()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer rebuilds a local `[start, midpoint, end]` array; the midpoint stage now resolves those raw probe inputs through the same shared stage-source entry as the array-backed outer stage
   - [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed interval-aware segment handoff plus the `None => Some(false)` terminal behavior
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
@@ -36,16 +37,16 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 `offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. In the early unsupported-edge probe entry, the remaining structural duplication is narrower again:
 
-- the early stage itself is now array-only
+- the early stage itself is now source-resolver-backed instead of split across array and triplet sample mapping
 - the midpoint-stage and outer-stage request/sample mapping now live in the same typed stage layout
-- the stage layout now returns typed `Result<[NormalizedEdgeSample; N], bool>` directly
+- the stage layout now returns typed `Result<[NormalizedEdgeSample; N], bool>` directly through one shared `refinement_result_from_source()` entry
 - the top-level entry now delegates through [`EARLY_PROBE_REFINEMENT_PIPELINE`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the pipeline now passes raw `start` / `midpoint` / `end` inputs directly into [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and the terminal handoff remains typed through [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the midpoint-stage, outer-stage, and terminal dispatch now already live in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the midpoint-stage source triplet is now resolved inside [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), so `EarlyProbeRefinementStages` no longer rebuilds a one-use midpoint-stage source array
-- but the early probe stage code now carries two source-resolution paths for the midpoint stage: the generic array-backed [`refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) path and the new raw-triplet-backed midpoint path
+- but [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still carries one inline midpoint-only `match index { 0, 1, 2 }` closure when it feeds raw `start` / `midpoint` / `end` into the shared stage-source entry
 
-The next blocker is to collapse that duplicated midpoint-stage source resolution so the full early probe path stays on one typed stage-source boundary end to end instead of carrying both array-backed and raw-triplet sample mapping for the same stage logic.
+The next blocker is to collapse that remaining inline midpoint-triplet resolver so the full early probe path stays on one typed stage-source boundary end to end instead of carrying a one-off raw `match` closure at the stage runner boundary.
 
 ## Focus
 
@@ -63,4 +64,4 @@ The next blocker is to collapse that duplicated midpoint-stage source resolution
 
 ## Why This Is Next
 
-This turn finished collapsing the last local midpoint-stage source array in `EarlyProbeRefinementStages`: the typed stage runner now hands raw `start` / `midpoint` / `end` probe inputs straight into a midpoint-stage helper on `EarlyProbeStageLayout`. That moves the next real duplication one layer inward inside the stage code itself, which now has both the generic array-backed source path and the new raw-triplet midpoint path for the same refinement logic.
+This turn finished collapsing the midpoint-only stage specialization: both the array-backed outer stage and the raw-triplet midpoint stage now run through the same `source index -> sample` stage entry, and the dedicated `EarlyProbeStageLayout<3, _>` wrapper is gone. That leaves the next real seam one layer smaller again: the inline midpoint-triplet resolver closure still sitting inside `EarlyProbeRefinementStages`.
