@@ -1383,13 +1383,35 @@ fn sampled_edge_interval_needs_probe_refinement(
 }
 
 #[derive(Clone, Copy)]
+struct MidpointEdgeProbeSpanLayout {
+    start: usize,
+    end: usize,
+}
+
+impl MidpointEdgeProbeSpanLayout {
+    const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+
+    fn probe<const SOURCE_N: usize>(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        source: &[NormalizedEdgeSample; SOURCE_N],
+    ) -> Option<MidpointEdgeProbeOutcome> {
+        midpoint_edge_probe(context, edge_shape, &source[self.start], &source[self.end])
+    }
+}
+
+#[derive(Clone, Copy)]
 struct MidpointEdgeProbePairRequestLayout {
-    source_indices: [usize; 4],
+    first: MidpointEdgeProbeSpanLayout,
+    second: MidpointEdgeProbeSpanLayout,
 }
 
 impl MidpointEdgeProbePairRequestLayout {
-    const fn new(source_indices: [usize; 4]) -> Self {
-        Self { source_indices }
+    const fn new(first: MidpointEdgeProbeSpanLayout, second: MidpointEdgeProbeSpanLayout) -> Self {
+        Self { first, second }
     }
 
     fn probe_pair<const SOURCE_N: usize>(
@@ -1398,18 +1420,8 @@ impl MidpointEdgeProbePairRequestLayout {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
     ) -> Option<MidpointEdgeProbePairOutcome> {
-        let first_probe = midpoint_edge_probe(
-            context,
-            edge_shape,
-            &source[self.source_indices[0]],
-            &source[self.source_indices[1]],
-        )?;
-        let second_probe = midpoint_edge_probe(
-            context,
-            edge_shape,
-            &source[self.source_indices[2]],
-            &source[self.source_indices[3]],
-        )?;
+        let first_probe = self.first.probe(context, edge_shape, &source)?;
+        let second_probe = self.second.probe(context, edge_shape, &source)?;
         Some(first_probe.pair_with(second_probe))
     }
 }
@@ -1984,7 +1996,10 @@ impl MidpointEdgeProbePairOutcome {
 }
 
 const MIDPOINT_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<3, 5> = EarlyProbeStageLayout::new(
-    MidpointEdgeProbePairRequestLayout::new([0, 1, 1, 2]),
+    MidpointEdgeProbePairRequestLayout::new(
+        MidpointEdgeProbeSpanLayout::new(0, 1),
+        MidpointEdgeProbeSpanLayout::new(1, 2),
+    ),
     [
         EarlyProbeSampleRole::Source(0),
         EarlyProbeSampleRole::FirstProbe,
@@ -1995,7 +2010,10 @@ const MIDPOINT_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<3, 5> = EarlyProb
 );
 
 const OUTER_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<5, 7> = EarlyProbeStageLayout::new(
-    MidpointEdgeProbePairRequestLayout::new([0, 1, 3, 4]),
+    MidpointEdgeProbePairRequestLayout::new(
+        MidpointEdgeProbeSpanLayout::new(0, 1),
+        MidpointEdgeProbeSpanLayout::new(3, 4),
+    ),
     [
         EarlyProbeSampleRole::Source(0),
         EarlyProbeSampleRole::FirstProbe,

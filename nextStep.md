@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw midpoint probe-pair source indexing in the shell-edge refinement path, so `MidpointEdgeProbePairRequestLayout` stops carrying a positional `[usize; 4]` and moves to typed probe-span layouts before execution.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw early-stage sample indexing in the shell-edge refinement path, so the staged sample layouts stop expressing source reuse through `EarlyProbeSampleRole::Source(usize)` and move to typed sample-layout descriptors.
 
 ## Current State
 
@@ -17,7 +17,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now works directly on `[NormalizedEdgeSample; N]` inputs instead of generic source traits
   - the old `EarlyProbeStageRole` trait and `EarlyProbeStageRoleLayout` helper are gone
   - [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now only describes stage-local sample ordering over a supplied `source index -> sample` resolver
-  - [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `source indices -> probe pair outcome` handoff and direct probe execution for early probe stages, so [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer carries a raw `[usize; 4]` request-source array or bounces through a second request carrier
+  - [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `source spans -> probe pair outcome` handoff and direct probe execution for early probe stages through explicit `first` / `second` [`MidpointEdgeProbeSpanLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) values, so [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer carries a raw `[usize; 4]` request-source array or bounces through a second request carrier
   - [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result path for both early probe stages through the same array-backed source boundary
   - the midpoint-only `EarlyProbeStageLayout<3, _>` specialization is gone
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
@@ -62,9 +62,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
 - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
 - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-- but the request-layout boundary still carries a raw four-index endpoint mapping: [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still stores a positional `[usize; 4]` and indexes it as two implicit `start/end` probe spans during execution
+- but the early stage still carries raw source-slot indexing in its sample ordering: [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still expresses reused stage inputs as `Source(usize)`, and the midpoint/outer stage constants still hand-code those positional source slots directly
 
-The next blocker is to collapse that remaining raw index mapping into one shared typed span boundary, so midpoint probe-pair source selection stops being expressed as a positional four-slot array and instead uses explicit first/second probe span layouts.
+The next blocker is to collapse that remaining raw sample-slot mapping into one shared typed sample-layout boundary, so midpoint-stage and outer-stage sample assembly stop being expressed as ad hoc `Source(usize)` entries mixed with `FirstProbe` / `SecondProbe`.
 
 ## Focus
 
@@ -82,4 +82,4 @@ The next blocker is to collapse that remaining raw index mapping into one shared
 
 ## Why This Is Next
 
-This turn finished the early-stage request carrier cleanup: `MidpointEdgeProbePairRequestLayout` now executes midpoint probe collection directly, so `EarlyProbeStageLayout` no longer assembles midpoint probe-pair requests inline or bounces through `MidpointEdgeProbePairRequest::new(...)`. That leaves the next real seam one level smaller again: the request layout still carries the probe endpoints as a raw positional `[usize; 4]` instead of explicit typed span layouts.
+This turn finished the early-stage request-span cleanup: `MidpointEdgeProbePairRequestLayout` now carries explicit `MidpointEdgeProbeSpanLayout` values and executes midpoint probe collection directly, so the probe-pair request path no longer depends on a raw positional `[usize; 4]`. That leaves the next real seam one level smaller again: the early stage still expresses reused source samples through raw `EarlyProbeSampleRole::Source(usize)` slots instead of explicit typed sample-layout descriptors.
