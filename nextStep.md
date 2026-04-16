@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now-thin `EarlyProbeRefinementPipeline` bounce, so the top-level early probe entry no longer routes raw `start` / `midpoint` / `end` inputs through a separate wrapper once midpoint-stage source materialization, outer-stage source materialization, and terminal dispatch already live inside the typed `EarlyProbeRefinementStages` runner.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now-thin `EarlyProbeStageSource` bounce, so the typed `EarlyProbeRefinementStages` runner and `EarlyProbeStageLayout` path can stay directly on array-backed stage inputs once midpoint-stage, outer-stage, and interval-aware tail ownership all already live on the Rust side.
 
 ## Current State
 
@@ -22,14 +22,14 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
   - [`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OUTER_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now hold direct request-source indices plus sample roles
   - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the full typed midpoint-stage, outer-stage, and terminal dispatch path directly, so the old `prepare_outer_samples()` bounce is gone
-  - [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now delegates raw `start` / `midpoint` / `end` probe inputs directly into `EarlyProbeRefinementStages`
+  - the old [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) bounce is gone
+  - the top-level early probe entry now delegates raw `start` / `midpoint` / `end` probe inputs directly into [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
   - the temporary `EarlyProbeRefinementSource` carrier and its one-use `stage_source()` view are gone
-  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the midpoint `[start, midpoint, end]` source materialization too, so both early stage-source materializations now stay under the same typed stage runner
+  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns midpoint-stage source materialization, outer-stage source materialization, the typed interval-aware segment handoff, and the adaptive-chase count directly, so the old [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) bounce is gone too
   - the old inline midpoint-only `match index { 0, 1, 2 }` resolver in `EarlyProbeRefinementStages` is gone
   - the old midpoint-only `EarlyProbeTripletSource` carrier is gone
   - the old midpoint-only `EarlyProbeStageSource::Triplet { start, midpoint, end }` variant is gone
   - [`EarlyProbeStageSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now carries one shared array-backed typed stage-source boundary for both midpoint and outer-stage inputs
-  - [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed interval-aware segment handoff plus the `None => Some(false)` terminal behavior
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) chooses the stronger coarse side and the winning outer-vs-inner segment before handing off to the shared refinement path
@@ -44,14 +44,13 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the early stage itself is now array-backed instead of split across array and triplet sample mapping
 - the midpoint-stage and outer-stage request/sample mapping now live in the same typed stage layout
 - the stage layout now returns typed `Result<[NormalizedEdgeSample; N], bool>` directly through one shared `refinement_result()` entry
-- the top-level entry now delegates through [`EARLY_PROBE_REFINEMENT_PIPELINE`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- the pipeline now passes raw `start` / `midpoint` / `end` inputs directly into [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and the terminal handoff remains typed through [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- the midpoint-stage, outer-stage, and terminal dispatch now already live in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- the top-level entry now delegates straight into [`EARLY_PROBE_REFINEMENT_STAGES`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- the stage runner now receives raw `start` / `midpoint` / `end` inputs directly, and midpoint-stage, outer-stage, and interval-aware tail configuration all already live in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the midpoint-stage and outer-stage now both reach the shared stage layout through the same array-backed [`EarlyProbeStageSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns both midpoint-stage and outer-stage source materialization, plus the typed terminal dispatch
-- but the top-level early probe entry still routes through [`EARLY_PROBE_REFINEMENT_PIPELINE`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) even though that wrapper now just passes raw probes and a fixed terminal into the already-typed stage runner
+- [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns both midpoint-stage and outer-stage source materialization, plus the typed interval-aware tail dispatch
+- but the stage runner and stage layout still bounce through a separate array wrapper, [`EarlyProbeStageSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), even though both sides are already operating on fixed array-backed stage inputs
 
-The next blocker is to collapse that now-thin pipeline bounce so the top-level early probe entry can delegate straight into the typed stage runner without a separate `EarlyProbeRefinementPipeline` wrapper sitting between the helper and the already-typed midpoint/outer/terminal path.
+The next blocker is to collapse that now-thin `EarlyProbeStageSource` bounce so `EarlyProbeRefinementStages` can hand its already-prepared `[NormalizedEdgeSample; N]` stage arrays directly into `EarlyProbeStageLayout` without a separate wrapper sitting between the stage runner and the already-array-backed stage layout.
 
 ## Focus
 
@@ -69,4 +68,4 @@ The next blocker is to collapse that now-thin pipeline bounce so the top-level e
 
 ## Why This Is Next
 
-This turn finished collapsing the last split source materialization itself: both early probe stages already go through the same array-backed typed `EarlyProbeStageSource` boundary, and `EarlyProbeRefinementStages` now owns both midpoint-stage and outer-stage source assembly before terminal dispatch. That leaves the next real seam one layer smaller again: `EARLY_PROBE_REFINEMENT_PIPELINE` is now only a thin wrapper around the already-typed stage runner.
+This turn finished collapsing the typed tail bounce: `EarlyProbeRefinementStages` now owns midpoint-stage, outer-stage, interval-aware segment handoff, and adaptive-chase configuration directly, and the old `EarlyProbeRefinementTerminal` wrapper is gone. That leaves the next real seam one layer smaller again: `EarlyProbeStageSource` is now the remaining thin wrapper between the stage runner and the already-array-backed stage layout.
