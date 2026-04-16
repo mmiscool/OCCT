@@ -1526,14 +1526,24 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.stage_outcome(
-            self.midpoint_stage,
+        let midpoint_source = [*start, *midpoint, *end];
+        let midpoint_probes = self.midpoint_stage.probe_request_layout.probe_pair(
             context,
             edge_shape,
-            [*start, *midpoint, *end],
-        )?
+            midpoint_source,
+        )?;
+        EarlyProbeStageOutcome::from_refinement_result(
+            midpoint_probes.refinement_result(midpoint_source, self.midpoint_stage.sample_roles),
+        )
         .and_then(|midpoint_samples| {
-            self.stage_outcome(self.outer_stage, context, edge_shape, midpoint_samples)
+            let outer_probes = self.outer_stage.probe_request_layout.probe_pair(
+                context,
+                edge_shape,
+                midpoint_samples,
+            )?;
+            Some(EarlyProbeStageOutcome::from_refinement_result(
+                outer_probes.refinement_result(midpoint_samples, self.outer_stage.sample_roles),
+            ))
         })?
         .finish(|outer_samples| {
             self.interval_aware_side_layouts.needs_refinement(
@@ -1543,21 +1553,6 @@ impl EarlyProbeRefinementStages {
                 self.coarse_refinement_checks_before_adaptive_chase,
             )
         })
-    }
-
-    fn stage_outcome<const SOURCE_N: usize, const STAGE_N: usize>(
-        self,
-        layout: EarlyProbeStageLayout<SOURCE_N, STAGE_N>,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<EarlyProbeStageOutcome<STAGE_N>> {
-        let probes = layout
-            .probe_request_layout
-            .probe_pair(context, edge_shape, source)?;
-        Some(EarlyProbeStageOutcome::from_refinement_result(
-            probes.refinement_result(source, layout.sample_roles),
-        ))
     }
 }
 
