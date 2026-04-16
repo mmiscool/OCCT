@@ -1277,6 +1277,7 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
 
     samples.sort_by(|lhs, rhs| lhs.t.total_cmp(&rhs.t));
     append_axis_turning_edge_samples(context, edge_shape, &samples, &mut points)?;
+    append_near_flat_axis_edge_samples(context, edge_shape, &samples, &mut points)?;
 
     bbox_from_points(points)
 }
@@ -1369,6 +1370,25 @@ fn append_axis_turning_edge_samples(
     Some(())
 }
 
+fn append_near_flat_axis_edge_samples(
+    context: &Context,
+    edge_shape: &Shape,
+    samples: &[NormalizedEdgeSample],
+    points: &mut Vec<[f64; 3]>,
+) -> Option<()> {
+    for window in samples.windows(2) {
+        for axis in 0..3 {
+            let Some(extremum_sample) =
+                near_flat_axis_edge_sample(context, edge_shape, &window[0], &window[1], axis)?
+            else {
+                continue;
+            };
+            points.push(extremum_sample.position);
+        }
+    }
+    Some(())
+}
+
 fn axis_turning_edge_sample(
     context: &Context,
     edge_shape: &Shape,
@@ -1419,6 +1439,121 @@ fn axis_turning_edge_sample(
     }
 
     Some(Some(context.edge_sample(edge_shape, midpoint_t).ok()?))
+}
+
+fn near_flat_axis_edge_sample(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+) -> Option<Option<EdgeSample>> {
+    if tangent_sign_changes(start.sample.tangent[axis], end.sample.tangent[axis]) {
+        return Some(None);
+    }
+
+    let probe_fractions = [0.25, 0.5, 0.75];
+    let mut probes = Vec::with_capacity(probe_fractions.len());
+    for fraction in probe_fractions {
+        let probe_t = start.t + (end.t - start.t) * fraction;
+        if approx_eq(probe_t, start.t, 1.0e-12, 1.0e-12)
+            || approx_eq(probe_t, end.t, 1.0e-12, 1.0e-12)
+        {
+            continue;
+        }
+        probes.push(NormalizedEdgeSample {
+            t: probe_t,
+            sample: context.edge_sample(edge_shape, probe_t).ok()?,
+        });
+    }
+
+    let Some(mut best_probe) = probes.iter().copied().min_by(|lhs, rhs| {
+        lhs.sample.tangent[axis]
+            .abs()
+            .total_cmp(&rhs.sample.tangent[axis].abs())
+    }) else {
+        return Some(None);
+    };
+
+    if !near_flat_axis_probe_is_promising(start, best_probe, end, axis) {
+        return Some(None);
+    }
+
+    let mut low = *start;
+    let mut high = *end;
+    for _ in 0..12 {
+        if best_probe.sample.tangent[axis].abs() <= 1.0e-9 {
+            break;
+        }
+
+        let left_t = 0.5 * (low.t + best_probe.t);
+        let right_t = 0.5 * (best_probe.t + high.t);
+        if approx_eq(left_t, low.t, 1.0e-12, 1.0e-12)
+            || approx_eq(left_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, high.t, 1.0e-12, 1.0e-12)
+        {
+            break;
+        }
+
+        let left_probe = NormalizedEdgeSample {
+            t: left_t,
+            sample: context.edge_sample(edge_shape, left_t).ok()?,
+        };
+        let right_probe = NormalizedEdgeSample {
+            t: right_t,
+            sample: context.edge_sample(edge_shape, right_t).ok()?,
+        };
+
+        let left_abs = left_probe.sample.tangent[axis].abs();
+        let best_abs = best_probe.sample.tangent[axis].abs();
+        let right_abs = right_probe.sample.tangent[axis].abs();
+        if left_abs < best_abs || right_abs < best_abs {
+            if left_abs <= right_abs && left_abs < best_abs {
+                high = best_probe;
+                best_probe = left_probe;
+                continue;
+            }
+            if right_abs < best_abs {
+                low = best_probe;
+                best_probe = right_probe;
+                continue;
+            }
+        }
+
+        low = left_probe;
+        high = right_probe;
+    }
+
+    Some(Some(best_probe.sample))
+}
+
+fn near_flat_axis_probe_is_promising(
+    start: &NormalizedEdgeSample,
+    best_probe: NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+) -> bool {
+    let start_abs = start.sample.tangent[axis].abs();
+    let end_abs = end.sample.tangent[axis].abs();
+    let best_abs = best_probe.sample.tangent[axis].abs();
+    if best_abs <= 1.0e-6 {
+        return true;
+    }
+
+    let endpoint_floor = start_abs.min(end_abs);
+    if endpoint_floor <= 1.0e-9 {
+        return false;
+    }
+
+    if best_abs <= 0.5 * endpoint_floor {
+        return true;
+    }
+
+    let interval_min = start.sample.position[axis].min(end.sample.position[axis]);
+    let interval_max = start.sample.position[axis].max(end.sample.position[axis]);
+    best_probe.sample.position[axis] < interval_min - 1.0e-9
+        || best_probe.sample.position[axis] > interval_max + 1.0e-9
 }
 
 fn sampled_edge_interval_needs_refinement(
