@@ -1500,103 +1500,60 @@ impl PreparedOuterProbeChain {
             return Some(true);
         }
 
-        let Some(prepared_side) = self.prepare_interval_aware_refinement(context, edge_shape)?
+        let Some(probe_segment) =
+            self.prepare_interval_aware_refinement_segment(context, edge_shape)?
         else {
             return Some(false);
         };
 
-        let Some(probe_segment) = prepared_side.stronger_segment() else {
-            return Some(false);
-        };
-
-        if sampled_edge_interval_needs_refinement(
-            &probe_segment.start,
-            &probe_segment.midpoint,
-            &probe_segment.end,
-        ) {
-            return Some(true);
-        }
-
-        sampled_edge_interval_needs_stronger_half_refinement(
-            context,
-            edge_shape,
-            &probe_segment.start,
-            &probe_segment.midpoint,
-            &probe_segment.end,
-            3,
-        )
+        probe_segment.needs_refinement(context, edge_shape, 3)
     }
 
-    fn prepare_interval_aware_refinement(
+    fn prepare_interval_aware_refinement_segment(
         &self,
         context: &Context,
         edge_shape: &Shape,
-    ) -> Option<Option<PreparedIntervalAwareRefinementSide>> {
-        let Some(side) = self.interval_aware_refinement_side() else {
+    ) -> Option<Option<RefinementSegment>> {
+        let Some(side_is_right) = self.interval_aware_refinement_side_is_right() else {
             return Some(None);
         };
 
-        Some(Some(self.prepare_interval_aware_refinement_side(
-            context, edge_shape, side,
-        )?))
-    }
-
-    fn interval_aware_refinement_side(&self) -> Option<IntervalAwareRefinementSide> {
-        choose_stronger_refinement_segment(
+        let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = if side_is_right {
             (
-                IntervalAwareRefinementSide::Left,
-                scored_refinement_segment(&self.start, &self.first_probe, &self.midpoint),
-            ),
-            (
-                IntervalAwareRefinementSide::Right,
-                scored_refinement_segment(&self.midpoint, &self.second_probe, &self.end),
-            ),
-        )
-        .map(|(side, _)| side)
-    }
-
-    fn prepare_interval_aware_refinement_side(
-        &self,
-        context: &Context,
-        edge_shape: &Shape,
-        side: IntervalAwareRefinementSide,
-    ) -> Option<PreparedIntervalAwareRefinementSide> {
-        let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = match side {
-            IntervalAwareRefinementSide::Left => (
-                (&self.start, &self.left_outer_probe, &self.first_probe),
-                (&self.first_probe, &self.midpoint),
-            ),
-            IntervalAwareRefinementSide::Right => (
                 (&self.second_probe, &self.right_outer_probe, &self.end),
                 (&self.midpoint, &self.second_probe),
-            ),
+            )
+        } else {
+            (
+                (&self.start, &self.left_outer_probe, &self.first_probe),
+                (&self.first_probe, &self.midpoint),
+            )
         };
+
+        let outer_segment = RefinementSegment::new(outer_start, outer_mid, outer_end);
         let inner_probe = midpoint_edge_probe(context, edge_shape, inner_start, inner_end)?;
-        Some(PreparedIntervalAwareRefinementSide {
-            outer_segment: scored_refinement_segment(outer_start, outer_mid, outer_end),
-            inner_segment: inner_probe
-                .as_ref()
-                .and_then(|probe| scored_refinement_segment(inner_start, probe, inner_end)),
-        })
+        let inner_segment = inner_probe
+            .as_ref()
+            .and_then(|probe| RefinementSegment::new(inner_start, probe, inner_end));
+
+        Some(
+            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
+                .map(|(_, segment)| segment),
+        )
     }
-}
 
-#[derive(Clone, Copy)]
-enum IntervalAwareRefinementSide {
-    Left,
-    Right,
-}
-
-#[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSide {
-    outer_segment: Option<RefinementSegment>,
-    inner_segment: Option<RefinementSegment>,
-}
-
-impl PreparedIntervalAwareRefinementSide {
-    fn stronger_segment(&self) -> Option<RefinementSegment> {
-        choose_stronger_refinement_segment((false, self.outer_segment), (true, self.inner_segment))
-            .map(|(_, segment)| segment)
+    fn interval_aware_refinement_side_is_right(&self) -> Option<bool> {
+        RefinementSegment::choose_stronger(
+            (
+                false,
+                RefinementSegment::new(&self.start, &self.first_probe, &self.midpoint),
+            ),
+            (
+                true,
+                RefinementSegment::new(&self.midpoint, &self.second_probe, &self.end),
+            ),
+        )
+        .map(|(side_is_right, _)| side_is_right)
     }
 }
 
@@ -1616,120 +1573,135 @@ struct RefinementSegment {
     score: f64,
 }
 
-fn scored_refinement_segment(
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<RefinementSegment> {
-    let score = sampled_edge_interval_refinement_signal_strength(start, midpoint, end);
-    if score <= 1.0e-12 {
-        None
-    } else {
-        Some(RefinementSegment {
-            start: *start,
-            midpoint: *midpoint,
-            end: *end,
-            score,
-        })
-    }
-}
-
-fn choose_stronger_refinement_segment<T: Copy>(
-    first: (T, Option<RefinementSegment>),
-    second: (T, Option<RefinementSegment>),
-) -> Option<(T, RefinementSegment)> {
-    match (first.1, second.1) {
-        (Some(first_segment), Some(second_segment)) => {
-            if first_segment.score >= second_segment.score {
-                Some((first.0, first_segment))
-            } else {
-                Some((second.0, second_segment))
-            }
+impl RefinementSegment {
+    fn new(
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> Option<Self> {
+        let score = sampled_edge_interval_refinement_signal_strength(start, midpoint, end);
+        if score <= 1.0e-12 {
+            None
+        } else {
+            Some(Self {
+                start: *start,
+                midpoint: *midpoint,
+                end: *end,
+                score,
+            })
         }
-        (Some(first_segment), None) => Some((first.0, first_segment)),
-        (None, Some(second_segment)) => Some((second.0, second_segment)),
-        (None, None) => None,
     }
-}
 
-fn sampled_edge_interval_needs_stronger_half_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-    coarse_refinement_checks_before_adaptive_chase: usize,
-) -> Option<bool> {
-    let mut adaptive_start = *start;
-    let mut adaptive_midpoint = *midpoint;
-    let mut adaptive_end = *end;
+    fn choose_stronger<T: Copy>(
+        first: (T, Option<Self>),
+        second: (T, Option<Self>),
+    ) -> Option<(T, Self)> {
+        match (first.1, second.1) {
+            (Some(first_segment), Some(second_segment)) => {
+                if first_segment.score >= second_segment.score {
+                    Some((first.0, first_segment))
+                } else {
+                    Some((second.0, second_segment))
+                }
+            }
+            (Some(first_segment), None) => Some((first.0, first_segment)),
+            (None, Some(second_segment)) => Some((second.0, second_segment)),
+            (None, None) => None,
+        }
+    }
 
-    for _ in 0..coarse_refinement_checks_before_adaptive_chase {
-        let Some(probe) = choose_stronger_refinement_half(
-            context,
-            edge_shape,
-            &adaptive_start,
-            &adaptive_midpoint,
-            &adaptive_end,
-        )?
-        else {
-            return Some(false);
-        };
-
-        if sampled_edge_interval_needs_refinement(&probe.start, &probe.midpoint, &probe.end) {
+    fn needs_refinement(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        if self.needs_local_refinement() {
             return Some(true);
         }
 
-        adaptive_start = probe.start;
-        adaptive_midpoint = probe.midpoint;
-        adaptive_end = probe.end;
-    }
-
-    let Some(mut probe) = choose_stronger_refinement_half(
-        context,
-        edge_shape,
-        &adaptive_start,
-        &adaptive_midpoint,
-        &adaptive_end,
-    )?
-    else {
-        return Some(false);
-    };
-
-    let initial_score = probe.score;
-    let initial_t_span = (probe.end.t - probe.start.t).abs();
-    let initial_chord_length = norm3(subtract3(
-        probe.end.sample.position,
-        probe.start.sample.position,
-    ));
-    let mut refinement_steps = 1;
-
-    while half_refinement_should_continue(
-        &probe,
-        initial_score,
-        initial_t_span,
-        initial_chord_length,
-        refinement_steps,
-    ) {
-        let Some(next_probe) = choose_stronger_refinement_half(
+        self.needs_stronger_half_refinement(
             context,
             edge_shape,
-            &probe.start,
-            &probe.midpoint,
-            &probe.end,
-        )?
-        else {
-            break;
-        };
-        probe = next_probe;
-        refinement_steps += 1;
+            coarse_refinement_checks_before_adaptive_chase,
+        )
     }
 
-    Some(sampled_edge_interval_needs_refinement(
-        &probe.start,
-        &probe.midpoint,
-        &probe.end,
-    ))
+    fn needs_local_refinement(&self) -> bool {
+        sampled_edge_interval_needs_refinement(&self.start, &self.midpoint, &self.end)
+    }
+
+    fn needs_stronger_half_refinement(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        let mut adaptive_probe = *self;
+
+        for _ in 0..coarse_refinement_checks_before_adaptive_chase {
+            let Some(probe) = adaptive_probe.stronger_half(context, edge_shape)? else {
+                return Some(false);
+            };
+
+            if probe.needs_local_refinement() {
+                return Some(true);
+            }
+
+            adaptive_probe = probe;
+        }
+
+        let Some(mut probe) = adaptive_probe.stronger_half(context, edge_shape)? else {
+            return Some(false);
+        };
+
+        let initial_score = probe.score;
+        let initial_t_span = (probe.end.t - probe.start.t).abs();
+        let initial_chord_length = norm3(subtract3(
+            probe.end.sample.position,
+            probe.start.sample.position,
+        ));
+        let mut refinement_steps = 1;
+
+        while half_refinement_should_continue(
+            &probe,
+            initial_score,
+            initial_t_span,
+            initial_chord_length,
+            refinement_steps,
+        ) {
+            let Some(next_probe) = probe.stronger_half(context, edge_shape)? else {
+                break;
+            };
+            probe = next_probe;
+            refinement_steps += 1;
+        }
+
+        Some(probe.needs_local_refinement())
+    }
+
+    fn stronger_half(&self, context: &Context, edge_shape: &Shape) -> Option<Option<Self>> {
+        let outer_probe = midpoint_edge_probe(context, edge_shape, &self.start, &self.midpoint)?;
+        let inner_probe = midpoint_edge_probe(context, edge_shape, &self.midpoint, &self.end)?;
+
+        let stronger_half = Self::choose_stronger(
+            (
+                (),
+                outer_probe
+                    .as_ref()
+                    .and_then(|probe| Self::new(&self.start, probe, &self.midpoint)),
+            ),
+            (
+                (),
+                inner_probe
+                    .as_ref()
+                    .and_then(|probe| Self::new(&self.midpoint, probe, &self.end)),
+            ),
+        )
+        .map(|(_, segment)| segment);
+
+        Some(stronger_half)
+    }
 }
 
 fn half_refinement_should_continue(
@@ -1760,35 +1732,6 @@ fn half_refinement_should_continue(
         .max(HALF_REFINEMENT_RELATIVE_CHORD_FLOOR * initial_chord_length);
 
     current_t_span > t_span_floor || current_chord_length > chord_floor
-}
-
-fn choose_stronger_refinement_half(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<Option<RefinementSegment>> {
-    let outer_probe = midpoint_edge_probe(context, edge_shape, start, midpoint)?;
-    let inner_probe = midpoint_edge_probe(context, edge_shape, midpoint, end)?;
-
-    let stronger_half = choose_stronger_refinement_segment(
-        (
-            (),
-            outer_probe
-                .as_ref()
-                .and_then(|probe| scored_refinement_segment(start, probe, midpoint)),
-        ),
-        (
-            (),
-            inner_probe
-                .as_ref()
-                .and_then(|probe| scored_refinement_segment(midpoint, probe, end)),
-        ),
-    )
-    .map(|(_, segment)| segment);
-
-    Some(stronger_half)
 }
 
 fn midpoint_edge_probe(
