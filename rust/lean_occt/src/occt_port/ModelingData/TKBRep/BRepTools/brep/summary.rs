@@ -1514,8 +1514,7 @@ impl EarlyProbeSampleRole {
 
 #[derive(Clone, Copy)]
 struct EarlyProbeRefinementStages {
-    midpoint_stage: EarlyProbeStageLayout<3, 5>,
-    outer_stage: EarlyProbeStageLayout<5, 7>,
+    stage_pair: EarlyProbeStagePair,
     interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
     coarse_refinement_checks_before_adaptive_chase: usize,
 }
@@ -1528,8 +1527,7 @@ impl EarlyProbeRefinementStages {
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Self {
         Self {
-            midpoint_stage,
-            outer_stage,
+            stage_pair: EarlyProbeStagePair::new(midpoint_stage, outer_stage),
             interval_aware_side_layouts,
             coarse_refinement_checks_before_adaptive_chase,
         }
@@ -1544,19 +1542,48 @@ impl EarlyProbeRefinementStages {
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
         self.interval_aware_side_layouts.needs_refinement(
-            match self.midpoint_stage.stage_progress(
-                context,
-                edge_shape,
-                [*start, *midpoint, *end],
-            )? {
+            self.stage_pair
+                .stage_progress(context, edge_shape, [*start, *midpoint, *end])?,
+            context,
+            edge_shape,
+            self.coarse_refinement_checks_before_adaptive_chase,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EarlyProbeStagePair {
+    midpoint_stage: EarlyProbeStageLayout<3, 5>,
+    outer_stage: EarlyProbeStageLayout<5, 7>,
+}
+
+impl EarlyProbeStagePair {
+    const fn new(
+        midpoint_stage: EarlyProbeStageLayout<3, 5>,
+        outer_stage: EarlyProbeStageLayout<5, 7>,
+    ) -> Self {
+        Self {
+            midpoint_stage,
+            outer_stage,
+        }
+    }
+
+    fn stage_progress(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; 3],
+    ) -> Option<ControlFlow<bool, [NormalizedEdgeSample; 7]>> {
+        Some(
+            match self
+                .midpoint_stage
+                .stage_progress(context, edge_shape, source)?
+            {
                 ControlFlow::Continue(samples) => self
                     .outer_stage
                     .stage_progress(context, edge_shape, samples)?,
                 ControlFlow::Break(result) => ControlFlow::Break(result),
             },
-            context,
-            edge_shape,
-            self.coarse_refinement_checks_before_adaptive_chase,
         )
     }
 }
