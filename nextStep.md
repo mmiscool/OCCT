@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining stage-specific sample-carrier assembly around `MidpointStageProbeRequestSamples::new(...)` and `OuterStageProbeRequestSamples::from_midpoint_probe_samples(...)`, so the early probe entry owns typed request-source preparation on one shared boundary instead of building those carriers inline at each stage call site.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now one-use `PreparedMidpointProbeChain::prepare_outer_probe_chain()` bounce, so the midpoint-stage carrier keeps the shared outer-stage request-layout handoff and the `PreparedOuterProbeChain` materialization in one place instead of routing through a second helper.
 
 ## Current State
 
@@ -24,7 +24,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - `PreparedMidpointProbeChain` no longer carries `midpoint_probe_request()` or `outer_probe_request()` wrapper bounces
   - [`MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now drives midpoint-stage request assembly directly from `prepare()`
   - [`OUTER_STAGE_PROBE_REQUEST_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now drives outer-stage request assembly directly from `prepare_outer_probe_chain()`
-  - the old duplicated `request(...)` impls are gone; [`MidpointEdgeProbePairRequestSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now provides one generic typed sample-resolution path across [`MidpointStageProbeRequestSamples`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OuterStageProbeRequestSamples`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+  - the old duplicated `request(...)` impls are gone; [`MidpointEdgeProbePairRequestSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now provides one generic lifetime-parameterized typed sample-resolution path across the midpoint-stage borrowed `(&start, &midpoint, &end)` source and the outer-stage [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) source
 - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns a stable seven-sample array boundary, keeps the interval-aware handoff directly in `needs_refinement()`, and receives that prepared sample array straight from the midpoint probe carrier
   - [`PreparedIntervalAwareRefinementSideWindow`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
   - the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap is gone
@@ -50,7 +50,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the temporary [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carriers are gone
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now compares coarse segments on the layout path and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice on that same typed boundary
 
-The next blocker is now the smaller duplicated typed-request materialization inside that stage-layout boundary:
+The next blocker is now the smaller helper bounce immediately after that shared typed-request path:
 
 - the pair-to-layout winning-segment bounce is gone
 - the one-use [`PreparedOuterProbeChain::prepare_interval_aware_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper is gone
@@ -63,9 +63,11 @@ The next blocker is now the smaller duplicated typed-request materialization ins
 - the repeated inline `midpoint_edge_probe_pair(...)` request call is gone
 - the one-use free [`midpoint_edge_probe_pair(...)`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) helper is gone
 - the midpoint-stage and outer-stage wrapper bounces are gone
-- but [`PreparedMidpointProbeChain::prepare()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedMidpointProbeChain::prepare_outer_probe_chain()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still assemble their typed request sample carriers inline before calling the shared layout
+- the outer stage no longer assembles a transient request-source carrier at all; [`OUTER_STAGE_PROBE_REQUEST_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now reads directly from [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- the midpoint stage no longer builds any one-use request-source carrier; [`MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now reads directly from the borrowed `start/midpoint/end` inputs in [`PreparedMidpointProbeChain::prepare()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- but [`PreparedMidpointProbeChain::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still routes the outer-stage request-layout call and `PreparedOuterProbeChain` construction through the one-use [`PreparedMidpointProbeChain::prepare_outer_probe_chain()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) helper
 
-The next blocker is to move that remaining stage-specific request-sample carrier assembly behind one smaller typed boundary too, so the early probe stage stays cleaner on the Rust-owned side before it advances into interval-aware refinement.
+The next blocker is to remove that last outer-stage preparation bounce too, so midpoint-stage evidence escalation stays cleaner on the Rust-owned side before it advances into interval-aware refinement.
 
 ## Focus
 
@@ -83,6 +85,6 @@ The next blocker is to move that remaining stage-specific request-sample carrier
 
 ## Why This Is Next
 
-This turn finished the duplicated stage-request materialization cleanup step. `PreparedMidpointProbeChain` still routes both early probe stages directly through named `MidpointEdgeProbePairRequestLayout` constants, but those layouts now share one generic typed `request(...)` path through `MidpointEdgeProbePairRequestSampleRole` instead of keeping separate stage-specific implementations.
+This turn finished the duplicated stage-request materialization cleanup step. `PreparedMidpointProbeChain` still routes both early probe stages directly through named `MidpointEdgeProbePairRequestLayout` constants, and those layouts now share one generic typed `request(...)` path through `MidpointEdgeProbePairRequestSampleRole`. The midpoint stage now uses borrowed `start/midpoint/end` inputs directly as that request source, and the outer stage already uses `PreparedMidpointProbeChain` itself as that request source.
 
-What remains is the next smaller structural duplication around that request-layout path: the request layouts now share one generic materialization route, but the midpoint carrier still assembles `MidpointStageProbeRequestSamples` and `OuterStageProbeRequestSamples` inline at the two early stage call sites. If that request-source preparation moves behind one smaller typed boundary too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is the next smaller structural duplication immediately after that request-layout path: the shared typed request route is now in place for both early probe stages, but midpoint-stage refinement still hands off to outer-probe preparation through one one-use helper before it resumes its main path. If that last outer-stage preparation bounce collapses too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
