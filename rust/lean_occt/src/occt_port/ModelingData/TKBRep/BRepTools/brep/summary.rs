@@ -2472,16 +2472,120 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
         })
         .unwrap_or(0.0);
 
-    let biased_probe = if outer_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
+    let (
+        sub_sub_sub_sub_sub_sub_sub_sub_half_start,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_end,
+    ) = if outer_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
         && inner_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
     {
-        sub_sub_sub_sub_sub_sub_sub_half_mid
+        (
+            sub_sub_sub_sub_sub_sub_sub_half_start,
+            sub_sub_sub_sub_sub_sub_sub_half_mid,
+            sub_sub_sub_sub_sub_sub_sub_half_end,
+        )
     } else if outer_sub_sub_sub_sub_sub_sub_sub_half_score
         >= inner_sub_sub_sub_sub_sub_sub_sub_half_score
     {
-        outer_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
+        (
+            sub_sub_sub_sub_sub_sub_sub_half_start,
+            outer_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
+            sub_sub_sub_sub_sub_sub_sub_half_mid,
+        )
     } else {
-        inner_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
+        (
+            sub_sub_sub_sub_sub_sub_sub_half_mid,
+            inner_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
+            sub_sub_sub_sub_sub_sub_sub_half_end,
+        )
+    };
+
+    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
+        * (sub_sub_sub_sub_sub_sub_sub_sub_half_start.t
+            + sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t);
+    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
+        * (sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_sub_sub_sub_sub_half_end.t);
+
+    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
+        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_start.t,
+        1.0e-12,
+        1.0e-12,
+    ) || approx_eq(
+        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
+        1.0e-12,
+        1.0e-12,
+    ) {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+            sample: context
+                .edge_sample(
+                    edge_shape,
+                    outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+                )
+                .ok()?,
+        })
+    };
+    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
+        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
+        1.0e-12,
+        1.0e-12,
+    ) || approx_eq(
+        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+        sub_sub_sub_sub_sub_sub_sub_sub_half_end.t,
+        1.0e-12,
+        1.0e-12,
+    ) {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+            sample: context
+                .edge_sample(
+                    edge_shape,
+                    inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
+                )
+                .ok()?,
+        })
+    };
+
+    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
+        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
+            .as_ref()
+            .map(|probe| {
+                sampled_edge_interval_refinement_signal_strength(
+                    sub_sub_sub_sub_sub_sub_sub_sub_half_start,
+                    probe,
+                    sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
+                )
+            })
+            .unwrap_or(0.0);
+    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
+        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
+            .as_ref()
+            .map(|probe| {
+                sampled_edge_interval_refinement_signal_strength(
+                    sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
+                    probe,
+                    sub_sub_sub_sub_sub_sub_sub_sub_half_end,
+                )
+            })
+            .unwrap_or(0.0);
+
+    let biased_probe = if outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
+        && inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
+    {
+        sub_sub_sub_sub_sub_sub_sub_sub_half_mid
+    } else if outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score
+        >= inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score
+    {
+        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
+    } else {
+        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
     };
 
     Some(sampled_edge_interval_needs_refinement(
