@@ -1533,46 +1533,34 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.stage_samples_or_refinement(context, edge_shape, start, midpoint, end)
-            .map_or_else(
-                |result| result,
-                |samples| {
-                    self.interval_aware_side_layouts.needs_refinement(
-                        samples,
-                        context,
-                        edge_shape,
-                        self.coarse_refinement_checks_before_adaptive_chase,
-                    )
-                },
-            )
-    }
-
-    fn stage_samples_or_refinement(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-    ) -> Result<[NormalizedEdgeSample; 7], Option<bool>> {
-        let midpoint_samples = self.midpoint_stage.stage_samples_or_refinement(
+        let stage_samples_or_refinement = self
+            .midpoint_stage
+            .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
+            .and_then(|midpoint_samples| {
+                self.outer_stage
+                    .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
+            });
+        self.interval_aware_side_layouts.needs_refinement(
+            stage_samples_or_refinement,
             context,
             edge_shape,
-            [*start, *midpoint, *end],
-        )?;
-        self.outer_stage
-            .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
+            self.coarse_refinement_checks_before_adaptive_chase,
+        )
     }
 }
 
 impl PreparedIntervalAwareRefinementSideLayouts {
     fn needs_refinement(
         self,
-        samples: [NormalizedEdgeSample; 7],
+        stage_samples_or_refinement: Result<[NormalizedEdgeSample; 7], Option<bool>>,
         context: &Context,
         edge_shape: &Shape,
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Option<bool> {
+        let samples = match stage_samples_or_refinement {
+            Ok(samples) => samples,
+            Err(result) => return result,
+        };
         let Some((layout, _)) = RefinementSegmentOutcome::choose_stronger_with(
             (self.left, self.left.coarse.refinement_segment(&samples)),
             (self.right, self.right.coarse.refinement_segment(&samples)),
