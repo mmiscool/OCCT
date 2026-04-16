@@ -1543,18 +1543,24 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let stage_progress = match self.midpoint_stage.stage_progress(
+        let midpoint_samples = match self.midpoint_stage.stage_progress(
             context,
             edge_shape,
             [*start, *midpoint, *end],
         )? {
-            ControlFlow::Continue(samples) => self
-                .outer_stage
-                .stage_progress(context, edge_shape, samples)?,
-            ControlFlow::Break(result) => ControlFlow::Break(result),
+            ControlFlow::Continue(samples) => samples,
+            ControlFlow::Break(result) => return Some(result),
         };
+        let samples =
+            match self
+                .outer_stage
+                .stage_progress(context, edge_shape, midpoint_samples)?
+            {
+                ControlFlow::Continue(samples) => samples,
+                ControlFlow::Break(result) => return Some(result),
+            };
         self.interval_aware_side_layouts.needs_refinement(
-            stage_progress,
+            samples,
             context,
             edge_shape,
             self.coarse_refinement_checks_before_adaptive_chase,
@@ -1565,15 +1571,11 @@ impl EarlyProbeStagePair {
 impl PreparedIntervalAwareRefinementSideLayouts {
     fn needs_refinement(
         self,
-        stage_progress: ControlFlow<bool, [NormalizedEdgeSample; 7]>,
+        samples: [NormalizedEdgeSample; 7],
         context: &Context,
         edge_shape: &Shape,
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Option<bool> {
-        let samples = match stage_progress {
-            ControlFlow::Continue(samples) => samples,
-            ControlFlow::Break(result) => return Some(result),
-        };
         let Some((layout, _)) = RefinementSegmentOutcome::choose_stronger_with(
             (self.left, self.left.coarse.refinement_segment(&samples)),
             (self.right, self.right.coarse.refinement_segment(&samples)),
