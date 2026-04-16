@@ -1526,23 +1526,23 @@ impl EarlyProbeStagePair {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        let midpoint_stage_samples = match self
+        let stage_samples = self
             .midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, source)
-        {
-            Ok(samples) => samples,
-            Err(result) => return result,
-        };
-        let outer_stage_samples = match self.outer_stage.stage_samples_or_refinement(
-            context,
-            edge_shape,
-            midpoint_stage_samples,
-        ) {
-            Ok(samples) => samples,
-            Err(result) => return result,
-        };
-        self.interval_aware_tail
-            .needs_refinement(outer_stage_samples, context, edge_shape)
+            .and_then(|midpoint_stage_samples| {
+                self.outer_stage.stage_samples_or_refinement(
+                    context,
+                    edge_shape,
+                    midpoint_stage_samples,
+                )
+            });
+        match stage_samples {
+            Ok(outer_stage_samples) => {
+                self.interval_aware_tail
+                    .needs_refinement(outer_stage_samples, context, edge_shape)
+            }
+            Err(result) => result,
+        }
     }
 }
 
