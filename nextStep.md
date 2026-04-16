@@ -1,16 +1,44 @@
 # Next Task
 
-Move the successful `ported_brep()` summary face path off the all-raw descriptor route in a face-kind-scoped way.
+Re-enable analytic face reuse in `ported_brep_summary_faces` by removing the remaining Raw-only dependency in analytic face volume, starting with planar faces.
+
+## Current State
+
+- `summary.rs` now gates Rust analytic and mesh whole-shape volume on closed topology. Open or non-manifold solids fall back to OCCT volume instead of taking a bogus Rust mesh volume.
+- `ported_brep_summary_faces` in [`face_surface.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs) now reuses Public faces for:
+  - `PortedFaceSurface::Offset`
+  - `PortedFaceSurface::Swept`
+- Analytic faces are still forced back onto the `Raw` route.
+
+## Remaining Blocker
+
+The unstable boundary is the plane shortcut in [`analytic_face_volume`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_metrics.rs):
+
+```rust
+if matches!(surface, PortedSurface::Plane(_)) {
+    return Some(face.area * dot3(face.sample.position, face.sample.normal) / 3.0);
+}
+```
+
+That shortcut depends directly on `face.area` and `face.sample`. On the Raw route those values are still stable enough for summary derivation. On the Public route, holed planar faces can drift enough to change the analytic volume result, which is why analytic summary faces are still rebuilt on `Raw`.
 
 ## Focus
 
-- Keep the new public/Rust-first `brep.faces` materialization path in [`face_surface.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs), but start shrinking the temporary raw-summary split introduced in [`brep.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs).
-- Thread a summary-specific face route or mixed face inventory so successful Rust-topology `ported_brep()` can reuse the Rust-first/public face preparation for the safe face families first:
-  analytic faces and the offset faces that already pass the public parity checks.
-- Keep swept extrusion/revolution summary inputs explicitly raw-stable until the swept summary formulas and descriptor selection are verified against the existing OCCT-parity tests.
-- Preserve the current guardrails added in [`ported_geometry.rs`](rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs) and [`face_snapshot.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_snapshot.rs): mismatched “plane” classification should decline back to fallback behavior, not hard-error.
-- Keep `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml` passing after the change.
+1. Replace the planar special-case in `analytic_face_volume` with a Rust-owned computation that derives the plane contribution from the loops/geometry path, not from `face.area` and `face.sample`.
+2. Keep the new implementation on the same Rust-first boundaries already used elsewhere in this file:
+   - prefer `PortedCurve::from_context_with_ported_payloads()`
+   - prefer public face/edge geometry and payload routes
+   - only fall back to Raw/OCCT where the existing helper paths already do so
+3. Once planar analytic volume is stable on the Public route, flip the analytic reuse arm in `ported_brep_summary_faces` from:
+   ```rust
+   Some(PortedFaceSurface::Analytic(_)) => true
+   ```
+   to Public reuse for the safe analytic subset, or all analytic faces if parity holds.
+4. Keep the verification bar unchanged:
+   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
+   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
+   - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
 
 ## Why This Is Next
 
-The successful Rust-topology BRep path now materializes `brep.faces` through the public/Rust-first face preparation route, and the new parity coverage in `brep_workflows.rs` locks that in. The remaining conservative boundary is summary derivation: `ported_shape_summary()` still consumes a raw-stable face inventory for all faces. The next aggressive but bounded step is to retire that all-raw summary split incrementally, starting with the face kinds that already have stable Rust-first descriptors and areas.
+The swept and offset summary reuse boundary is now open. The next meaningful Rust-first move is to retire the remaining Raw-only analytic summary face split, and the plane-volume shortcut is the concrete function currently blocking that.

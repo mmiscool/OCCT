@@ -116,6 +116,7 @@ pub(super) fn ported_shape_summary(
     let primary_kind = classify_primary_kind(counts);
     let exact_primitive =
         exact_primitive_shape_summary(primary_kind, counts.solid_count, vertices, edges, faces);
+    let closed_volume_topology = has_closed_volume_topology(faces, edges);
     let fallback_summary = || context.describe_shape_occt(shape).ok();
     let (bbox_min, bbox_max) = exact_primitive
         .and_then(|summary| summary.bbox)
@@ -152,14 +153,83 @@ pub(super) fn ported_shape_summary(
         volume: exact_primitive
             .map(|summary| summary.volume)
             .or_else(|| {
-                analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
+                if closed_volume_topology {
+                    analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
+                } else {
+                    None
+                }
             })
-            .or_else(|| mesh_shape_volume(context, shape, counts))
+            .or_else(|| {
+                if closed_volume_topology {
+                    mesh_shape_volume(context, shape, counts)
+                } else {
+                    None
+                }
+            })
             .or_else(|| fallback_summary().map(|summary| summary.volume))
             .unwrap_or(0.0),
         bbox_min,
         bbox_max,
     })
+}
+
+fn has_closed_volume_topology(faces: &[BrepFace], edges: &[BrepEdge]) -> bool {
+    faces.is_empty()
+        || edges
+            .iter()
+            .all(|edge| edge.adjacent_face_indices.len() == 2)
+}
+
+fn analytic_shape_volume(
+    context: &Context,
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    if !has_closed_volume_topology(faces, edges) {
+        return None;
+    }
+
+    if faces.is_empty() {
+        return Some(0.0);
+    }
+
+    let mut volume = 0.0;
+    for face in faces {
+        let face_shape = face_shapes.get(face.index)?;
+        let analytic_contribution = match face.ported_face_surface {
+            Some(PortedFaceSurface::Analytic(surface)) => analytic_face_volume(
+                context,
+                face,
+                surface,
+                face.geometry,
+                &face.loops,
+                wires,
+                edges,
+                edge_shapes,
+            ),
+            Some(PortedFaceSurface::Swept(surface)) => {
+                analytic_ported_swept_face_volume(face, face.geometry, surface)
+            }
+            Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_volume(
+                context,
+                face,
+                surface,
+                face.geometry,
+                &face.loops,
+                wires,
+                edges,
+                edge_shapes,
+            ),
+            None => None,
+        };
+        let contribution =
+            analytic_contribution.or_else(|| mesh_face_volume(context, face_shape, face))?;
+        volume += contribution;
+    }
+    Some(volume.abs())
 }
 
 fn exact_primitive_shape_summary(
@@ -535,54 +605,6 @@ fn incident_edge_vector(edge: &BrepEdge, vertex_index: usize) -> Option<[f64; 3]
         }
         _ => None,
     }
-}
-
-fn analytic_shape_volume(
-    context: &Context,
-    wires: &[BrepWire],
-    edges: &[BrepEdge],
-    faces: &[BrepFace],
-    face_shapes: &[Shape],
-    edge_shapes: &[Shape],
-) -> Option<f64> {
-    if faces.is_empty() {
-        return Some(0.0);
-    }
-
-    let mut volume = 0.0;
-    for face in faces {
-        let face_shape = face_shapes.get(face.index)?;
-        let analytic_contribution = match face.ported_face_surface {
-            Some(PortedFaceSurface::Analytic(surface)) => analytic_face_volume(
-                context,
-                face,
-                surface,
-                face.geometry,
-                &face.loops,
-                wires,
-                edges,
-                edge_shapes,
-            ),
-            Some(PortedFaceSurface::Swept(surface)) => {
-                analytic_ported_swept_face_volume(face, face.geometry, surface)
-            }
-            Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_volume(
-                context,
-                face,
-                surface,
-                face.geometry,
-                &face.loops,
-                wires,
-                edges,
-                edge_shapes,
-            ),
-            None => None,
-        };
-        let contribution =
-            analytic_contribution.or_else(|| mesh_face_volume(context, face_shape, face))?;
-        volume += contribution;
-    }
-    Some(volume.abs())
 }
 
 fn mesh_shape_volume(context: &Context, shape: &Shape, counts: ShapeCounts) -> Option<f64> {

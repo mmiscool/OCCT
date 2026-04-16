@@ -33,6 +33,69 @@ pub(super) fn ported_brep_faces(
     Ok(faces)
 }
 
+/// Build a face inventory for summary derivation from already-computed public faces.
+///
+/// Offset faces are reused unconditionally: their preparation is route-independent.  Swept
+/// faces are also reused now that analytic volume is gated on closed topology, so open or
+/// non-manifold solids still fall through to mesh/OCCT fallback.  Analytic faces stay on
+/// the `Raw` route for summary derivation until their public-route samples and areas are
+/// stable enough for the plane-volume shortcut.  Unknown faces are also re-prepared on the
+/// `Raw` route.
+pub(super) fn ported_brep_summary_faces(
+    context: &Context,
+    face_shapes: &[Shape],
+    topology: &TopologySnapshot,
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    edge_shapes: &[Shape],
+    public_faces: &[BrepFace],
+) -> Result<Vec<BrepFace>, Error> {
+    public_faces
+        .iter()
+        .enumerate()
+        .map(|(index, public_face)| {
+            let needs_raw = match public_face.ported_face_surface {
+                Some(PortedFaceSurface::Analytic(_)) => true,
+                Some(PortedFaceSurface::Offset(_)) => {
+                    // Offset surface preparation is route-independent: for non-analytic
+                    // faces, `ported_face_geometry` returns None and face_geometry falls
+                    // back to face_geometry_occt (the same source as the Raw route).
+                    // PortedOffsetSurface is also extracted independently of the route.
+                    // The public face is therefore identical to what Raw preparation
+                    // would produce, so it can be reused directly.
+                    false
+                }
+                Some(PortedFaceSurface::Swept(_)) => {
+                    // Swept faces can now reuse the public route because analytic volume
+                    // declines non-closed topology before applying divergence-theorem
+                    // accumulation, preserving the old mesh/OCCT fallback on open solids.
+                    false
+                }
+                _ => true,
+            };
+            if needs_raw {
+                let face_shape = face_shapes.get(index).ok_or_else(|| {
+                    Error::new(format!(
+                        "summary face index {index} is outside the face-shape inventory"
+                    ))
+                })?;
+                ported_brep_face(
+                    context,
+                    topology,
+                    wires,
+                    edges,
+                    edge_shapes,
+                    index,
+                    face_shape,
+                    FaceSurfaceRoute::Raw,
+                )
+            } else {
+                Ok(public_face.clone())
+            }
+        })
+        .collect()
+}
+
 fn ported_brep_face(
     context: &Context,
     topology: &TopologySnapshot,
