@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining `EarlyProbeRefinementSource` bounce inside `EarlyProbeRefinementPipeline`, so the early unsupported-edge probe path stops materializing a temporary `[start, midpoint, end]` carrier just to hand it straight into `EarlyProbeRefinementStages` now that the full midpoint-stage, outer-stage, and terminal dispatch already live behind that typed runner.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw `[start, midpoint, end]` source assembly inside `EarlyProbeRefinementStages`, so the early unsupported-edge probe path stops rebuilding the midpoint-stage source array inline now that `EarlyProbeRefinementPipeline` already delegates raw probe inputs directly into the typed stage runner.
 
 ## Current State
 
@@ -21,8 +21,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
   - [`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OUTER_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now hold direct request-source indices plus sample roles
   - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the full typed midpoint-stage, outer-stage, and terminal dispatch path directly, so the old `prepare_outer_samples()` bounce is gone
-  - [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now down to typed source construction plus delegation into `EarlyProbeRefinementStages`
-  - [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `[start, midpoint, end]` boundary
+  - [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now delegates raw `start` / `midpoint` / `end` probe inputs directly into `EarlyProbeRefinementStages`
+  - the temporary `EarlyProbeRefinementSource` carrier and its one-use `stage_source()` view are gone
   - [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed interval-aware segment handoff plus the `None => Some(false)` terminal behavior
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
@@ -39,12 +39,11 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the midpoint-stage and outer-stage request/sample mapping now live in the same typed stage layout
 - the stage layout now returns typed `Result<[NormalizedEdgeSample; N], bool>` directly
 - the top-level entry now delegates through [`EARLY_PROBE_REFINEMENT_PIPELINE`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- the pipeline input and terminal handoff are now typed through [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- the pipeline now passes raw `start` / `midpoint` / `end` inputs directly into [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and the terminal handoff remains typed through [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the midpoint-stage, outer-stage, and terminal dispatch now already live in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- but [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still materializes [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) only to hand its `[start, midpoint, end]` array straight into `EarlyProbeRefinementStages`
-- and [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) itself is now down to one temporary array plus a one-use `stage_source()` view
+- but [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still rebuilds the midpoint-stage source as a local `[start, midpoint, end]` array before handing it to [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 
-The next blocker is to collapse that remaining `EarlyProbeRefinementSource` bounce so the early probe pipeline stops splitting raw probe inputs from the typed stage runner when the full stage/terminal ladder already sits behind `EarlyProbeRefinementStages`.
+The next blocker is to collapse that remaining raw triplet assembly so the full early probe path stays on typed Rust-side stage boundaries end to end instead of rebuilding a one-use midpoint-stage source array inside `EarlyProbeRefinementStages`.
 
 ## Focus
 
@@ -62,4 +61,4 @@ The next blocker is to collapse that remaining `EarlyProbeRefinementSource` boun
 
 ## Why This Is Next
 
-This turn finished collapsing the remaining midpoint-to-outer split inside `EarlyProbeRefinementStages`: the one-use `prepare_outer_samples()` helper is gone, and the stage runner now owns midpoint-stage, outer-stage, and terminal dispatch directly. That moves the next real duplication one layer up: `EarlyProbeRefinementPipeline` still builds a temporary `EarlyProbeRefinementSource` array only to pass it straight into the already-typed stage runner.
+This turn finished collapsing the `EarlyProbeRefinementSource` bounce: the temporary carrier is gone, and `EarlyProbeRefinementPipeline` now hands raw `start` / `midpoint` / `end` inputs straight into the already-typed stage runner. That moves the next real duplication one layer down inside `EarlyProbeRefinementStages`, which still rebuilds those same three samples into a one-use midpoint-stage source array before calling `EarlyProbeStageLayout::refinement_result()`.

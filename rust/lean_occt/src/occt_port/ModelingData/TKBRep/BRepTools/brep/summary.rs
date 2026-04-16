@@ -1448,23 +1448,6 @@ impl EarlyProbeSampleRole {
 }
 
 #[derive(Clone, Copy)]
-struct EarlyProbeRefinementSource([NormalizedEdgeSample; 3]);
-
-impl EarlyProbeRefinementSource {
-    const fn new(
-        start: NormalizedEdgeSample,
-        midpoint: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
-    ) -> Self {
-        Self([start, midpoint, end])
-    }
-
-    const fn stage_source(&self) -> &[NormalizedEdgeSample; 3] {
-        &self.0
-    }
-}
-
-#[derive(Clone, Copy)]
 struct EarlyProbeRefinementTerminal {
     interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
     coarse_refinement_checks_before_adaptive_chase: usize,
@@ -1523,14 +1506,16 @@ impl EarlyProbeRefinementStages {
         self,
         context: &Context,
         edge_shape: &Shape,
-        source: EarlyProbeRefinementSource,
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
         terminal: EarlyProbeRefinementTerminal,
     ) -> Option<bool> {
-        let midpoint_samples = match self.midpoint_stage.refinement_result(
-            context,
-            edge_shape,
-            source.stage_source(),
-        )? {
+        let source = [*start, *midpoint, *end];
+        let midpoint_samples = match self
+            .midpoint_stage
+            .refinement_result(context, edge_shape, &source)?
+        {
             Ok(samples) => samples,
             Err(result) => return Some(result),
         };
@@ -1570,12 +1555,8 @@ impl EarlyProbeRefinementPipeline {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.stages.needs_refinement(
-            context,
-            edge_shape,
-            EarlyProbeRefinementSource::new(*start, *midpoint, *end),
-            self.terminal,
-        )
+        self.stages
+            .needs_refinement(context, edge_shape, start, midpoint, end, self.terminal)
     }
 }
 
