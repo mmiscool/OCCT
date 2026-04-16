@@ -1475,13 +1475,20 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
     right_outer_probe: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let left_score = sampled_edge_interval_refinement_signal_strength(start, first_probe, midpoint);
-    let right_score = sampled_edge_interval_refinement_signal_strength(midpoint, second_probe, end);
-    if left_score <= 1.0e-12 && right_score <= 1.0e-12 {
+    let Some((chose_left_side, _)) = choose_stronger_refinement_segment(
+        (
+            true,
+            scored_refinement_segment(start, first_probe, midpoint),
+        ),
+        (
+            false,
+            scored_refinement_segment(midpoint, second_probe, end),
+        ),
+    ) else {
         return Some(false);
-    }
+    };
 
-    let (outer_start, outer_mid, outer_end, inner_start, inner_end) = if left_score >= right_score {
+    let (outer_start, outer_mid, outer_end, inner_start, inner_end) = if chose_left_side {
         (start, left_outer_probe, first_probe, first_probe, midpoint)
     } else {
         (second_probe, right_outer_probe, end, midpoint, second_probe)
@@ -1499,30 +1506,33 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
         sample: context.edge_sample(edge_shape, inner_probe_t).ok()?,
     };
 
-    let outer_score =
-        sampled_edge_interval_refinement_signal_strength(outer_start, outer_mid, outer_end);
-    let inner_score =
-        sampled_edge_interval_refinement_signal_strength(inner_start, &inner_probe, inner_end);
-    if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
+    let Some((_, probe_segment)) = choose_stronger_refinement_segment(
+        (
+            false,
+            scored_refinement_segment(outer_start, outer_mid, outer_end),
+        ),
+        (
+            true,
+            scored_refinement_segment(inner_start, &inner_probe, inner_end),
+        ),
+    ) else {
         return Some(false);
-    }
-
-    let (probe_start, probe_mid, probe_end) = if outer_score >= inner_score {
-        (outer_start, outer_mid, outer_end)
-    } else {
-        (inner_start, &inner_probe, inner_end)
     };
 
-    if sampled_edge_interval_needs_refinement(probe_start, probe_mid, probe_end) {
+    if sampled_edge_interval_needs_refinement(
+        &probe_segment.start,
+        &probe_segment.midpoint,
+        &probe_segment.end,
+    ) {
         return Some(true);
     }
 
     sampled_edge_interval_needs_stronger_half_refinement(
         context,
         edge_shape,
-        probe_start,
-        probe_mid,
-        probe_end,
+        &probe_segment.start,
+        &probe_segment.midpoint,
+        &probe_segment.end,
         3,
     )
 }
@@ -1536,11 +1546,47 @@ const HALF_REFINEMENT_RELATIVE_CHORD_FLOOR: f64 = 1.0 / 16384.0;
 const HALF_REFINEMENT_ABSOLUTE_CHORD_FLOOR: f64 = 1.0e-6;
 
 #[derive(Clone, Copy)]
-struct RefinementHalf {
+struct RefinementSegment {
     start: NormalizedEdgeSample,
     midpoint: NormalizedEdgeSample,
     end: NormalizedEdgeSample,
     score: f64,
+}
+
+fn scored_refinement_segment(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<RefinementSegment> {
+    let score = sampled_edge_interval_refinement_signal_strength(start, midpoint, end);
+    if score <= 1.0e-12 {
+        None
+    } else {
+        Some(RefinementSegment {
+            start: *start,
+            midpoint: *midpoint,
+            end: *end,
+            score,
+        })
+    }
+}
+
+fn choose_stronger_refinement_segment<T: Copy>(
+    first: (T, Option<RefinementSegment>),
+    second: (T, Option<RefinementSegment>),
+) -> Option<(T, RefinementSegment)> {
+    match (first.1, second.1) {
+        (Some(first_segment), Some(second_segment)) => {
+            if first_segment.score >= second_segment.score {
+                Some((first.0, first_segment))
+            } else {
+                Some((second.0, second_segment))
+            }
+        }
+        (Some(first_segment), None) => Some((first.0, first_segment)),
+        (None, Some(second_segment)) => Some((second.0, second_segment)),
+        (None, None) => None,
+    }
 }
 
 fn sampled_edge_interval_needs_stronger_half_refinement(
@@ -1624,7 +1670,7 @@ fn sampled_edge_interval_needs_stronger_half_refinement(
 }
 
 fn half_refinement_should_continue(
-    probe: &RefinementHalf,
+    probe: &RefinementSegment,
     initial_score: f64,
     initial_t_span: f64,
     initial_chord_length: f64,
@@ -1659,38 +1705,27 @@ fn choose_stronger_refinement_half(
     start: &NormalizedEdgeSample,
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
-) -> Option<Option<RefinementHalf>> {
+) -> Option<Option<RefinementSegment>> {
     let outer_probe = midpoint_edge_probe(context, edge_shape, start, midpoint)?;
     let inner_probe = midpoint_edge_probe(context, edge_shape, midpoint, end)?;
 
-    let outer_score = outer_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
-        .unwrap_or(0.0);
-    let inner_score = inner_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
-        .unwrap_or(0.0);
+    let stronger_half = choose_stronger_refinement_segment(
+        (
+            (),
+            outer_probe
+                .as_ref()
+                .and_then(|probe| scored_refinement_segment(start, probe, midpoint)),
+        ),
+        (
+            (),
+            inner_probe
+                .as_ref()
+                .and_then(|probe| scored_refinement_segment(midpoint, probe, end)),
+        ),
+    )
+    .map(|(_, segment)| segment);
 
-    if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
-        return Some(None);
-    }
-
-    if outer_score >= inner_score {
-        Some(Some(RefinementHalf {
-            start: *start,
-            midpoint: *outer_probe.as_ref()?,
-            end: *midpoint,
-            score: outer_score,
-        }))
-    } else {
-        Some(Some(RefinementHalf {
-            start: *midpoint,
-            midpoint: *inner_probe.as_ref()?,
-            end: *end,
-            score: inner_score,
-        }))
-    }
+    Some(stronger_half)
 }
 
 fn midpoint_edge_probe(
