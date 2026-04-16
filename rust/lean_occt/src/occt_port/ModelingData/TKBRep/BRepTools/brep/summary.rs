@@ -1513,19 +1513,25 @@ impl EarlyProbeSampleRole {
 }
 
 #[derive(Clone, Copy)]
-struct EarlyProbeStageSequence {
+struct EarlyProbeRefinementStages {
     midpoint_stage: EarlyProbeStageLayout<3, 5>,
     outer_stage: EarlyProbeStageLayout<5, 7>,
+    interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
+    coarse_refinement_checks_before_adaptive_chase: usize,
 }
 
-impl EarlyProbeStageSequence {
+impl EarlyProbeRefinementStages {
     const fn new(
         midpoint_stage: EarlyProbeStageLayout<3, 5>,
         outer_stage: EarlyProbeStageLayout<5, 7>,
+        interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
+        coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Self {
         Self {
             midpoint_stage,
             outer_stage,
+            interval_aware_side_layouts,
+            coarse_refinement_checks_before_adaptive_chase,
         }
     }
 
@@ -1547,27 +1553,6 @@ impl EarlyProbeStageSequence {
             },
         )
     }
-}
-
-#[derive(Clone, Copy)]
-struct EarlyProbeRefinementStages {
-    stage_sequence: EarlyProbeStageSequence,
-    interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
-    coarse_refinement_checks_before_adaptive_chase: usize,
-}
-
-impl EarlyProbeRefinementStages {
-    const fn new(
-        stage_sequence: EarlyProbeStageSequence,
-        interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
-        coarse_refinement_checks_before_adaptive_chase: usize,
-    ) -> Self {
-        Self {
-            stage_sequence,
-            interval_aware_side_layouts,
-            coarse_refinement_checks_before_adaptive_chase,
-        }
-    }
 
     fn needs_refinement(
         self,
@@ -1578,8 +1563,7 @@ impl EarlyProbeRefinementStages {
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
         self.interval_aware_side_layouts.needs_refinement(
-            self.stage_sequence
-                .stage_progress(context, edge_shape, [*start, *midpoint, *end])?,
+            self.stage_progress(context, edge_shape, [*start, *midpoint, *end])?,
             context,
             edge_shape,
             self.coarse_refinement_checks_before_adaptive_chase,
@@ -2057,10 +2041,8 @@ const OUTER_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<5, 7> = EarlyProbeSt
 );
 
 const EARLY_PROBE_REFINEMENT_STAGES: EarlyProbeRefinementStages = EarlyProbeRefinementStages::new(
-    EarlyProbeStageSequence::new(
-        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT,
-        OUTER_EARLY_PROBE_STAGE_LAYOUT,
-    ),
+    MIDPOINT_EARLY_PROBE_STAGE_LAYOUT,
+    OUTER_EARLY_PROBE_STAGE_LAYOUT,
     PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS,
     3,
 );
