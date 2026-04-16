@@ -35,12 +35,11 @@ pub(super) fn ported_brep_faces(
 
 /// Build a face inventory for summary derivation from already-computed public faces.
 ///
-/// Offset faces are reused unconditionally: their preparation is route-independent.  Swept
-/// faces are also reused now that analytic volume is gated on closed topology, so open or
-/// non-manifold solids still fall through to mesh/OCCT fallback.  Analytic faces stay on
-/// the `Raw` route for summary derivation until their public-route samples and areas are
-/// stable enough for the plane-volume shortcut.  Unknown faces are also re-prepared on the
-/// `Raw` route.
+/// Analytic, offset, and swept faces can all be reused from the public route for summary
+/// derivation. Closed-topology gating in `analytic_shape_volume` preserves the old mesh/OCCT
+/// fallback on open or non-manifold solids, and analytic face volume now derives plane
+/// contributions from the loop/geometry path instead of Raw-only face area/sample state.
+/// Unknown faces are still re-prepared on the `Raw` route.
 pub(super) fn ported_brep_summary_faces(
     context: &Context,
     face_shapes: &[Shape],
@@ -55,7 +54,7 @@ pub(super) fn ported_brep_summary_faces(
         .enumerate()
         .map(|(index, public_face)| {
             let needs_raw = match public_face.ported_face_surface {
-                Some(PortedFaceSurface::Analytic(_)) => true,
+                Some(PortedFaceSurface::Analytic(_)) => false,
                 Some(PortedFaceSurface::Offset(_)) => {
                     // Offset surface preparation is route-independent: for non-analytic
                     // faces, `ported_face_geometry` returns None and face_geometry falls

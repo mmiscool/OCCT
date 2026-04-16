@@ -728,7 +728,7 @@ fn analytic_offset_revolution_face_volume(
 
 pub(super) fn analytic_face_volume(
     context: &Context,
-    face: &BrepFace,
+    _face: &BrepFace,
     surface: PortedSurface,
     face_geometry: FaceGeometry,
     loops: &[BrepFaceLoop],
@@ -736,10 +736,6 @@ pub(super) fn analytic_face_volume(
     edges: &[BrepEdge],
     edge_shapes: &[Shape],
 ) -> Option<f64> {
-    if matches!(surface, PortedSurface::Plane(_)) {
-        return Some(face.area * dot3(face.sample.position, face.sample.normal) / 3.0);
-    }
-
     let mut volume = 0.0;
     for face_loop in loops {
         let wire = wires.get(face_loop.wire_index)?;
