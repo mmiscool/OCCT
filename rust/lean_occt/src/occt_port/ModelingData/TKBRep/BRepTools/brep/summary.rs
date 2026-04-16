@@ -1514,7 +1514,7 @@ impl PreparedOuterProbeChain {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        PreparedIntervalAwareRefinementSides::from_outer_probe_chain(self)
+        PreparedIntervalAwareRefinementSides::from_samples(&self.samples())
             .prepare_refinement_segment(context, edge_shape)
     }
 }
@@ -1577,12 +1577,34 @@ struct PreparedIntervalAwareRefinementSide {
 }
 
 impl PreparedIntervalAwareRefinementSide {
-    fn from_side_window(window: PreparedIntervalAwareRefinementSideWindow) -> Self {
+    fn new(
+        start: NormalizedEdgeSample,
+        outer_probe: NormalizedEdgeSample,
+        pivot: NormalizedEdgeSample,
+        end: NormalizedEdgeSample,
+        outer_probe_first: bool,
+    ) -> Self {
         Self {
-            coarse: window.coarse(),
-            outer: window.outer(),
-            inner: window.inner(),
+            coarse: PreparedRefinementTriplet::new(start, pivot, end),
+            outer: if outer_probe_first {
+                PreparedRefinementTriplet::new(start, outer_probe, pivot)
+            } else {
+                PreparedRefinementTriplet::new(pivot, outer_probe, end)
+            },
+            inner: if outer_probe_first {
+                PreparedRefinementSpan::new(pivot, end)
+            } else {
+                PreparedRefinementSpan::new(start, pivot)
+            },
         }
+    }
+
+    fn left(samples: &[NormalizedEdgeSample; 7]) -> Self {
+        Self::new(samples[0], samples[1], samples[2], samples[3], true)
+    }
+
+    fn right(samples: &[NormalizedEdgeSample; 7]) -> Self {
+        Self::new(samples[3], samples[5], samples[4], samples[6], false)
     }
 
     fn prepare_refinement_segment(
@@ -1616,76 +1638,16 @@ impl PreparedIntervalAwareRefinementSide {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideWindow {
-    start: NormalizedEdgeSample,
-    outer_probe: NormalizedEdgeSample,
-    pivot: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
-    outer_probe_first: bool,
-}
-
-impl PreparedIntervalAwareRefinementSideWindow {
-    fn new(
-        start: NormalizedEdgeSample,
-        outer_probe: NormalizedEdgeSample,
-        pivot: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
-        outer_probe_first: bool,
-    ) -> Self {
-        Self {
-            start,
-            outer_probe,
-            pivot,
-            end,
-            outer_probe_first,
-        }
-    }
-
-    fn left(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self::new(samples[0], samples[1], samples[2], samples[3], true)
-    }
-
-    fn right(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self::new(samples[3], samples[5], samples[4], samples[6], false)
-    }
-
-    fn coarse(self) -> PreparedRefinementTriplet {
-        PreparedRefinementTriplet::new(self.start, self.pivot, self.end)
-    }
-
-    fn outer(self) -> PreparedRefinementTriplet {
-        if self.outer_probe_first {
-            PreparedRefinementTriplet::new(self.start, self.outer_probe, self.pivot)
-        } else {
-            PreparedRefinementTriplet::new(self.pivot, self.outer_probe, self.end)
-        }
-    }
-
-    fn inner(self) -> PreparedRefinementSpan {
-        if self.outer_probe_first {
-            PreparedRefinementSpan::new(self.pivot, self.end)
-        } else {
-            PreparedRefinementSpan::new(self.start, self.pivot)
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 struct PreparedIntervalAwareRefinementSides {
     left: PreparedIntervalAwareRefinementSide,
     right: PreparedIntervalAwareRefinementSide,
 }
 
 impl PreparedIntervalAwareRefinementSides {
-    fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
-        let samples = chain.samples();
+    fn from_samples(samples: &[NormalizedEdgeSample; 7]) -> Self {
         Self {
-            left: PreparedIntervalAwareRefinementSide::from_side_window(
-                PreparedIntervalAwareRefinementSideWindow::left(&samples),
-            ),
-            right: PreparedIntervalAwareRefinementSide::from_side_window(
-                PreparedIntervalAwareRefinementSideWindow::right(&samples),
-            ),
+            left: PreparedIntervalAwareRefinementSide::left(samples),
+            right: PreparedIntervalAwareRefinementSide::right(samples),
         }
     }
 
