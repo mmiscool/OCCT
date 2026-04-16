@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining midpoint-probe outcome handling in the shell-edge refinement path, so midpoint segment materialization and midpoint probe-pair materialization stop spelling the `MidpointEdgeProbeOutcome::{NoProbe, Probe(...)}` translation separately and instead share one typed midpoint-probe resolution boundary.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining midpoint probe-pair outcome bounce in the shell-edge refinement path, so `EarlyProbeStageLayout::refinement_result()` stops spelling the `MidpointEdgeProbePairOutcome::{NoPair, Pair(...)}` handling separately and instead shares one typed pair-consumption boundary with the probe-pair request/result path.
 
 ## Current State
 
@@ -38,6 +38,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - triplet-layout segments and midpoint-probe segments now both go through the same shared `RefinementSegmentOutcome::from_samples(...)` constructor instead of each translating `RefinementSegment::new(...)` locally
   - [`PreparedRefinementSpanLayout::midpoint_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `RefinementSegmentOutcome` instead of nested `Option<Option<RefinementSegment>>`
   - midpoint span refinement and adaptive stronger-half refinement now both materialize midpoint candidates through the shared `midpoint_refinement_segment(...)` helper instead of each translating `MidpointEdgeProbeOutcome` into `RefinementSegmentOutcome` locally
+  - midpoint segment creation and midpoint probe-pair creation now both reuse the shared typed midpoint-probe resolution boundary on `MidpointEdgeProbeOutcome`, instead of reinterpreting `MidpointEdgeProbeOutcome::{NoProbe, Probe(...)}` in separate callers
   - [`MidpointEdgeProbePairRequest::probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `MidpointEdgeProbePairOutcome` instead of nested `Option<Option<MidpointEdgeProbePair>>`
   - [`RefinementSegment::stronger_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now stays on that same explicit `RefinementSegmentOutcome` boundary instead of bouncing through a separate `StrongerHalfOutcome`
   - the four unsupported-edge extremum solvers now return an explicit `EdgeSampleExtremumOutcome` instead of nested `Option<Option<EdgeSample>>`
@@ -60,9 +61,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
 - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
 - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-- but midpoint probe resolution is still split in two forms: `midpoint_refinement_segment(...)` turns `MidpointEdgeProbeOutcome` into `RefinementSegmentOutcome`, while [`MidpointEdgeProbePairRequest::probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still interprets two `MidpointEdgeProbeOutcome` values separately to build `MidpointEdgeProbePairOutcome`
+- but the early stage still consumes midpoint probe-pair outcomes manually: [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still matches `MidpointEdgeProbePairOutcome::{NoPair, Pair(...)}` itself to decide `Err(false)` vs staged samples after [`MidpointEdgeProbePairRequest::probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) has already built the typed pair outcome
 
-The next blocker is to collapse that remaining midpoint-probe outcome handling into one shared typed boundary, so midpoint segment creation and midpoint probe-pair creation stop reinterpreting `MidpointEdgeProbeOutcome` independently.
+The next blocker is to collapse that remaining midpoint probe-pair outcome handling into one shared typed boundary, so probe-pair creation and probe-pair consumption stop reinterpreting `MidpointEdgeProbePairOutcome` independently.
 
 ## Focus
 
@@ -80,4 +81,4 @@ The next blocker is to collapse that remaining midpoint-probe outcome handling i
 
 ## Why This Is Next
 
-This turn finished the midpoint-probe-to-segment cleanup: the interval-aware midpoint path and the adaptive stronger-half chase now both share `midpoint_refinement_segment(...)`, and the stronger-half chase stays on `RefinementSegmentOutcome` instead of a second half-only enum. That leaves the next real seam one level smaller again: midpoint probe resolution itself still gets reinterpreted twice, once for midpoint segment creation and once for midpoint probe-pair creation.
+This turn finished the midpoint-probe resolution cleanup: midpoint segment creation and midpoint probe-pair creation now both go through the shared typed midpoint-probe outcome boundary instead of each reinterpreting `MidpointEdgeProbeOutcome` locally. That leaves the next real seam one level smaller again: the early stage still reinterprets `MidpointEdgeProbePairOutcome` after the probe-pair request has already produced that typed result.

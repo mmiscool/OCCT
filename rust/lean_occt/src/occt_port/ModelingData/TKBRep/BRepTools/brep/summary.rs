@@ -1618,6 +1618,34 @@ enum MidpointEdgeProbeOutcome {
     Probe(NormalizedEdgeSample),
 }
 
+impl MidpointEdgeProbeOutcome {
+    fn refinement_segment(
+        self,
+        start: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> RefinementSegmentOutcome {
+        match self {
+            MidpointEdgeProbeOutcome::NoProbe => RefinementSegmentOutcome::NoSegment,
+            MidpointEdgeProbeOutcome::Probe(probe) => {
+                RefinementSegmentOutcome::from_samples(start, &probe, end)
+            }
+        }
+    }
+
+    fn pair_with(self, other: Self) -> MidpointEdgeProbePairOutcome {
+        match (self, other) {
+            (
+                MidpointEdgeProbeOutcome::Probe(first_probe),
+                MidpointEdgeProbeOutcome::Probe(second_probe),
+            ) => MidpointEdgeProbePairOutcome::Pair(MidpointEdgeProbePair {
+                first_probe,
+                second_probe,
+            }),
+            _ => MidpointEdgeProbePairOutcome::NoPair,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PreparedRefinementSpanLayout {
     start: usize,
@@ -1904,14 +1932,7 @@ fn midpoint_refinement_segment(
     start: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<RefinementSegmentOutcome> {
-    Some(
-        match midpoint_edge_probe(context, edge_shape, start, end)? {
-            MidpointEdgeProbeOutcome::NoProbe => RefinementSegmentOutcome::NoSegment,
-            MidpointEdgeProbeOutcome::Probe(probe) => {
-                RefinementSegmentOutcome::from_samples(start, &probe, end)
-            }
-        },
-    )
+    Some(midpoint_edge_probe(context, edge_shape, start, end)?.refinement_segment(start, end))
 }
 
 #[derive(Clone, Copy)]
@@ -1958,16 +1979,7 @@ impl MidpointEdgeProbePairRequest {
             midpoint_edge_probe(context, edge_shape, &self.first_start, &self.first_end)?;
         let second_probe =
             midpoint_edge_probe(context, edge_shape, &self.second_start, &self.second_end)?;
-        match (first_probe, second_probe) {
-            (
-                MidpointEdgeProbeOutcome::Probe(first_probe),
-                MidpointEdgeProbeOutcome::Probe(second_probe),
-            ) => Some(MidpointEdgeProbePairOutcome::Pair(MidpointEdgeProbePair {
-                first_probe,
-                second_probe,
-            })),
-            _ => Some(MidpointEdgeProbePairOutcome::NoPair),
-        }
+        Some(first_probe.pair_with(second_probe))
     }
 }
 
