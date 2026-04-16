@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep winning-side segment materialization on the typed interval-aware layout pair boundary too, so the pair helper no longer has to bounce through a second winning-layout method before it reaches the shared refinement path.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now one-use `PreparedOuterProbeChain::prepare_interval_aware_refinement_segment()` wrapper, so the outer-probe carrier hands its sample array directly to the typed interval-aware layout pair from `needs_refinement()`.
 
 ## Current State
 
@@ -23,7 +23,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
   - [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) are gone
   - [`PreparedRefinementTripletLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), [`PreparedRefinementSpanLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now carry the typed coarse/outer/inner side-layout boundary and materialize interval-aware segments directly from the outer-probe sample array
-  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns interval-aware side-pair construction through a named `left` / `right` typed pair, chooses the stronger coarse segment first through a typed `stronger_side()` chooser, and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice on that layout-owned path before handing the winning segment to the shared refinement path
+  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns interval-aware side-pair construction through a named `left` / `right` typed pair, compares the coarse segments on that pair boundary, and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice there before handing the winning segment to the shared refinement path
+  - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is down to the typed coarse/outer/inner layout data; the old pair-to-layout segment-prep bounce is gone
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns score-based creation, stronger-segment choice, the local-window test, and the stronger-half chase
   - [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) serves both the interval-aware inner probe path and the later stronger-half narrowing path
   - [`half_refinement_should_continue()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) provides the shared signal/span-driven adaptive stop rule, with the max-step limit kept only as a safety ceiling
@@ -40,9 +41,13 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the temporary winning [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carrier is gone
 - the temporary [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carriers are gone
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now compares coarse segments on the layout path and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice on that same typed boundary
-- but that pair helper still chooses a winning layout and then bounces into [`PreparedIntervalAwareRefinementSideLayout::prepare_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) in a second step before the final winning segment exists
 
-The next blocker is to keep winning-side segment materialization on that typed pair boundary too, so the interval-aware entry stays fully on the Rust-owned pair boundary before it hands off to the shared refinement machinery.
+The next blocker is now the last outer-probe entry bounce before that typed pair boundary:
+
+- the pair-to-layout winning-segment bounce is gone
+- but [`PreparedOuterProbeChain::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still routes through a one-use [`PreparedOuterProbeChain::prepare_interval_aware_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper before it reaches the typed interval-aware pair helper
+
+The next blocker is to keep that interval-aware handoff directly on the outer-probe carrier entry too, so the outer-probe stage stays cleaner on the Rust-owned side before it hands off to the shared refinement machinery.
 
 ## Focus
 
@@ -60,6 +65,6 @@ The next blocker is to keep winning-side segment materialization on that typed p
 
 ## Why This Is Next
 
-This turn finished the winning-side carrier removal step. The interval-aware entry no longer builds temporary typed side, triplet, or span carriers before the final winning segment exists.
+This turn finished the pair-to-layout bounce removal step. The interval-aware entry now keeps both coarse-side choice and final winning-segment materialization on the typed layout pair boundary.
 
-What remains is the last pair-to-layout bounce: the helper now chooses the stronger layout and keeps descriptor-to-segment materialization on typed layout helpers, but it still hands the winning layout to a second method before the final winning segment is returned. If that winning-segment materialization moves fully under the pair helper, the interval-aware refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is a smaller outer-probe entry bounce: the outer-probe carrier already owns the seven-sample chain, but it still routes through a one-use wrapper before the typed pair helper returns the winning interval-aware segment. If that last wrapper is removed, the interval-aware refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
