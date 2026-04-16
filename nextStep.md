@@ -1,8 +1,8 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed stage-result continuation tail, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now-thin fixed continuation bounce inside `EarlyProbeStageResultTail::needs_refinement(...)`:
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed stage-result continuation tail, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now-thin fixed outer-stage continuation bounce inside `EarlyProbeStageResultTail::needs_refinement(...)`:
 
-`midpoint_stage.stage_samples_or_refinement(...).continue_with_stage_result_tail(self, ...)`
+`midpoint_stage.stage_samples_or_refinement(...).continue_with(next_stage, ...).needs_refinement(interval_aware_tail, ...)`
 
 without reintroducing the old kickoff wrapper or stage-chain stack.
 
@@ -28,7 +28,8 @@ without reintroducing the old kickoff wrapper or stage-chain stack.
   - the old `EarlyProbeKickoff`, `EarlyProbeStageChain`, `EarlyProbeRefinementStages`, `EarlyProbeStageSequence`, `EarlyProbeStagePair`, `EarlyProbeOuterStageTail`, `EarlyProbeStageSamplesOrRefinement`, and the top-level `sampled_edge_interval_needs_probe_refinement()` bridge are all gone
   - the old standalone `early_probe_needs_refinement(...)` helper is gone
   - the old midpoint-stage kickoff helper is gone
-  - the top-level early probe entry inside `refine_sampled_edge_interval()` now delegates straight to `EARLY_PROBE_STAGE_RESULT_TAIL.needs_refinement(...)`, so the interval-refinement path no longer spells the fixed kickoff composition inline or uses a dedicated kickoff wrapper, a one-off free helper, or a one-use midpoint-stage shim
+  - the old `EarlyProbeStageResult<5>::continue_with_stage_result_tail(...)` bounce is gone
+  - the top-level early probe entry inside `refine_sampled_edge_interval()` now delegates straight to `EARLY_PROBE_STAGE_RESULT_TAIL.needs_refinement(...)`, so the interval-refinement path no longer spells the fixed kickoff composition inline or uses a dedicated kickoff wrapper, a one-off free helper, a one-use midpoint-stage shim, or the old one-use kickoff-to-tail bridge
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - `PreparedIntervalAwareRefinementSideLayouts` owns stronger coarse-side choice, winning outer-vs-inner segment selection, and terminal `segment.needs_refinement(...)` dispatch directly on the final 7-sample boundary
   - midpoint, coarse, and outer candidates all stay on explicit `RefinementSegmentOutcome`
@@ -44,9 +45,9 @@ without reintroducing the old kickoff wrapper or stage-chain stack.
 - the top-level early probe entry no longer spells the fixed kickoff composition inline
 - the midpoint-stage kickoff, outer-stage progression, and interval-aware tail are all already typed
 - the old kickoff wrapper and stage-chain wrapper are gone
-- but `EarlyProbeStageResultTail::needs_refinement(...)` still bridges kickoff into continuation through `midpoint_stage.stage_samples_or_refinement(...).continue_with_stage_result_tail(self, ...)`
+- but `EarlyProbeStageResultTail::needs_refinement(...)` still carries the fixed outer-stage continuation inline through `midpoint_stage.stage_samples_or_refinement(...).continue_with(next_stage, ...).needs_refinement(interval_aware_tail, ...)`
 
-The next blocker is to keep those typed pieces and the typed continuation-tail boundary, but collapse that one-use continuation bounce so the tail owns the full fixed kickoff-and-continuation path directly.
+The next blocker is to keep those typed pieces and the typed continuation-tail boundary, but collapse that one-use outer-stage continuation bounce so the tail owns the full fixed kickoff-and-continuation path without spelling the stage-result chain inline.
 
 ## Focus
 
@@ -64,4 +65,4 @@ The next blocker is to keep those typed pieces and the typed continuation-tail b
 
 ## Why This Is Next
 
-This turn moved the fixed kickoff composition off the top-level entry and onto `EarlyProbeStageResultTail`. The remaining seam is smaller now: the early-probe entry is down to one typed tail call, and the only kickoff bridge left is the one-use `stage_samples_or_refinement(...).continue_with_stage_result_tail(...)` path inside that tail boundary.
+This turn removed the one-use `continue_with_stage_result_tail(...)` bridge and kept the fixed kickoff plus continuation inside `EarlyProbeStageResultTail`. The remaining seam is smaller now: the early-probe entry is down to one typed tail call, and the only kickoff-to-continuation chain left is the inline `stage_samples_or_refinement(...).continue_with(...).needs_refinement(...)` path inside that tail boundary.

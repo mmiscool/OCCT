@@ -1467,18 +1467,6 @@ impl<const STAGE_N: usize> EarlyProbeStageResult<STAGE_N> {
     }
 }
 
-impl EarlyProbeStageResult<5> {
-    fn continue_with_stage_result_tail(
-        self,
-        tail: EarlyProbeStageResultTail,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<bool> {
-        self.continue_with(tail.next_stage, context, edge_shape)
-            .needs_refinement(tail.interval_aware_tail, context, edge_shape)
-    }
-}
-
 impl EarlyProbeStageResult<7> {
     fn needs_refinement(
         self,
@@ -1521,7 +1509,8 @@ impl EarlyProbeStageResultTail {
     ) -> Option<bool> {
         self.midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with_stage_result_tail(self, context, edge_shape)
+            .continue_with(self.next_stage, context, edge_shape)
+            .needs_refinement(self.interval_aware_tail, context, edge_shape)
     }
 }
 
