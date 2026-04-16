@@ -1473,6 +1473,66 @@ trait EarlyProbeStageSampleLayout<const SOURCE_N: usize, const STAGE_N: usize>: 
     ) -> [NormalizedEdgeSample; STAGE_N];
 }
 
+trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: Copy {
+    fn source_index(self) -> usize;
+
+    fn source_sample(self, source: [NormalizedEdgeSample; SOURCE_N]) -> NormalizedEdgeSample {
+        source[self.source_index()]
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EarlyProbeSampleRole<SourceLayout> {
+    Source(SourceLayout),
+    FirstProbe,
+    SecondProbe,
+}
+
+impl<SourceLayout> EarlyProbeSampleRole<SourceLayout> {
+    fn stage_sample<const SOURCE_N: usize>(
+        self,
+        source: [NormalizedEdgeSample; SOURCE_N],
+        probes: &MidpointEdgeProbePair,
+    ) -> NormalizedEdgeSample
+    where
+        SourceLayout: EarlyProbeSourceSampleLayout<SOURCE_N>,
+    {
+        match self {
+            Self::Source(role) => role.source_sample(source),
+            Self::FirstProbe => probes.first_probe,
+            Self::SecondProbe => probes.second_probe,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EarlyProbeSampleLayout<SourceLayout, const SOURCE_N: usize, const STAGE_N: usize> {
+    roles: [EarlyProbeSampleRole<SourceLayout>; STAGE_N],
+}
+
+impl<SourceLayout, const SOURCE_N: usize, const STAGE_N: usize>
+    EarlyProbeSampleLayout<SourceLayout, SOURCE_N, STAGE_N>
+{
+    const fn new(roles: [EarlyProbeSampleRole<SourceLayout>; STAGE_N]) -> Self {
+        Self { roles }
+    }
+}
+
+impl<SourceLayout, const SOURCE_N: usize, const STAGE_N: usize>
+    EarlyProbeStageSampleLayout<SOURCE_N, STAGE_N>
+    for EarlyProbeSampleLayout<SourceLayout, SOURCE_N, STAGE_N>
+where
+    SourceLayout: EarlyProbeSourceSampleLayout<SOURCE_N>,
+{
+    fn stage_samples(
+        self,
+        source: [NormalizedEdgeSample; SOURCE_N],
+        probes: &MidpointEdgeProbePair,
+    ) -> [NormalizedEdgeSample; STAGE_N] {
+        self.roles.map(|role| role.stage_sample(source, probes))
+    }
+}
+
 #[derive(Clone, Copy)]
 enum MidpointEarlyProbeSourceSampleLayout {
     Start,
@@ -1480,57 +1540,19 @@ enum MidpointEarlyProbeSourceSampleLayout {
     End,
 }
 
-impl MidpointEarlyProbeSourceSampleLayout {
-    fn source_sample(self, source: [NormalizedEdgeSample; 3]) -> NormalizedEdgeSample {
+impl EarlyProbeSourceSampleLayout<3> for MidpointEarlyProbeSourceSampleLayout {
+    fn source_index(self) -> usize {
         match self {
-            MidpointEarlyProbeSourceSampleLayout::Start => source[0],
-            MidpointEarlyProbeSourceSampleLayout::Midpoint => source[1],
-            MidpointEarlyProbeSourceSampleLayout::End => source[2],
+            Self::Start => 0,
+            Self::Midpoint => 1,
+            Self::End => 2,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum MidpointEarlyProbeSampleRole {
-    Source(MidpointEarlyProbeSourceSampleLayout),
-    FirstProbe,
-    SecondProbe,
-}
-
-impl MidpointEarlyProbeSampleRole {
-    fn stage_sample(
-        self,
-        source: [NormalizedEdgeSample; 3],
-        probes: &MidpointEdgeProbePair,
-    ) -> NormalizedEdgeSample {
-        match self {
-            MidpointEarlyProbeSampleRole::Source(role) => role.source_sample(source),
-            MidpointEarlyProbeSampleRole::FirstProbe => probes.first_probe,
-            MidpointEarlyProbeSampleRole::SecondProbe => probes.second_probe,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct MidpointEarlyProbeSampleLayout {
-    roles: [MidpointEarlyProbeSampleRole; 5],
-}
-
-impl MidpointEarlyProbeSampleLayout {
-    const fn new(roles: [MidpointEarlyProbeSampleRole; 5]) -> Self {
-        Self { roles }
-    }
-}
-
-impl EarlyProbeStageSampleLayout<3, 5> for MidpointEarlyProbeSampleLayout {
-    fn stage_samples(
-        self,
-        source: [NormalizedEdgeSample; 3],
-        probes: &MidpointEdgeProbePair,
-    ) -> [NormalizedEdgeSample; 5] {
-        self.roles.map(|role| role.stage_sample(source, probes))
-    }
-}
+type MidpointEarlyProbeSampleRole = EarlyProbeSampleRole<MidpointEarlyProbeSourceSampleLayout>;
+type MidpointEarlyProbeSampleLayout =
+    EarlyProbeSampleLayout<MidpointEarlyProbeSourceSampleLayout, 3, 5>;
 
 #[derive(Clone, Copy)]
 enum OuterEarlyProbeSourceSampleLayout {
@@ -1541,59 +1563,20 @@ enum OuterEarlyProbeSourceSampleLayout {
     End,
 }
 
-impl OuterEarlyProbeSourceSampleLayout {
-    fn source_sample(self, source: [NormalizedEdgeSample; 5]) -> NormalizedEdgeSample {
+impl EarlyProbeSourceSampleLayout<5> for OuterEarlyProbeSourceSampleLayout {
+    fn source_index(self) -> usize {
         match self {
-            OuterEarlyProbeSourceSampleLayout::Start => source[0],
-            OuterEarlyProbeSourceSampleLayout::FirstQuarter => source[1],
-            OuterEarlyProbeSourceSampleLayout::Midpoint => source[2],
-            OuterEarlyProbeSourceSampleLayout::SecondQuarter => source[3],
-            OuterEarlyProbeSourceSampleLayout::End => source[4],
+            Self::Start => 0,
+            Self::FirstQuarter => 1,
+            Self::Midpoint => 2,
+            Self::SecondQuarter => 3,
+            Self::End => 4,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum OuterEarlyProbeSampleRole {
-    Source(OuterEarlyProbeSourceSampleLayout),
-    FirstProbe,
-    SecondProbe,
-}
-
-impl OuterEarlyProbeSampleRole {
-    fn stage_sample(
-        self,
-        source: [NormalizedEdgeSample; 5],
-        probes: &MidpointEdgeProbePair,
-    ) -> NormalizedEdgeSample {
-        match self {
-            OuterEarlyProbeSampleRole::Source(role) => role.source_sample(source),
-            OuterEarlyProbeSampleRole::FirstProbe => probes.first_probe,
-            OuterEarlyProbeSampleRole::SecondProbe => probes.second_probe,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct OuterEarlyProbeSampleLayout {
-    roles: [OuterEarlyProbeSampleRole; 7],
-}
-
-impl OuterEarlyProbeSampleLayout {
-    const fn new(roles: [OuterEarlyProbeSampleRole; 7]) -> Self {
-        Self { roles }
-    }
-}
-
-impl EarlyProbeStageSampleLayout<5, 7> for OuterEarlyProbeSampleLayout {
-    fn stage_samples(
-        self,
-        source: [NormalizedEdgeSample; 5],
-        probes: &MidpointEdgeProbePair,
-    ) -> [NormalizedEdgeSample; 7] {
-        self.roles.map(|role| role.stage_sample(source, probes))
-    }
-}
+type OuterEarlyProbeSampleRole = EarlyProbeSampleRole<OuterEarlyProbeSourceSampleLayout>;
+type OuterEarlyProbeSampleLayout = EarlyProbeSampleLayout<OuterEarlyProbeSourceSampleLayout, 5, 7>;
 
 #[derive(Clone, Copy)]
 struct EarlyProbeRefinementStages {
