@@ -1627,22 +1627,10 @@ struct PreparedIntervalAwareRefinementSideLayout {
 }
 
 impl PreparedIntervalAwareRefinementSideLayout {
-    fn from_side_chain(chain: PreparedIntervalAwareRefinementSideChain) -> Self {
-        let coarse = if chain.outer_probe_first {
-            PreparedRefinementTriplet::new(chain.start, chain.second, chain.end)
-        } else {
-            PreparedRefinementTriplet::new(chain.start, chain.first, chain.end)
-        };
-        let outer = if chain.outer_probe_first {
-            PreparedRefinementTriplet::new(chain.start, chain.first, chain.second)
-        } else {
-            PreparedRefinementTriplet::new(chain.first, chain.second, chain.end)
-        };
-        let inner = if chain.outer_probe_first {
-            PreparedRefinementSpan::new(chain.second, chain.end)
-        } else {
-            PreparedRefinementSpan::new(chain.start, chain.first)
-        };
+    fn from_side_window(window: PreparedIntervalAwareRefinementSideWindow) -> Self {
+        let coarse = window.coarse();
+        let outer = window.outer();
+        let inner = window.inner();
 
         Self::new(coarse, outer, inner)
     }
@@ -1665,66 +1653,96 @@ impl PreparedIntervalAwareRefinementSideLayout {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideChain {
+struct PreparedIntervalAwareRefinementSideWindow {
     start: NormalizedEdgeSample,
-    first: NormalizedEdgeSample,
-    second: NormalizedEdgeSample,
+    outer_probe: NormalizedEdgeSample,
+    pivot: NormalizedEdgeSample,
     end: NormalizedEdgeSample,
     outer_probe_first: bool,
 }
 
-impl PreparedIntervalAwareRefinementSideChain {
-    fn outer_probe_first(
-        start: NormalizedEdgeSample,
-        outer_probe: NormalizedEdgeSample,
-        pivot: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
+impl PreparedIntervalAwareRefinementSideWindow {
+    fn from_samples(
+        samples: &[NormalizedEdgeSample; 7],
+        layout: PreparedIntervalAwareRefinementSideWindowSampleLayout,
     ) -> Self {
         Self {
-            start,
-            first: outer_probe,
-            second: pivot,
-            end,
-            outer_probe_first: true,
+            start: samples[layout.start],
+            outer_probe: samples[layout.outer_probe],
+            pivot: samples[layout.pivot],
+            end: samples[layout.end],
+            outer_probe_first: layout.outer_probe_first,
         }
     }
 
-    fn outer_probe_second(
-        start: NormalizedEdgeSample,
-        pivot: NormalizedEdgeSample,
-        outer_probe: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
-    ) -> Self {
-        Self {
-            start,
-            first: pivot,
-            second: outer_probe,
-            end,
-            outer_probe_first: false,
+    fn coarse(self) -> PreparedRefinementTriplet {
+        PreparedRefinementTriplet::new(self.start, self.pivot, self.end)
+    }
+
+    fn outer(self) -> PreparedRefinementTriplet {
+        if self.outer_probe_first {
+            PreparedRefinementTriplet::new(self.start, self.outer_probe, self.pivot)
+        } else {
+            PreparedRefinementTriplet::new(self.pivot, self.outer_probe, self.end)
+        }
+    }
+
+    fn inner(self) -> PreparedRefinementSpan {
+        if self.outer_probe_first {
+            PreparedRefinementSpan::new(self.pivot, self.end)
+        } else {
+            PreparedRefinementSpan::new(self.start, self.pivot)
         }
     }
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideChains {
-    left: PreparedIntervalAwareRefinementSideChain,
-    right: PreparedIntervalAwareRefinementSideChain,
+struct PreparedIntervalAwareRefinementSideWindowSampleLayout {
+    start: usize,
+    outer_probe: usize,
+    pivot: usize,
+    end: usize,
+    outer_probe_first: bool,
 }
 
-impl PreparedIntervalAwareRefinementSideChains {
+impl PreparedIntervalAwareRefinementSideWindowSampleLayout {
+    const LEFT: Self = Self {
+        start: 0,
+        outer_probe: 1,
+        pivot: 2,
+        end: 3,
+        outer_probe_first: true,
+    };
+
+    const RIGHT: Self = Self {
+        start: 3,
+        outer_probe: 5,
+        pivot: 4,
+        end: 6,
+        outer_probe_first: false,
+    };
+}
+
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSideWindows {
+    left: PreparedIntervalAwareRefinementSideWindow,
+    right: PreparedIntervalAwareRefinementSideWindow,
+}
+
+impl PreparedIntervalAwareRefinementSideWindows {
     fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
+        Self::from_samples(&chain.samples())
+    }
+
+    fn from_samples(samples: &[NormalizedEdgeSample; 7]) -> Self {
         Self {
-            left: PreparedIntervalAwareRefinementSideChain::outer_probe_first(
-                chain.start,
-                chain.left_outer_probe,
-                chain.first_probe,
-                chain.midpoint,
+            left: PreparedIntervalAwareRefinementSideWindow::from_samples(
+                samples,
+                PreparedIntervalAwareRefinementSideWindowSampleLayout::LEFT,
             ),
-            right: PreparedIntervalAwareRefinementSideChain::outer_probe_second(
-                chain.midpoint,
-                chain.second_probe,
-                chain.right_outer_probe,
-                chain.end,
+            right: PreparedIntervalAwareRefinementSideWindow::from_samples(
+                samples,
+                PreparedIntervalAwareRefinementSideWindowSampleLayout::RIGHT,
             ),
         }
     }
@@ -1737,10 +1755,10 @@ struct PreparedIntervalAwareRefinementSideLayouts {
 }
 
 impl PreparedIntervalAwareRefinementSideLayouts {
-    fn from_side_chains(chains: PreparedIntervalAwareRefinementSideChains) -> Self {
+    fn from_side_windows(windows: PreparedIntervalAwareRefinementSideWindows) -> Self {
         Self {
-            left: PreparedIntervalAwareRefinementSideLayout::from_side_chain(chains.left),
-            right: PreparedIntervalAwareRefinementSideLayout::from_side_chain(chains.right),
+            left: PreparedIntervalAwareRefinementSideLayout::from_side_window(windows.left),
+            right: PreparedIntervalAwareRefinementSideLayout::from_side_window(windows.right),
         }
     }
 
@@ -1760,8 +1778,8 @@ struct PreparedIntervalAwareRefinementSides {
 
 impl PreparedIntervalAwareRefinementSides {
     fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
-        PreparedIntervalAwareRefinementSideLayouts::from_side_chains(
-            PreparedIntervalAwareRefinementSideChains::from_outer_probe_chain(chain),
+        PreparedIntervalAwareRefinementSideLayouts::from_side_windows(
+            PreparedIntervalAwareRefinementSideWindows::from_outer_probe_chain(chain),
         )
         .into_sides()
     }
