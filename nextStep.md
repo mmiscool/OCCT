@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed two-stage early probe path in place while collapsing the remaining duplicated per-stage `Ok(samples)` / `Err(result)` carry inside `EarlyProbeStagePair::needs_refinement()`.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed two-stage early probe path in place while collapsing the remaining nested midpoint-stage -> outer-stage -> interval-aware continuation chain inside `EarlyProbeStagePair::needs_refinement()`.
 
 ## Current State
 
@@ -22,7 +22,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - the old `EarlyProbeSourceSampleLayout`, `EarlyProbeStageSampleLayout`, and `EarlyProbeSampleLayout` generic layers are gone, so the old duplicated midpoint-vs-outer `source_sample()` / `stage_sample()` ladders and the now-dead one-implementation trait boundaries are gone too
   - midpoint-stage and outer-stage now resolve source samples through shared [`EarlyProbeSourcePosition`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), so the old raw positional `source_index()` remaps are gone too
   - midpoint-stage and outer-stage sample reuse now goes straight through shared [`EarlyProbeSourcePosition`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) source slots, so the old stage-specific source-slot enums, the duplicated `source_ordinal(self) -> self as usize` alias, and the old `EarlyProbeSourcePosition::from_source_ordinal(...)` bridge are gone too
-  - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], Option<bool>>` stage-result carry for both early probe stages through `stage_samples_or_refinement(...)`, so per-stage `Err(None)` no-probe handling and `Err(Some(result))` terminal translation stay on the stage boundary
+  - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], Option<bool>>` stage-result carry for both early probe stages through `stage_samples_or_refinement(...)`, and it now owns the per-stage `Ok(samples)` / `Err(result)` continuation carry through `needs_refinement_or_continue(...)`, so no-probe handling and terminal translation stay on the stage boundary
   - the midpoint-only `EarlyProbeStageLayout<3, _>` specialization is gone
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
   - [`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OUTER_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now hold direct request-source indices plus sample roles
@@ -63,9 +63,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns winning-segment selection and terminal `segment.needs_refinement(...)` dispatch once it receives the final 7-sample boundary
   - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
   - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-  - but [`EarlyProbeStagePair::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still carries one smaller internal seam: it now sequences midpoint-stage and outer-stage straight into the concrete 7-sample boundary used by the interval-aware chooser, but it still repeats the same per-stage `Ok(samples)` / `Err(result)` carry twice by hand
+  - but [`EarlyProbeStagePair::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still carries one smaller internal seam: it now delegates the per-stage carry onto [`EarlyProbeStageLayout::needs_refinement_or_continue()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), but it still spells the midpoint-stage -> outer-stage -> interval-aware dispatch as a nested continuation chain
 
-The next blocker is to keep the typed stage-pair path but collapse that remaining duplicated per-stage `Ok(samples)` / `Err(result)` carry, so midpoint-stage, outer-stage, and interval-aware dispatch can stay on one smaller Rust-owned boundary inside `EarlyProbeStagePair::needs_refinement()`.
+The next blocker is to keep the typed stage-pair path but collapse that remaining nested midpoint-stage -> outer-stage -> interval-aware continuation chain, so the early probe pair can stay on one smaller Rust-owned control-flow boundary inside `EarlyProbeStagePair::needs_refinement()`.
 
 ## Focus
 
@@ -83,4 +83,4 @@ The next blocker is to keep the typed stage-pair path but collapse that remainin
 
 ## Why This Is Next
 
-This turn removed the last pair-to-interval-aware `Result<[NormalizedEdgeSample; 7], Option<bool>>` bridge, so `PreparedIntervalAwareRefinementSideLayouts::needs_refinement()` now runs directly on the concrete 7-sample boundary produced by the two early stages. The remaining structural seam in this slice is the still-duplicated per-stage `Ok(samples)` / `Err(result)` carry inside `EarlyProbeStagePair::needs_refinement()`.
+This turn moved the duplicated per-stage `Ok(samples)` / `Err(result)` carry onto `EarlyProbeStageLayout::needs_refinement_or_continue(...)`, so midpoint-stage and outer-stage now share that typed continuation boundary. The remaining structural seam in this slice is the still-nested midpoint-stage -> outer-stage -> interval-aware continuation chain inside `EarlyProbeStagePair::needs_refinement()`.
