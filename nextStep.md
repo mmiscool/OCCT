@@ -1,15 +1,15 @@
 # Next Task
 
-Keep narrowing the whole-shape OCCT bbox fallback in `ported_shape_summary()`, but stay on the parity-safe offset boundary that now exists. The next target is closed offset solids and compsolids: offset shells can already stay off whole-shape OCCT bbox, but offset solids still cannot.
+Keep narrowing the remaining OCCT bbox fallback in `ported_shape_summary()`, but start from the new shell-level boundary that now holds for offset solids and compsolids.
 
 ## Current State
 
-- [`ported_brep()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs) now preserves the loaded root `vertex_shapes` inventory alongside the existing `edge_shapes` and `face_shapes` when the Rust topology path succeeds, and passes those inventories into [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs).
-- [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now has a narrower offset bbox boundary:
-  - non-solid offset shapes use [`offset_shape_bbox_occt()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), which unions existing root subshape OCCT bboxes across the already-loaded vertex, edge, and face inventories before falling back further
-  - offset solids and compsolids now skip the Rust mesh bbox path for bbox derivation and go straight back to whole-shape `describe_shape_occt()` for parity
-- The exercised offset shell fixture in [`brep_workflows.rs`](rust/lean_occt/tests/brep_workflows.rs) now stays off whole-shape OCCT bbox and still matches OCCT parity.
-- The exercised offset solid fixture in [`brep_workflows.rs`](rust/lean_occt/tests/brep_workflows.rs) is still summary-safe only because its bbox path explicitly stays on the whole-shape OCCT fallback.
+- [`ported_brep()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs) and [`load_ported_topology()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs) now preserve loaded root `shell_shapes` alongside the existing root `vertex_shapes`, `edge_shapes`, and `face_shapes` when the Rust topology path succeeds.
+- [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now has three offset bbox tiers:
+  - non-solid offset shapes use [`offset_shape_bbox_occt()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), which unions existing root subshape OCCT bboxes across already-loaded vertex, edge, and face inventories
+  - offset solids and compsolids now try a narrower shell-level OCCT bbox union before falling back further
+  - whole-shape `describe_shape_occt()` is now only the final offset bbox escape hatch instead of the first solid/compsolid branch
+- The exercised offset shell and offset solid fixtures in [`brep_workflows.rs`](rust/lean_occt/tests/brep_workflows.rs) both still match OCCT bbox parity after that change.
 - The broader Rust-owned bbox path remains in place for:
   - face-free shapes through analytic edges, line segments, or vertex points
   - all-plane / cylinder / cone face sets through analytic boundary edges
@@ -17,14 +17,14 @@ Keep narrowing the whole-shape OCCT bbox fallback in `ported_shape_summary()`, b
 
 ## Remaining Blocker
 
-Closed offset solids still miss OCCT bbox parity if bbox is derived from the current Rust mesh path or from a simple union of root subshape OCCT bboxes. The gap is not a missing root vertex boundary. It is a closed-volume offset-specific bbox problem, so the next cut needs to target that case directly instead of widening the current shell-safe union.
+Closed offset solids no longer need whole-shape OCCT bbox first, but their current safe path is still a per-shell OCCT bbox union. That is narrower than before, but it is not yet a Rust-owned closed-offset bbox derivation.
 
 ## Focus
 
-1. Keep the current shell-safe offset bbox win in place.
-2. Target closed offset solids and compsolids specifically before revisiting other bounded non-exact families.
-3. Prefer a parity-safe closed-offset bbox path built from existing Rust-owned face data, offset basis descriptors, or shell-level inventories before falling back to whole-shape OCCT.
-4. Do not reintroduce the mesh bbox path for offset solids unless it is explicitly tightened against OCCT parity.
+1. Keep the new shell-level offset-solid bbox win in place.
+2. Target the per-shell OCCT bbox union next, not the already-retired whole-shape fallback.
+3. Prefer a Rust-owned shell bbox assembled from existing face inventories, offset face descriptors, or shell-local BRep data before using per-shell `describe_shape_occt()`.
+4. Keep whole-shape `describe_shape_occt()` as the last escape hatch until the Rust-owned shell path proves parity-safe.
 5. Keep the verification bar unchanged:
    - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
    - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
@@ -32,4 +32,4 @@ Closed offset solids still miss OCCT bbox parity if bbox is derived from the cur
 
 ## Why This Is Next
 
-This turn established a real Rust-first boundary instead of an experiment: offset shells no longer need whole-shape OCCT bbox, but offset solids still do. The next aggressive step is to retire that remaining closed-offset bbox fallback without regressing the shell case that already holds.
+This turn retired the coarsest offset-solid bbox fallback: the exercised closed offset solid no longer needs whole-shape OCCT bbox. The next aggressive Rust-first step is to replace that remaining shell-level OCCT bbox union with a parity-safe Rust-owned shell bbox path.

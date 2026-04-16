@@ -109,6 +109,7 @@ pub(super) fn ported_shape_summary(
     edges: &[BrepEdge],
     faces: &[BrepFace],
     vertex_shapes: &[Shape],
+    shell_shapes: &[Shape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
 ) -> Result<ShapeSummary, Error> {
@@ -134,7 +135,9 @@ pub(super) fn ported_shape_summary(
         })
         .or_else(|| {
             if contains_offset_faces && (counts.solid_count > 0 || counts.compsolid_count > 0) {
-                fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
+                offset_solid_shell_bbox_occt(context, faces, shell_shapes).or_else(|| {
+                    fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
+                })
             } else {
                 None
             }
@@ -763,13 +766,40 @@ fn offset_shape_bbox_occt(
         return None;
     }
 
+    union_shape_bboxes_occt(
+        context,
+        vertex_shapes
+            .iter()
+            .chain(face_shapes.iter())
+            .chain(edge_shapes.iter()),
+    )
+}
+
+fn offset_solid_shell_bbox_occt(
+    context: &Context,
+    faces: &[BrepFace],
+    shell_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    if shell_shapes.is_empty()
+        || !faces
+            .iter()
+            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
+    {
+        return None;
+    }
+
+    union_shape_bboxes_occt(context, shell_shapes.iter())
+}
+
+fn union_shape_bboxes_occt<'a, I>(context: &Context, shapes: I) -> Option<([f64; 3], [f64; 3])>
+where
+    I: IntoIterator<Item = &'a Shape>,
+{
     let mut bbox_min = [f64::INFINITY; 3];
     let mut bbox_max = [f64::NEG_INFINITY; 3];
-    for shape in vertex_shapes
-        .iter()
-        .chain(face_shapes.iter())
-        .chain(edge_shapes.iter())
-    {
+    let mut any_shapes = false;
+    for shape in shapes {
+        any_shapes = true;
         let summary = context.describe_shape_occt(shape).ok()?;
         for coordinate in 0..3 {
             bbox_min[coordinate] = bbox_min[coordinate].min(summary.bbox_min[coordinate]);
@@ -777,10 +807,11 @@ fn offset_shape_bbox_occt(
         }
     }
 
-    if bbox_min
-        .iter()
-        .zip(bbox_max.iter())
-        .all(|(min, max)| min.is_finite() && max.is_finite())
+    if any_shapes
+        && bbox_min
+            .iter()
+            .zip(bbox_max.iter())
+            .all(|(min, max)| min.is_finite() && max.is_finite())
     {
         Some((bbox_min, bbox_max))
     } else {

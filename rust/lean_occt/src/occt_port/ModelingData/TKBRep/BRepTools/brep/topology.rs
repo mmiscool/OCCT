@@ -9,6 +9,7 @@ struct TopologySnapshotRootFields {
     vertex_shapes: Vec<Shape>,
     vertex_positions: Vec<[f64; 3]>,
     edge_shapes: Vec<Shape>,
+    shell_shapes: Vec<Shape>,
     face_shapes: Vec<Shape>,
     prepared_face_shapes: Vec<PreparedFaceShape>,
     edges: Vec<crate::TopologyEdge>,
@@ -25,6 +26,7 @@ pub(super) struct LoadedPortedTopology {
     pub(super) topology: TopologySnapshot,
     pub(super) vertex_shapes: Vec<Shape>,
     pub(super) edge_shapes: Vec<Shape>,
+    pub(super) shell_shapes: Vec<Shape>,
     pub(super) face_shapes: Vec<Shape>,
 }
 
@@ -73,6 +75,7 @@ fn load_root_topology_snapshot(
     }
     let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
         pack_wire_topology(&root_wires);
+    let shell_shapes = context.subshapes_occt(shape, ShapeKind::Shell)?;
     let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
     let prepared_face_shapes = face_shapes
         .iter()
@@ -99,6 +102,7 @@ fn load_root_topology_snapshot(
         vertex_shapes,
         vertex_positions,
         edge_shapes,
+        shell_shapes,
         face_shapes,
         prepared_face_shapes,
         edges,
@@ -120,6 +124,7 @@ pub(super) fn load_ported_topology(
         vertex_shapes,
         vertex_positions,
         edge_shapes,
+        shell_shapes,
         face_shapes,
         prepared_face_shapes,
         edges,
@@ -173,6 +178,7 @@ pub(super) fn load_ported_topology(
         },
         vertex_shapes,
         edge_shapes,
+        shell_shapes,
         face_shapes,
     }))
 }
