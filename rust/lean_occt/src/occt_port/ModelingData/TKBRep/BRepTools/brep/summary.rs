@@ -1549,8 +1549,8 @@ impl PreparedRefinementTripletLayout {
         }
     }
 
-    fn refinement_segment(self, samples: &[NormalizedEdgeSample; 7]) -> Option<RefinementSegment> {
-        RefinementSegment::new(
+    fn refinement_segment(self, samples: &[NormalizedEdgeSample; 7]) -> RefinementSegmentOutcome {
+        RefinementSegmentOutcome::from_samples(
             &samples[self.start],
             &samples[self.midpoint],
             &samples[self.end],
@@ -1559,17 +1559,50 @@ impl PreparedRefinementTripletLayout {
 }
 
 #[derive(Clone, Copy)]
-enum MidpointRefinementSegmentOutcome {
+enum RefinementSegmentOutcome {
     NoSegment,
     Segment(RefinementSegment),
 }
 
-impl MidpointRefinementSegmentOutcome {
-    fn segment(self) -> Option<RefinementSegment> {
-        match self {
-            Self::NoSegment => None,
-            Self::Segment(segment) => Some(segment),
+impl RefinementSegmentOutcome {
+    fn from_samples(
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> Self {
+        match RefinementSegment::new(start, midpoint, end) {
+            Some(segment) => Self::Segment(segment),
+            None => Self::NoSegment,
         }
+    }
+
+    fn choose_stronger_with<T: Copy>(
+        first: (T, Self),
+        second: (T, Self),
+    ) -> Option<(T, RefinementSegment)> {
+        match (first, second) {
+            (
+                (first_value, Self::Segment(first_segment)),
+                (second_value, Self::Segment(second_segment)),
+            ) => {
+                if first_segment.score >= second_segment.score {
+                    Some((first_value, first_segment))
+                } else {
+                    Some((second_value, second_segment))
+                }
+            }
+            ((first_value, Self::Segment(first_segment)), (_, Self::NoSegment)) => {
+                Some((first_value, first_segment))
+            }
+            ((_, Self::NoSegment), (second_value, Self::Segment(second_segment))) => {
+                Some((second_value, second_segment))
+            }
+            ((_, Self::NoSegment), (_, Self::NoSegment)) => None,
+        }
+    }
+
+    fn choose_stronger(first: Self, second: Self) -> Option<RefinementSegment> {
+        Self::choose_stronger_with(((), first), ((), second)).map(|(_, segment)| segment)
     }
 }
 
@@ -1596,13 +1629,10 @@ impl MidpointEdgeProbeOutcome {
         self,
         start: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
-    ) -> MidpointRefinementSegmentOutcome {
+    ) -> RefinementSegmentOutcome {
         match self {
-            Self::NoProbe => MidpointRefinementSegmentOutcome::NoSegment,
-            Self::Probe(probe) => RefinementSegment::new(start, &probe, end).map_or(
-                MidpointRefinementSegmentOutcome::NoSegment,
-                MidpointRefinementSegmentOutcome::Segment,
-            ),
+            Self::NoProbe => RefinementSegmentOutcome::NoSegment,
+            Self::Probe(probe) => RefinementSegmentOutcome::from_samples(start, &probe, end),
         }
     }
 }
@@ -1623,7 +1653,7 @@ impl PreparedRefinementSpanLayout {
         samples: &[NormalizedEdgeSample; 7],
         context: &Context,
         edge_shape: &Shape,
-    ) -> Option<MidpointRefinementSegmentOutcome> {
+    ) -> Option<RefinementSegmentOutcome> {
         let start = samples[self.start];
         let end = samples[self.end];
         let inner_probe = midpoint_edge_probe(context, edge_shape, &start, &end)?;
@@ -1673,7 +1703,7 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         edge_shape: &Shape,
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Option<bool> {
-        let Some((layout, _)) = RefinementSegment::choose_stronger(
+        let Some((layout, _)) = RefinementSegmentOutcome::choose_stronger_with(
             (self.left, self.left.coarse.refinement_segment(samples)),
             (self.right, self.right.coarse.refinement_segment(samples)),
         ) else {
@@ -1683,10 +1713,9 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         let inner_segment = layout
             .inner
             .midpoint_segment(samples, context, edge_shape)?;
-        let Some((_, probe_segment)) = RefinementSegment::choose_stronger(
-            (false, outer_segment),
-            (true, inner_segment.segment()),
-        ) else {
+        let Some(probe_segment) =
+            RefinementSegmentOutcome::choose_stronger(outer_segment, inner_segment)
+        else {
             return Some(false);
         };
 
@@ -1744,24 +1773,6 @@ impl RefinementSegment {
                 end: *end,
                 score,
             })
-        }
-    }
-
-    fn choose_stronger<T: Copy>(
-        first: (T, Option<Self>),
-        second: (T, Option<Self>),
-    ) -> Option<(T, Self)> {
-        match (first.1, second.1) {
-            (Some(first_segment), Some(second_segment)) => {
-                if first_segment.score >= second_segment.score {
-                    Some((first.0, first_segment))
-                } else {
-                    Some((second.0, second_segment))
-                }
-            }
-            (Some(first_segment), None) => Some((first.0, first_segment)),
-            (None, Some(second_segment)) => Some((second.0, second_segment)),
-            (None, None) => None,
         }
     }
 
@@ -1844,21 +1855,10 @@ impl RefinementSegment {
         let outer_probe = midpoint_edge_probe(context, edge_shape, &self.start, &self.midpoint)?;
         let inner_probe = midpoint_edge_probe(context, edge_shape, &self.midpoint, &self.end)?;
 
-        let stronger_half = Self::choose_stronger(
-            (
-                (),
-                outer_probe
-                    .midpoint_segment(&self.start, &self.midpoint)
-                    .segment(),
-            ),
-            (
-                (),
-                inner_probe
-                    .midpoint_segment(&self.midpoint, &self.end)
-                    .segment(),
-            ),
-        )
-        .map(|(_, segment)| segment);
+        let stronger_half = RefinementSegmentOutcome::choose_stronger(
+            outer_probe.midpoint_segment(&self.start, &self.midpoint),
+            inner_probe.midpoint_segment(&self.midpoint, &self.end),
+        );
 
         Some(match stronger_half {
             Some(segment) => StrongerHalfOutcome::Half(segment),
