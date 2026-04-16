@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now one-use `PreparedOuterProbeChain::samples()` rematerialization, so the outer-probe carrier keeps a stable seven-sample array boundary for both its local window check and the typed interval-aware layout pair.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now one-use `PreparedMidpointProbeChain::samples()` rematerialization, so the midpoint-probe carrier keeps a stable five-sample array boundary for both its local window check and the outer-probe preparation step.
 
 ## Current State
 
@@ -16,8 +16,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - The unsupported-edge refinement path is now structurally tighter:
   - [`midpoint_edge_probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) prepares the earlier midpoint and outer probe pairs once for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the shared sliding 3-sample window checks used by those early entry stages
-  - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/first_probe/midpoint/second_probe/end` early probe carrier and decides when midpoint-stage evidence is strong enough to advance into outer probes
-  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier, now keeps the interval-aware handoff directly in `needs_refinement()`, and hands its sample array straight to the typed interval-aware side-layout pair there
+  - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/first_probe/midpoint/second_probe/end` early probe carrier, still decides when midpoint-stage evidence is strong enough to advance into outer probes, and is now the remaining sample-boundary cleanup target
+  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns a stable seven-sample array boundary, keeps the interval-aware handoff directly in `needs_refinement()`, and hands that prepared sample array straight to the typed interval-aware side-layout pair there
   - [`PreparedIntervalAwareRefinementSideWindow`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
   - the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap is gone
   - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
@@ -42,13 +42,14 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the temporary [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carriers are gone
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now compares coarse segments on the layout path and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice on that same typed boundary
 
-The next blocker is now the last outer-probe sample-boundary bounce before that typed pair boundary:
+The next blocker is now the last midpoint-probe sample-boundary bounce before the outer-probe stage:
 
 - the pair-to-layout winning-segment bounce is gone
 - the one-use [`PreparedOuterProbeChain::prepare_interval_aware_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper is gone
-- but [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still stores individual sample fields and rebuilds a `[NormalizedEdgeSample; 7]` array through a one-use [`samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) helper before both the local window check and the typed interval-aware pair helper
+- the one-use [`PreparedOuterProbeChain::samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) rematerialization is gone
+- but [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still stores individual sample fields and rebuilds a `[NormalizedEdgeSample; 5]` array through a one-use [`samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) helper before both the local window check and the outer-probe preparation path
 
-The next blocker is to keep that prepared seven-sample boundary directly on the outer-probe carrier too, so the outer-probe stage stays cleaner on the Rust-owned side before it hands off to the shared refinement machinery.
+The next blocker is to keep that prepared five-sample boundary directly on the midpoint-probe carrier too, so the early probe stage stays cleaner on the Rust-owned side before it hands off to outer probes.
 
 ## Focus
 
@@ -66,6 +67,6 @@ The next blocker is to keep that prepared seven-sample boundary directly on the 
 
 ## Why This Is Next
 
-This turn finished the outer-probe wrapper removal step. The interval-aware entry now stays direct in `PreparedOuterProbeChain::needs_refinement()` before it hands off to the typed layout pair.
+This turn finished the outer-probe sample-boundary cleanup step. `PreparedOuterProbeChain` now owns its stable seven-sample array directly, so the interval-aware entry stays direct in `needs_refinement()` and reuses that prepared boundary for both the local window check and the typed layout pair.
 
-What remains is a smaller outer-probe sample rematerialization: the carrier already owns the seven-sample chain, but it still rebuilds that same `[NormalizedEdgeSample; 7]` array through a one-use helper before the local window check and the typed pair helper can use it. If that prepared sample-array boundary moves directly onto the carrier, the interval-aware refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is the analogous midpoint-probe rematerialization one stage earlier: the midpoint carrier already owns the five-sample chain, but it still rebuilds that same `[NormalizedEdgeSample; 5]` array through a one-use helper before the local window check and the outer-probe preparation can use it. If that prepared sample-array boundary moves directly onto the midpoint carrier, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.

@@ -1445,13 +1445,7 @@ impl PreparedMidpointProbeChain {
 
 #[derive(Clone, Copy)]
 struct PreparedOuterProbeChain {
-    start: NormalizedEdgeSample,
-    left_outer_probe: NormalizedEdgeSample,
-    first_probe: NormalizedEdgeSample,
-    midpoint: NormalizedEdgeSample,
-    second_probe: NormalizedEdgeSample,
-    right_outer_probe: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
+    samples: [NormalizedEdgeSample; 7],
 }
 
 impl PreparedOuterProbeChain {
@@ -1473,36 +1467,25 @@ impl PreparedOuterProbeChain {
         };
 
         Some(Some(Self {
-            start: midpoint_probe_chain.start,
-            left_outer_probe: outer_probes.first_probe,
-            first_probe: midpoint_probe_chain.first_probe,
-            midpoint: midpoint_probe_chain.midpoint,
-            second_probe: midpoint_probe_chain.second_probe,
-            right_outer_probe: outer_probes.second_probe,
-            end: midpoint_probe_chain.end,
+            samples: [
+                midpoint_probe_chain.start,
+                outer_probes.first_probe,
+                midpoint_probe_chain.first_probe,
+                midpoint_probe_chain.midpoint,
+                midpoint_probe_chain.second_probe,
+                outer_probes.second_probe,
+                midpoint_probe_chain.end,
+            ],
         }))
     }
 
-    fn samples(&self) -> [NormalizedEdgeSample; 7] {
-        [
-            self.start,
-            self.left_outer_probe,
-            self.first_probe,
-            self.midpoint,
-            self.second_probe,
-            self.right_outer_probe,
-            self.end,
-        ]
-    }
-
     fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
-        let samples = self.samples();
-        if sampled_edge_sample_windows_need_refinement(&samples) {
+        if sampled_edge_sample_windows_need_refinement(&self.samples) {
             return Some(true);
         }
 
         let Some(probe_segment) = PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS
-            .prepare_refinement_segment(&samples, context, edge_shape)?
+            .prepare_refinement_segment(&self.samples, context, edge_shape)?
         else {
             return Some(false);
         };
