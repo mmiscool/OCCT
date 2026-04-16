@@ -1278,6 +1278,7 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
     samples.sort_by(|lhs, rhs| lhs.t.total_cmp(&rhs.t));
     append_axis_turning_edge_samples(context, edge_shape, &samples, &mut points)?;
     append_near_flat_axis_edge_samples(context, edge_shape, &samples, &mut points)?;
+    append_axis_position_extremum_samples(context, edge_shape, &samples, &mut points)?;
 
     bbox_from_points(points)
 }
@@ -1286,6 +1287,12 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
 struct NormalizedEdgeSample {
     t: f64,
     sample: EdgeSample,
+}
+
+#[derive(Clone, Copy)]
+enum AxisExtremumKind {
+    Minimum,
+    Maximum,
 }
 
 fn boundary_edge_sampling_plan(kind: crate::CurveKind) -> Option<(usize, usize)> {
@@ -1380,6 +1387,26 @@ fn append_near_flat_axis_edge_samples(
         for axis in 0..3 {
             let Some(extremum_sample) =
                 near_flat_axis_edge_sample(context, edge_shape, &window[0], &window[1], axis)?
+            else {
+                continue;
+            };
+            points.push(extremum_sample.position);
+        }
+    }
+    Some(())
+}
+
+fn append_axis_position_extremum_samples(
+    context: &Context,
+    edge_shape: &Shape,
+    samples: &[NormalizedEdgeSample],
+    points: &mut Vec<[f64; 3]>,
+) -> Option<()> {
+    for window in samples.windows(3) {
+        for axis in 0..3 {
+            let Some(extremum_sample) = axis_position_extremum_edge_sample(
+                context, edge_shape, &window[0], &window[1], &window[2], axis,
+            )?
             else {
                 continue;
             };
@@ -1528,6 +1555,100 @@ fn near_flat_axis_edge_sample(
     Some(Some(best_probe.sample))
 }
 
+fn axis_position_extremum_edge_sample(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+) -> Option<Option<EdgeSample>> {
+    let Some(extremum_kind) = sampled_axis_extremum_kind(
+        start.sample.position[axis],
+        midpoint.sample.position[axis],
+        end.sample.position[axis],
+    ) else {
+        return Some(None);
+    };
+
+    let mut low = *start;
+    let mut high = *end;
+    let mut best_probe = *midpoint;
+    let candidate_t =
+        quadratic_axis_extremum_parameter(start, midpoint, end, axis).filter(|candidate_t| {
+            candidate_t.is_finite()
+                && *candidate_t > start.t + 1.0e-9
+                && *candidate_t < end.t - 1.0e-9
+                && !approx_eq(*candidate_t, midpoint.t, 1.0e-12, 1.0e-12)
+        });
+    if let Some(candidate_t) = candidate_t {
+        let candidate_probe = NormalizedEdgeSample {
+            t: candidate_t,
+            sample: context.edge_sample(edge_shape, candidate_t).ok()?,
+        };
+        if axis_position_is_better(
+            candidate_probe.sample.position[axis],
+            best_probe.sample.position[axis],
+            extremum_kind,
+        ) {
+            best_probe = candidate_probe;
+        }
+    }
+
+    if !axis_position_probe_is_promising(midpoint, best_probe, axis, extremum_kind) {
+        return Some(None);
+    }
+
+    for _ in 0..12 {
+        let left_t = 0.5 * (low.t + best_probe.t);
+        let right_t = 0.5 * (best_probe.t + high.t);
+        if approx_eq(left_t, low.t, 1.0e-12, 1.0e-12)
+            || approx_eq(left_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, high.t, 1.0e-12, 1.0e-12)
+        {
+            break;
+        }
+
+        let left_probe = NormalizedEdgeSample {
+            t: left_t,
+            sample: context.edge_sample(edge_shape, left_t).ok()?,
+        };
+        let right_probe = NormalizedEdgeSample {
+            t: right_t,
+            sample: context.edge_sample(edge_shape, right_t).ok()?,
+        };
+        let best_value = best_probe.sample.position[axis];
+        let left_value = left_probe.sample.position[axis];
+        let right_value = right_probe.sample.position[axis];
+        if axis_position_is_better(left_value, best_value, extremum_kind)
+            || axis_position_is_better(right_value, best_value, extremum_kind)
+        {
+            if axis_position_is_better(left_value, right_value, extremum_kind)
+                && axis_position_is_better(left_value, best_value, extremum_kind)
+            {
+                high = best_probe;
+                best_probe = left_probe;
+                continue;
+            }
+            if axis_position_is_better(right_value, best_value, extremum_kind) {
+                low = best_probe;
+                best_probe = right_probe;
+                continue;
+            }
+        }
+
+        low = left_probe;
+        high = right_probe;
+    }
+
+    if approx_eq(best_probe.t, midpoint.t, 1.0e-12, 1.0e-12) {
+        return Some(None);
+    }
+
+    Some(Some(best_probe.sample))
+}
+
 fn near_flat_axis_probe_is_promising(
     start: &NormalizedEdgeSample,
     best_probe: NormalizedEdgeSample,
@@ -1554,6 +1675,58 @@ fn near_flat_axis_probe_is_promising(
     let interval_max = start.sample.position[axis].max(end.sample.position[axis]);
     best_probe.sample.position[axis] < interval_min - 1.0e-9
         || best_probe.sample.position[axis] > interval_max + 1.0e-9
+}
+
+fn sampled_axis_extremum_kind(start: f64, midpoint: f64, end: f64) -> Option<AxisExtremumKind> {
+    let tolerance = 1.0e-9;
+    let midpoint_is_max = midpoint >= start - tolerance
+        && midpoint >= end - tolerance
+        && (midpoint > start + tolerance || midpoint > end + tolerance);
+    if midpoint_is_max {
+        return Some(AxisExtremumKind::Maximum);
+    }
+
+    let midpoint_is_min = midpoint <= start + tolerance
+        && midpoint <= end + tolerance
+        && (midpoint < start - tolerance || midpoint < end - tolerance);
+    midpoint_is_min.then_some(AxisExtremumKind::Minimum)
+}
+
+fn quadratic_axis_extremum_parameter(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+) -> Option<f64> {
+    let x0 = start.t;
+    let x1 = midpoint.t;
+    let x2 = end.t;
+    let y0 = start.sample.position[axis];
+    let y1 = midpoint.sample.position[axis];
+    let y2 = end.sample.position[axis];
+    let numerator = (x1 - x0).powi(2) * (y1 - y2) - (x1 - x2).powi(2) * (y1 - y0);
+    let denominator = 2.0 * ((x1 - x0) * (y1 - y2) - (x1 - x2) * (y1 - y0));
+    (denominator.abs() > 1.0e-18).then_some(x1 - numerator / denominator)
+}
+
+fn axis_position_is_better(candidate: f64, current: f64, extremum_kind: AxisExtremumKind) -> bool {
+    match extremum_kind {
+        AxisExtremumKind::Minimum => candidate < current - 1.0e-9,
+        AxisExtremumKind::Maximum => candidate > current + 1.0e-9,
+    }
+}
+
+fn axis_position_probe_is_promising(
+    midpoint: &NormalizedEdgeSample,
+    best_probe: NormalizedEdgeSample,
+    axis: usize,
+    extremum_kind: AxisExtremumKind,
+) -> bool {
+    axis_position_is_better(
+        best_probe.sample.position[axis],
+        midpoint.sample.position[axis],
+        extremum_kind,
+    )
 }
 
 fn sampled_edge_interval_needs_refinement(

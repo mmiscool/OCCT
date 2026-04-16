@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The mixed-edge shell-boundary union now includes an adaptive sampled public-edge tier plus both bracketed axis-turning polish and a near-flat tangent-dip probe; the next task is improving that sampled boundary candidate for the shell edges whose extrema still evade both of those public tangent-based solvers.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The mixed-edge shell-boundary union now includes an adaptive sampled public-edge tier plus three public unsupported-edge extremum passes: bracketed axis-turning polish, a near-flat tangent-dip probe, and a local axis-position extremum search. The next task is widening that sampled boundary candidate for the shell edges whose decisive extrema still evade all three local public solvers.
 
 ## Current State
 
@@ -28,6 +28,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - that sampled tier now recursively refines intervals when midpoint samples expand the interval bbox, when sampled tangents indicate an axis turn, or when the midpoint bends materially away from the chord
   - after refinement, adjacent sampled intervals now also get a public-edge tangent-root polish pass, so interior axis extrema with a bracketed tangent sign change can contribute directly to the shell boundary bbox
   - adjacent sampled intervals that still have no clean tangent sign bracket now also get a public-edge near-flat tangent-dip probe, so local interior extrema can still contribute when the sampled tangent magnitude drops sharply without a clean sign flip at the current interval endpoints
+  - adjacent sampled triples now also get a public-edge local axis-position extremum search seeded from quadratic position fits, so unsupported edges can still contribute interior extrema when the decisive bbox driver is visible in sampled positions even though the public tangent-based solvers never produce a clean bracket or dip
 - The exercised non-solid offset shell fixture stays green on the Rust-first path.
 - The exercised closed offset solid fixture stays green, including the direct per-shell parity assertion in [`ported_brep_uses_rust_owned_volume_for_offset_solids()`](rust/lean_occt/tests/brep_workflows.rs).
 
@@ -39,7 +40,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - every shell edge that matters to the bbox admits a Rust/public exact boundary bbox, or
 - the current adaptive public-edge sampling, interval refinement, and tangent-root polish hits the remaining shell-boundary extrema closely enough to validate.
 
-The remaining blocker is shell edges whose decisive bbox extrema still are not captured by the current sampled boundary candidate even after the new adaptive interval refinement, bracketed tangent-root polish, and near-flat tangent-dip search. Those shells still skip straight to the later mesh/summary candidates and eventually the raw shell-local OCCT bbox.
+The remaining blocker is shell edges whose decisive bbox extrema still are not captured by the current sampled boundary candidate even after adaptive interval refinement, bracketed tangent-root polish, the near-flat tangent-dip search, and the new local axis-position extremum search. Those shells still skip straight to the later mesh/summary candidates and eventually the raw shell-local OCCT bbox.
 
 ## Focus
 
@@ -64,5 +65,6 @@ This turn moved more of the offset bbox path onto Rust-owned data without weaken
 - that shell-boundary path now refines unsupported public-edge samples when midpoint, tangent, or chord-bend checks suggest missed extrema
 - that same path now polishes bracketed axis-turning extrema with public `edge_sample()` bisection before falling through to later tiers
 - intervals that still do not admit a clean tangent sign bracket now also get a public near-flat tangent-dip search before the shell falls through to later tiers
+- sampled triples that already show a local axis bulge now also get a public position-based extremum search before the shell falls through to later tiers
 
-The next step is to make that shell-local Rust boundary path cover more real offset shells by improving the sampled public-edge contribution for unsupported shell edges beyond the current bracketed tangent-root and local tangent-dip solvers, not by widening fallback elsewhere.
+The next step is to make that shell-local Rust boundary path cover more real offset shells by broadening the sampled public-edge contribution for unsupported shell edges beyond the current tangent-root, tangent-dip, and strictly local sampled-position solvers, not by widening fallback elsewhere.
