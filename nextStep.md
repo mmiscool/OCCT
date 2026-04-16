@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now-thin early probe stage-chain forwarder that just kicks off the typed stage-result progression.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now-thin early probe stage-chain forwarder that only delegates to the midpoint-stage entry boundary.
 
 ## Current State
 
@@ -63,9 +63,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns winning-segment selection and terminal `segment.needs_refinement(...)` dispatch once it receives the final 7-sample boundary
   - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
   - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-  - but the early probe chain still has one smaller structural seam: [`EarlyProbeStageChain::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now just a thin forwarder into the typed stage-result boundary, spelling `midpoint_stage.stage_samples_or_refinement(...).continue_with_tail(self.outer_stage, self.interval_aware_tail, ...)` instead of pushing even that kickoff onto one smaller Rust-owned boundary
+  - but the early probe chain still has one smaller structural seam: [`EarlyProbeStageChain::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now just a thin forwarder into the midpoint-stage entry boundary, spelling `midpoint_stage.needs_refinement_with_tail(source, self.outer_stage, self.interval_aware_tail, ...)` instead of collapsing that stage-chain wrapper entirely
 
-The next blocker is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and typed stage-result boundary, but collapse the remaining thin `midpoint_stage.stage_samples_or_refinement(...).continue_with_tail(...)` kickoff inside `EarlyProbeStageChain::needs_refinement()` so that the stage-chain boundary stops open-coding even the first result-boundary step.
+The next blocker is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and typed stage-result boundary, but collapse the remaining thin `midpoint_stage.needs_refinement_with_tail(...)` forwarder inside `EarlyProbeStageChain::needs_refinement()` so that the stage-chain boundary stops acting as a wrapper at all.
 
 ## Focus
 
@@ -83,4 +83,4 @@ The next blocker is to keep the typed midpoint stage, typed outer stage, typed i
 
 ## Why This Is Next
 
-This turn moved midpoint-stage to outer-stage continuation plus final interval-aware dispatch under `EarlyProbeStageResult::continue_with_tail(...)`, so the typed stage-result boundary now owns the full early-probe progression after the initial midpoint-stage entry. The remaining seam is smaller and local: `EarlyProbeStageChain::needs_refinement()` still open-codes the kickoff call into that result boundary instead of collapsing into a thinner typed entry.
+This turn moved the kickoff itself onto `EarlyProbeStageLayout<3, 5>::needs_refinement_with_tail(...)`, so midpoint-stage entry plus the typed stage-result boundary now own the full early-probe progression after the raw 3-sample source arrives. The remaining seam is smaller and local: `EarlyProbeStageChain::needs_refinement()` is now only a wrapper around that midpoint-stage entry instead of adding real behavior.

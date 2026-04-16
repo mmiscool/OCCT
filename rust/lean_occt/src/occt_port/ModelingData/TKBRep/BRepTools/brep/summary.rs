@@ -1448,6 +1448,20 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
     }
 }
 
+impl EarlyProbeStageLayout<3, 5> {
+    fn needs_refinement_with_tail(
+        self,
+        source: [NormalizedEdgeSample; 3],
+        next_stage: EarlyProbeStageLayout<5, 7>,
+        tail: EarlyProbeIntervalAwareTail,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        self.stage_samples_or_refinement(context, edge_shape, source)
+            .continue_with_tail(next_stage, tail, context, edge_shape)
+    }
+}
+
 struct EarlyProbeStageResult<const STAGE_N: usize>(
     Result<[NormalizedEdgeSample; STAGE_N], Option<bool>>,
 );
@@ -1608,14 +1622,13 @@ impl EarlyProbeStageChain {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        self.midpoint_stage
-            .stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with_tail(
-                self.outer_stage,
-                self.interval_aware_tail,
-                context,
-                edge_shape,
-            )
+        self.midpoint_stage.needs_refinement_with_tail(
+            source,
+            self.outer_stage,
+            self.interval_aware_tail,
+            context,
+            edge_shape,
+        )
     }
 }
 
