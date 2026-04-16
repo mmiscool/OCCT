@@ -1496,29 +1496,18 @@ impl PreparedOuterProbeChain {
     }
 
     fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
-        if sampled_edge_sample_windows_need_refinement(&self.samples()) {
+        let samples = self.samples();
+        if sampled_edge_sample_windows_need_refinement(&samples) {
             return Some(true);
         }
 
-        let Some(probe_segment) =
-            self.prepare_interval_aware_refinement_segment(context, edge_shape)?
+        let Some(probe_segment) = PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS
+            .prepare_refinement_segment(&samples, context, edge_shape)?
         else {
             return Some(false);
         };
 
         probe_segment.needs_refinement(context, edge_shape, 3)
-    }
-
-    fn prepare_interval_aware_refinement_segment(
-        &self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS.prepare_refinement_segment(
-            &self.samples(),
-            context,
-            edge_shape,
-        )
     }
 }
 
