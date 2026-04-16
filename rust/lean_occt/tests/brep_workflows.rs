@@ -1361,6 +1361,22 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         summary.volume,
         occt_summary.volume
     );
+    assert_bbox_close(
+        "swept revolution kernel summary",
+        summary.bbox_min,
+        summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        1.0e-6,
+    )?;
+    assert_bbox_close(
+        "swept revolution brep summary",
+        brep.summary.bbox_min,
+        brep.summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        1.0e-6,
+    )?;
     assert!(
         (brep.summary.volume - summary.volume).abs() <= 1.0e-9,
         "brep summary volume drifted from kernel summary: brep={} kernel={}",

@@ -1,26 +1,29 @@
 # Next Task
 
-Keep narrowing the whole-shape OCCT summary fallback in `ported_shape_summary()`, but stay on a parity-safe bbox boundary. The next target is the remaining bounded non-exact families whose bbox can be derived from existing Rust-owned face, edge, or mesh data before crossing back to `describe_shape_occt()`.
+Keep narrowing the whole-shape OCCT summary fallback in `ported_shape_summary()`, but stay on a parity-safe bbox boundary. The next target is the remaining bounded non-exact families whose bbox still falls through to whole-shape mesh or `describe_shape_occt()` because not every boundary edge is already analytic in Rust.
 
 ## Current State
 
 - [`ported_brep()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs) already hands its existing `faces` inventory directly to [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs); the extra `summary_faces` rebuild is gone.
-- The successful Rust-topology path now carries Public faces through summary derivation, including `ported_face_surface == None` faces that resolve sample and area through the mesh fallback already stored in `BrepFace`.
-- [`mesh_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/mesh.rs) now falls back to the stored mesh bounds from `Context::mesh()` when the point/segment collection path cannot produce a bbox, so one Rust-owned bbox fallback is narrower than before.
-- [`topological_shape_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps bbox ownership in Rust for shapes whose faces are entirely plane/cylinder/cone by using analytic boundary edges before falling back to mesh or whole-shape OCCT summary.
+- [`topological_shape_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps bbox ownership in Rust for:
+  - face-free shapes through analytic edges, line segments, or vertex points
+  - all-plane / cylinder / cone face sets through analytic boundary edges
+  - swept face sets when every boundary edge already has a Rust `PortedCurve`
+- The swept-revolution BRep fixture in [`brep_workflows.rs`](rust/lean_occt/tests/brep_workflows.rs) is now pinned on that wider Rust-owned bbox path against OCCT bbox parity.
+- [`mesh_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/mesh.rs) already falls back to stored mesh bounds from `Context::mesh()` when the point/segment collection path cannot produce a bbox.
 - [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still keeps a broad `fallback_summary = || context.describe_shape_occt(shape).ok()` escape hatch for:
-  - bbox fallback after `exact_primitive_shape_summary(...)` and `ported_shape_bbox(...)`
+  - bbox fallback after exact and topological Rust-owned bbox paths decline
   - final volume fallback after exact, analytic, and mesh Rust-owned paths decline
 
 ## Remaining Blocker
 
-The next coarse OCCT boundary is still the whole-shape `describe_shape_occt()` fallback inside summary derivation. The safe boundary has moved from planes-only to plane/cylinder/cone face sets, but exact torus-style formulas were not parity-safe against OCCT, so the next cut still needs to stay on bounded non-exact families or mesh/BRep-derived bbox logic that preserves public parity.
+The next coarse OCCT boundary is still the whole-shape bbox fallback in summary derivation for bounded non-exact families whose faces are already Rust-owned but whose boundary edges are not all reconstructible as analytic `PortedCurve`s. Offset faces are the immediate example: analytic boundary edges alone were not enough to match OCCT bbox parity. The torus-style exact-extrema path is still off the table, so the next cut needs to stay on BRep-owned or mesh-owned bbox logic that matches public OCCT parity.
 
 ## Focus
 
 1. Keep narrowing bbox fallthrough before touching the remaining volume fallback.
-2. Reuse Rust-owned `vertices`, `edges`, `faces`, face samples, and mesh-backed state before crossing back to whole-shape OCCT summary.
-3. Prefer parity-safe families such as bounded swept/offset or mixed non-exact faces, or mesh/BRep-derived bbox improvements, over new exact analytic bbox formulas.
+2. Reuse Rust-owned `vertices`, `edges`, `faces`, face samples, and face-shape inventories before crossing back to whole-shape OCCT summary.
+3. Prefer the next parity-safe cut to be per-face mesh or face-local bbox union for bounded non-exact families whose boundary edges are not all analytic, rather than adding new exact analytic formulas.
 4. Leave the final volume fallback in place unless a clearly bounded Rust-owned replacement falls out naturally from the bbox work.
 5. Keep the verification bar unchanged:
    - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
@@ -29,4 +32,4 @@ The next coarse OCCT boundary is still the whole-shape `describe_shape_occt()` f
 
 ## Why This Is Next
 
-The safe progress in this slice is that non-exact plane/cylinder/cone-bounded shapes now stay on Rust-owned analytic edge bbox logic, and the cut-style BRep summary fixture is pinned on that route. The next aggressive Rust-first step is to keep whole-shape bbox derivation on Rust-owned BRep or mesh inventories for the next bounded non-exact family before falling back to `describe_shape_occt()`.
+The safe Rust-first bbox boundary now includes the exercised swept family whenever its boundary is already fully analytic in Rust. The next aggressive step is to cover the adjacent bounded non-exact cases, starting with offset faces, by using existing face-local mesh or BRep-owned data before falling back to `describe_shape_occt()`.

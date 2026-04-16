@@ -704,20 +704,30 @@ fn topological_shape_bbox(
             });
     }
 
-    if boundary_extrema_faces_use_analytic_edges(faces) {
+    if faces_use_analytic_edge_bbox(edges, faces) {
         return analytic_edges_bbox(edges).or_else(|| line_segment_points_bbox(vertices, edges));
     }
 
     None
 }
 
-fn boundary_extrema_faces_use_analytic_edges(faces: &[BrepFace]) -> bool {
-    faces.iter().all(|face| {
-        matches!(
-            face.ported_surface,
-            Some(PortedSurface::Plane(_) | PortedSurface::Cylinder(_) | PortedSurface::Cone(_))
-        )
-    })
+fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool {
+    !edges.is_empty()
+        && edges
+            .iter()
+            .all(|edge| matches!(edge.ported_curve, Some(_)))
+        && faces.iter().all(|face| {
+            matches!(
+                face.ported_face_surface,
+                Some(
+                    PortedFaceSurface::Analytic(
+                        PortedSurface::Plane(_)
+                            | PortedSurface::Cylinder(_)
+                            | PortedSurface::Cone(_)
+                    ) | PortedFaceSurface::Swept(_)
+                )
+            )
+        })
 }
 
 fn line_segment_points_bbox(
