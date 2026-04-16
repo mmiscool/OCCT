@@ -1389,11 +1389,7 @@ fn sampled_edge_interval_needs_probe_refinement(
 
 #[derive(Clone, Copy)]
 struct PreparedMidpointProbeChain {
-    start: NormalizedEdgeSample,
-    first_probe: NormalizedEdgeSample,
-    midpoint: NormalizedEdgeSample,
-    second_probe: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
+    samples: [NormalizedEdgeSample; 5],
 }
 
 impl PreparedMidpointProbeChain {
@@ -1411,26 +1407,18 @@ impl PreparedMidpointProbeChain {
         };
 
         Some(Some(Self {
-            start: *start,
-            first_probe: probes.first_probe,
-            midpoint: *midpoint,
-            second_probe: probes.second_probe,
-            end: *end,
+            samples: [
+                *start,
+                probes.first_probe,
+                *midpoint,
+                probes.second_probe,
+                *end,
+            ],
         }))
     }
 
-    fn samples(&self) -> [NormalizedEdgeSample; 5] {
-        [
-            self.start,
-            self.first_probe,
-            self.midpoint,
-            self.second_probe,
-            self.end,
-        ]
-    }
-
     fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
-        if sampled_edge_sample_windows_need_refinement(&self.samples()) {
+        if sampled_edge_sample_windows_need_refinement(&self.samples) {
             return Some(true);
         }
 
@@ -1457,10 +1445,10 @@ impl PreparedOuterProbeChain {
         let Some(outer_probes) = midpoint_edge_probe_pair(
             context,
             edge_shape,
-            &midpoint_probe_chain.start,
-            &midpoint_probe_chain.first_probe,
-            &midpoint_probe_chain.second_probe,
-            &midpoint_probe_chain.end,
+            &midpoint_probe_chain.samples[0],
+            &midpoint_probe_chain.samples[1],
+            &midpoint_probe_chain.samples[3],
+            &midpoint_probe_chain.samples[4],
         )?
         else {
             return Some(None);
@@ -1468,13 +1456,13 @@ impl PreparedOuterProbeChain {
 
         Some(Some(Self {
             samples: [
-                midpoint_probe_chain.start,
+                midpoint_probe_chain.samples[0],
                 outer_probes.first_probe,
-                midpoint_probe_chain.first_probe,
-                midpoint_probe_chain.midpoint,
-                midpoint_probe_chain.second_probe,
+                midpoint_probe_chain.samples[1],
+                midpoint_probe_chain.samples[2],
+                midpoint_probe_chain.samples[3],
                 outer_probes.second_probe,
-                midpoint_probe_chain.end,
+                midpoint_probe_chain.samples[4],
             ],
         }))
     }
