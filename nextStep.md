@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining midpoint probe-pair request-construction bounce in the shell-edge refinement path, so `EarlyProbeStageLayout::refinement_result()` stops open-coding `request_source_indices -> MidpointEdgeProbePairRequest::new(...)` before handing off to the shared typed probe-pair boundary.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw midpoint probe-pair source indexing in the shell-edge refinement path, so `MidpointEdgeProbePairRequestLayout` stops carrying a positional `[usize; 4]` and moves to typed probe-span layouts before execution.
 
 ## Current State
 
@@ -17,6 +17,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now works directly on `[NormalizedEdgeSample; N]` inputs instead of generic source traits
   - the old `EarlyProbeStageRole` trait and `EarlyProbeStageRoleLayout` helper are gone
   - [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now only describes stage-local sample ordering over a supplied `source index -> sample` resolver
+  - [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `source indices -> probe pair outcome` handoff and direct probe execution for early probe stages, so [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer carries a raw `[usize; 4]` request-source array or bounces through a second request carrier
   - [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result path for both early probe stages through the same array-backed source boundary
   - the midpoint-only `EarlyProbeStageLayout<3, _>` specialization is gone
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
@@ -39,7 +40,6 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedRefinementSpanLayout::midpoint_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `RefinementSegmentOutcome` instead of nested `Option<Option<RefinementSegment>>`
   - midpoint span refinement and adaptive stronger-half refinement now both materialize midpoint candidates through the shared `midpoint_refinement_segment(...)` helper instead of each translating `MidpointEdgeProbeOutcome` into `RefinementSegmentOutcome` locally
   - midpoint segment creation and midpoint probe-pair creation now both reuse the shared typed midpoint-probe resolution boundary on `MidpointEdgeProbeOutcome`, instead of reinterpreting `MidpointEdgeProbeOutcome::{NoProbe, Probe(...)}` in separate callers
-  - [`MidpointEdgeProbePairRequest::probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `MidpointEdgeProbePairOutcome` instead of nested `Option<Option<MidpointEdgeProbePair>>`
   - [`MidpointEdgeProbePairOutcome`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `Err(false)` vs staged-sample result translation for early probe stages, so [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer matches `MidpointEdgeProbePairOutcome::{NoPair, Pair(...)}` itself
   - [`RefinementSegment::stronger_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now stays on that same explicit `RefinementSegmentOutcome` boundary instead of bouncing through a separate `StrongerHalfOutcome`
   - the four unsupported-edge extremum solvers now return an explicit `EdgeSampleExtremumOutcome` instead of nested `Option<Option<EdgeSample>>`
@@ -62,9 +62,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
 - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
 - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-- but the early stage still open-codes midpoint probe-pair request assembly: [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still indexes `request_source_indices` into the stage source and constructs [`MidpointEdgeProbePairRequest::new(...)`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) itself before handing off to the shared typed probe-pair boundary
+- but the request-layout boundary still carries a raw four-index endpoint mapping: [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still stores a positional `[usize; 4]` and indexes it as two implicit `start/end` probe spans during execution
 
-The next blocker is to collapse that remaining request-construction bounce into one shared typed stage/request boundary, so request-source selection and probe-pair execution stop being split between `EarlyProbeStageLayout` and `MidpointEdgeProbePairRequest`.
+The next blocker is to collapse that remaining raw index mapping into one shared typed span boundary, so midpoint probe-pair source selection stops being expressed as a positional four-slot array and instead uses explicit first/second probe span layouts.
 
 ## Focus
 
@@ -82,4 +82,4 @@ The next blocker is to collapse that remaining request-construction bounce into 
 
 ## Why This Is Next
 
-This turn finished the midpoint probe-pair outcome cleanup: early-stage probe-pair creation and probe-pair consumption now go through one shared typed `MidpointEdgeProbePairOutcome` boundary instead of each reinterpreting `NoPair` vs `Pair(...)` locally. That leaves the next real seam one level smaller again: the early stage still builds the midpoint probe-pair request inline from `request_source_indices` before it reaches that typed boundary.
+This turn finished the early-stage request carrier cleanup: `MidpointEdgeProbePairRequestLayout` now executes midpoint probe collection directly, so `EarlyProbeStageLayout` no longer assembles midpoint probe-pair requests inline or bounces through `MidpointEdgeProbePairRequest::new(...)`. That leaves the next real seam one level smaller again: the request layout still carries the probe endpoints as a raw positional `[usize; 4]` instead of explicit typed span layouts.

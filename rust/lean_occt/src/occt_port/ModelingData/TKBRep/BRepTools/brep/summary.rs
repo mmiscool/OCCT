@@ -1383,18 +1383,50 @@ fn sampled_edge_interval_needs_probe_refinement(
 }
 
 #[derive(Clone, Copy)]
+struct MidpointEdgeProbePairRequestLayout {
+    source_indices: [usize; 4],
+}
+
+impl MidpointEdgeProbePairRequestLayout {
+    const fn new(source_indices: [usize; 4]) -> Self {
+        Self { source_indices }
+    }
+
+    fn probe_pair<const SOURCE_N: usize>(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+    ) -> Option<MidpointEdgeProbePairOutcome> {
+        let first_probe = midpoint_edge_probe(
+            context,
+            edge_shape,
+            &source[self.source_indices[0]],
+            &source[self.source_indices[1]],
+        )?;
+        let second_probe = midpoint_edge_probe(
+            context,
+            edge_shape,
+            &source[self.source_indices[2]],
+            &source[self.source_indices[3]],
+        )?;
+        Some(first_probe.pair_with(second_probe))
+    }
+}
+
+#[derive(Clone, Copy)]
 struct EarlyProbeStageLayout<const SOURCE_N: usize, const STAGE_N: usize> {
-    request_source_indices: [usize; 4],
+    probe_request_layout: MidpointEdgeProbePairRequestLayout,
     sample_roles: [EarlyProbeSampleRole; STAGE_N],
 }
 
 impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N, STAGE_N> {
     const fn new(
-        request_source_indices: [usize; 4],
+        probe_request_layout: MidpointEdgeProbePairRequestLayout,
         sample_roles: [EarlyProbeSampleRole; STAGE_N],
     ) -> Self {
         Self {
-            request_source_indices,
+            probe_request_layout,
             sample_roles,
         }
     }
@@ -1405,13 +1437,9 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
     ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
-        let probes = MidpointEdgeProbePairRequest::new(
-            source[self.request_source_indices[0]],
-            source[self.request_source_indices[1]],
-            source[self.request_source_indices[2]],
-            source[self.request_source_indices[3]],
-        )
-        .probe_pair(context, edge_shape)?;
+        let probes = self
+            .probe_request_layout
+            .probe_pair(context, edge_shape, source)?;
         Some(probes.refinement_result(source, self.sample_roles))
     }
 }
@@ -1955,44 +1983,8 @@ impl MidpointEdgeProbePairOutcome {
     }
 }
 
-#[derive(Clone, Copy)]
-struct MidpointEdgeProbePairRequest {
-    first_start: NormalizedEdgeSample,
-    first_end: NormalizedEdgeSample,
-    second_start: NormalizedEdgeSample,
-    second_end: NormalizedEdgeSample,
-}
-
-impl MidpointEdgeProbePairRequest {
-    const fn new(
-        first_start: NormalizedEdgeSample,
-        first_end: NormalizedEdgeSample,
-        second_start: NormalizedEdgeSample,
-        second_end: NormalizedEdgeSample,
-    ) -> Self {
-        Self {
-            first_start,
-            first_end,
-            second_start,
-            second_end,
-        }
-    }
-
-    fn probe_pair(
-        &self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<MidpointEdgeProbePairOutcome> {
-        let first_probe =
-            midpoint_edge_probe(context, edge_shape, &self.first_start, &self.first_end)?;
-        let second_probe =
-            midpoint_edge_probe(context, edge_shape, &self.second_start, &self.second_end)?;
-        Some(first_probe.pair_with(second_probe))
-    }
-}
-
 const MIDPOINT_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<3, 5> = EarlyProbeStageLayout::new(
-    [0, 1, 1, 2],
+    MidpointEdgeProbePairRequestLayout::new([0, 1, 1, 2]),
     [
         EarlyProbeSampleRole::Source(0),
         EarlyProbeSampleRole::FirstProbe,
@@ -2003,7 +1995,7 @@ const MIDPOINT_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<3, 5> = EarlyProb
 );
 
 const OUTER_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<5, 7> = EarlyProbeStageLayout::new(
-    [0, 1, 3, 4],
+    MidpointEdgeProbePairRequestLayout::new([0, 1, 3, 4]),
     [
         EarlyProbeSampleRole::Source(0),
         EarlyProbeSampleRole::FirstProbe,
