@@ -1378,122 +1378,53 @@ fn sampled_edge_interval_needs_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let Some(probe_chain) =
-        PreparedMidpointProbeChain::prepare(context, edge_shape, start, midpoint, end)?
+    let Some(probes) = MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT
+        .request(&(start, midpoint, end))
+        .probe_pair(context, edge_shape)?
     else {
         return Some(false);
     };
 
-    probe_chain.needs_refinement(context, edge_shape)
-}
+    let midpoint_probe_samples = [
+        *start,
+        probes.first_probe,
+        *midpoint,
+        probes.second_probe,
+        *end,
+    ];
 
-#[derive(Clone, Copy)]
-struct PreparedMidpointProbeChain {
-    samples: [NormalizedEdgeSample; 5],
-}
-
-impl PreparedMidpointProbeChain {
-    fn new(
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-        probes: MidpointEdgeProbePair,
-    ) -> Self {
-        Self {
-            samples: [
-                *start,
-                probes.first_probe,
-                *midpoint,
-                probes.second_probe,
-                *end,
-            ],
-        }
+    if sampled_edge_sample_windows_need_refinement(&midpoint_probe_samples) {
+        return Some(true);
     }
 
-    fn prepare(
-        context: &Context,
-        edge_shape: &Shape,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-    ) -> Option<Option<Self>> {
-        let Some(probes) = MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT
-            .request(&(start, midpoint, end))
-            .probe_pair(context, edge_shape)?
-        else {
-            return Some(None);
-        };
+    let Some(outer_probes) = OUTER_STAGE_PROBE_REQUEST_LAYOUT
+        .request(&midpoint_probe_samples)
+        .probe_pair(context, edge_shape)?
+    else {
+        return Some(false);
+    };
 
-        Some(Some(Self::new(start, midpoint, end, probes)))
+    let outer_probe_samples = [
+        midpoint_probe_samples[0],
+        outer_probes.first_probe,
+        midpoint_probe_samples[1],
+        midpoint_probe_samples[2],
+        midpoint_probe_samples[3],
+        outer_probes.second_probe,
+        midpoint_probe_samples[4],
+    ];
+
+    if sampled_edge_sample_windows_need_refinement(&outer_probe_samples) {
+        return Some(true);
     }
 
-    fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
-        if sampled_edge_sample_windows_need_refinement(&self.samples) {
-            return Some(true);
-        }
+    let Some(probe_segment) = PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS
+        .prepare_refinement_segment(&outer_probe_samples, context, edge_shape)?
+    else {
+        return Some(false);
+    };
 
-        let Some(outer_probe_chain) = self.prepare_outer_probe_chain(context, edge_shape)? else {
-            return Some(false);
-        };
-
-        outer_probe_chain.needs_refinement(context, edge_shape)
-    }
-
-    fn prepare_outer_probe_chain(
-        &self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<PreparedOuterProbeChain>> {
-        let Some(outer_probes) = OUTER_STAGE_PROBE_REQUEST_LAYOUT
-            .request(self)
-            .probe_pair(context, edge_shape)?
-        else {
-            return Some(None);
-        };
-
-        Some(Some(PreparedOuterProbeChain::from_midpoint_probe_chain(
-            self,
-            outer_probes,
-        )))
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PreparedOuterProbeChain {
-    samples: [NormalizedEdgeSample; 7],
-}
-
-impl PreparedOuterProbeChain {
-    fn from_midpoint_probe_chain(
-        midpoint_probe_chain: &PreparedMidpointProbeChain,
-        probes: MidpointEdgeProbePair,
-    ) -> Self {
-        Self {
-            samples: [
-                midpoint_probe_chain.samples[0],
-                probes.first_probe,
-                midpoint_probe_chain.samples[1],
-                midpoint_probe_chain.samples[2],
-                midpoint_probe_chain.samples[3],
-                probes.second_probe,
-                midpoint_probe_chain.samples[4],
-            ],
-        }
-    }
-
-    fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
-        if sampled_edge_sample_windows_need_refinement(&self.samples) {
-            return Some(true);
-        }
-
-        let Some(probe_segment) = PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS
-            .prepare_refinement_segment(&self.samples, context, edge_shape)?
-        else {
-            return Some(false);
-        };
-
-        probe_segment.needs_refinement(context, edge_shape, 3)
-    }
+    probe_segment.needs_refinement(context, edge_shape, 3)
 }
 
 #[derive(Clone, Copy)]
@@ -1961,14 +1892,14 @@ enum OuterStageProbeRequestSampleRole {
 }
 
 impl MidpointEdgeProbePairRequestSampleRole for OuterStageProbeRequestSampleRole {
-    type Source<'a> = PreparedMidpointProbeChain;
+    type Source<'a> = [NormalizedEdgeSample; 5];
 
-    fn sample(&self, source: &PreparedMidpointProbeChain) -> NormalizedEdgeSample {
+    fn sample(&self, source: &[NormalizedEdgeSample; 5]) -> NormalizedEdgeSample {
         match self {
-            Self::Start => source.samples[0],
-            Self::FirstProbe => source.samples[1],
-            Self::SecondProbe => source.samples[3],
-            Self::End => source.samples[4],
+            Self::Start => source[0],
+            Self::FirstProbe => source[1],
+            Self::SecondProbe => source[3],
+            Self::End => source[4],
         }
     }
 }
