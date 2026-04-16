@@ -1661,60 +1661,22 @@ fn sampled_edge_interval_needs_terminal_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let start_terminal_probe_t = 0.5 * (start.t + midpoint.t);
-    let end_terminal_probe_t = 0.5 * (midpoint.t + end.t);
-
-    let start_terminal_probe = if approx_eq(start_terminal_probe_t, start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(start_terminal_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: start_terminal_probe_t,
-            sample: context
-                .edge_sample(edge_shape, start_terminal_probe_t)
-                .ok()?,
-        })
-    };
-    let end_terminal_probe = if approx_eq(end_terminal_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-        || approx_eq(end_terminal_probe_t, end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: end_terminal_probe_t,
-            sample: context.edge_sample(edge_shape, end_terminal_probe_t).ok()?,
-        })
-    };
-
-    let start_terminal_score = start_terminal_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
-        .unwrap_or(0.0);
-    let end_terminal_score = end_terminal_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
-        .unwrap_or(0.0);
-    if start_terminal_score <= 1.0e-12 && end_terminal_score <= 1.0e-12 {
+    let Some((probe_start, probe_mid, probe_end)) =
+        choose_stronger_refinement_half(context, edge_shape, start, midpoint, end)?
+    else {
         return Some(false);
-    }
-
-    let (probe_start, probe_mid, probe_end) = if start_terminal_score >= end_terminal_score {
-        (start, start_terminal_probe.as_ref()?, midpoint)
-    } else {
-        (midpoint, end_terminal_probe.as_ref()?, end)
     };
 
-    if sampled_edge_interval_needs_refinement(probe_start, probe_mid, probe_end) {
+    if sampled_edge_interval_needs_refinement(&probe_start, &probe_mid, &probe_end) {
         return Some(true);
     }
 
     sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
         context,
         edge_shape,
-        probe_start,
-        probe_mid,
-        probe_end,
+        &probe_start,
+        &probe_mid,
+        &probe_end,
     )
 }
 
@@ -1725,979 +1687,89 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let start_terminal_endpoint_probe_t = 0.5 * (start.t + midpoint.t);
-    let end_terminal_endpoint_probe_t = 0.5 * (midpoint.t + end.t);
-
-    let start_terminal_endpoint_probe =
-        if approx_eq(start_terminal_endpoint_probe_t, start.t, 1.0e-12, 1.0e-12)
-            || approx_eq(
-                start_terminal_endpoint_probe_t,
-                midpoint.t,
-                1.0e-12,
-                1.0e-12,
-            )
-        {
-            None
-        } else {
-            Some(NormalizedEdgeSample {
-                t: start_terminal_endpoint_probe_t,
-                sample: context
-                    .edge_sample(edge_shape, start_terminal_endpoint_probe_t)
-                    .ok()?,
-            })
-        };
-    let end_terminal_endpoint_probe =
-        if approx_eq(end_terminal_endpoint_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-            || approx_eq(end_terminal_endpoint_probe_t, end.t, 1.0e-12, 1.0e-12)
-        {
-            None
-        } else {
-            Some(NormalizedEdgeSample {
-                t: end_terminal_endpoint_probe_t,
-                sample: context
-                    .edge_sample(edge_shape, end_terminal_endpoint_probe_t)
-                    .ok()?,
-            })
-        };
-
-    let start_terminal_endpoint_score = start_terminal_endpoint_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
-        .unwrap_or(0.0);
-    let end_terminal_endpoint_score = end_terminal_endpoint_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
-        .unwrap_or(0.0);
-    if start_terminal_endpoint_score <= 1.0e-12 && end_terminal_endpoint_score <= 1.0e-12 {
+    let Some((mut probe_start, mut probe_mid, mut probe_end)) =
+        choose_stronger_refinement_half(context, edge_shape, start, midpoint, end)?
+    else {
         return Some(false);
+    };
+
+    for _ in 1..TERMINAL_ENDPOINT_HALF_REFINEMENT_STEPS {
+        let Some((next_start, next_mid, next_end)) = choose_stronger_refinement_half(
+            context,
+            edge_shape,
+            &probe_start,
+            &probe_mid,
+            &probe_end,
+        )?
+        else {
+            break;
+        };
+        probe_start = next_start;
+        probe_mid = next_mid;
+        probe_end = next_end;
     }
 
-    let (probe_start, probe_mid, probe_end) =
-        if start_terminal_endpoint_score >= end_terminal_endpoint_score {
-            (start, start_terminal_endpoint_probe.as_ref()?, midpoint)
-        } else {
-            (midpoint, end_terminal_endpoint_probe.as_ref()?, end)
-        };
+    Some(sampled_edge_interval_needs_refinement(
+        &probe_start,
+        &probe_mid,
+        &probe_end,
+    ))
+}
 
-    let start_biased_probe_t = 0.5 * (probe_start.t + probe_mid.t);
-    let end_biased_probe_t = 0.5 * (probe_mid.t + probe_end.t);
+const TERMINAL_ENDPOINT_HALF_REFINEMENT_STEPS: usize = 13;
 
-    let start_biased_probe = if approx_eq(start_biased_probe_t, probe_start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(start_biased_probe_t, probe_mid.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: start_biased_probe_t,
-            sample: context.edge_sample(edge_shape, start_biased_probe_t).ok()?,
-        })
-    };
-    let end_biased_probe = if approx_eq(end_biased_probe_t, probe_mid.t, 1.0e-12, 1.0e-12)
-        || approx_eq(end_biased_probe_t, probe_end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: end_biased_probe_t,
-            sample: context.edge_sample(edge_shape, end_biased_probe_t).ok()?,
-        })
-    };
-
-    let start_biased_score = start_biased_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(probe_start, probe, probe_mid)
-        })
-        .unwrap_or(0.0);
-    let end_biased_score = end_biased_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(probe_mid, probe, probe_end))
-        .unwrap_or(0.0);
-
-    let (side_start, side_mid, side_end) =
-        if start_biased_score <= 1.0e-12 && end_biased_score <= 1.0e-12 {
-            (probe_start, probe_mid, probe_end)
-        } else if start_biased_score >= end_biased_score {
-            (probe_start, start_biased_probe.as_ref()?, probe_mid)
-        } else {
-            (probe_mid, end_biased_probe.as_ref()?, probe_end)
-        };
-
-    let outer_probe_t = 0.5 * (side_start.t + side_mid.t);
-    let inner_probe_t = 0.5 * (side_mid.t + side_end.t);
-
-    let outer_probe = if approx_eq(outer_probe_t, side_start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(outer_probe_t, side_mid.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_probe_t,
-            sample: context.edge_sample(edge_shape, outer_probe_t).ok()?,
-        })
-    };
-    let inner_probe = if approx_eq(inner_probe_t, side_mid.t, 1.0e-12, 1.0e-12)
-        || approx_eq(inner_probe_t, side_end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_probe_t,
-            sample: context.edge_sample(edge_shape, inner_probe_t).ok()?,
-        })
-    };
+fn choose_stronger_refinement_half(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<
+    Option<(
+        NormalizedEdgeSample,
+        NormalizedEdgeSample,
+        NormalizedEdgeSample,
+    )>,
+> {
+    let outer_probe = midpoint_edge_probe(context, edge_shape, start, midpoint)?;
+    let inner_probe = midpoint_edge_probe(context, edge_shape, midpoint, end)?;
 
     let outer_score = outer_probe
         .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(side_start, probe, side_mid))
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
         .unwrap_or(0.0);
     let inner_score = inner_probe
         .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(side_mid, probe, side_end))
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
         .unwrap_or(0.0);
 
-    let (half_start, half_mid, half_end) = if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
-        (side_start, side_mid, side_end)
-    } else if outer_score >= inner_score {
-        (side_start, outer_probe.as_ref()?, side_mid)
+    if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
+        return Some(None);
+    }
+
+    if outer_score >= inner_score {
+        Some(Some((*start, *outer_probe.as_ref()?, *midpoint)))
     } else {
-        (side_mid, inner_probe.as_ref()?, side_end)
-    };
+        Some(Some((*midpoint, *inner_probe.as_ref()?, *end)))
+    }
+}
 
-    let outer_half_probe_t = 0.5 * (half_start.t + half_mid.t);
-    let inner_half_probe_t = 0.5 * (half_mid.t + half_end.t);
-
-    let outer_half_probe = if approx_eq(outer_half_probe_t, half_start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(outer_half_probe_t, half_mid.t, 1.0e-12, 1.0e-12)
+fn midpoint_edge_probe(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<Option<NormalizedEdgeSample>> {
+    let probe_t = 0.5 * (start.t + end.t);
+    if approx_eq(probe_t, start.t, 1.0e-12, 1.0e-12) || approx_eq(probe_t, end.t, 1.0e-12, 1.0e-12)
     {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_half_probe_t,
-            sample: context.edge_sample(edge_shape, outer_half_probe_t).ok()?,
-        })
-    };
-    let inner_half_probe = if approx_eq(inner_half_probe_t, half_mid.t, 1.0e-12, 1.0e-12)
-        || approx_eq(inner_half_probe_t, half_end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_half_probe_t,
-            sample: context.edge_sample(edge_shape, inner_half_probe_t).ok()?,
-        })
-    };
+        return Some(None);
+    }
 
-    let outer_half_score = outer_half_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(half_start, probe, half_mid))
-        .unwrap_or(0.0);
-    let inner_half_score = inner_half_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(half_mid, probe, half_end))
-        .unwrap_or(0.0);
-
-    let (sub_half_start, sub_half_mid, sub_half_end) =
-        if outer_half_score <= 1.0e-12 && inner_half_score <= 1.0e-12 {
-            (half_start, half_mid, half_end)
-        } else if outer_half_score >= inner_half_score {
-            (half_start, outer_half_probe.as_ref()?, half_mid)
-        } else {
-            (half_mid, inner_half_probe.as_ref()?, half_end)
-        };
-
-    let outer_sub_half_probe_t = 0.5 * (sub_half_start.t + sub_half_mid.t);
-    let inner_sub_half_probe_t = 0.5 * (sub_half_mid.t + sub_half_end.t);
-
-    let outer_sub_half_probe =
-        if approx_eq(outer_sub_half_probe_t, sub_half_start.t, 1.0e-12, 1.0e-12)
-            || approx_eq(outer_sub_half_probe_t, sub_half_mid.t, 1.0e-12, 1.0e-12)
-        {
-            None
-        } else {
-            Some(NormalizedEdgeSample {
-                t: outer_sub_half_probe_t,
-                sample: context
-                    .edge_sample(edge_shape, outer_sub_half_probe_t)
-                    .ok()?,
-            })
-        };
-    let inner_sub_half_probe =
-        if approx_eq(inner_sub_half_probe_t, sub_half_mid.t, 1.0e-12, 1.0e-12)
-            || approx_eq(inner_sub_half_probe_t, sub_half_end.t, 1.0e-12, 1.0e-12)
-        {
-            None
-        } else {
-            Some(NormalizedEdgeSample {
-                t: inner_sub_half_probe_t,
-                sample: context
-                    .edge_sample(edge_shape, inner_sub_half_probe_t)
-                    .ok()?,
-            })
-        };
-
-    let outer_sub_half_score = outer_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(sub_half_start, probe, sub_half_mid)
-        })
-        .unwrap_or(0.0);
-    let inner_sub_half_score = inner_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(sub_half_mid, probe, sub_half_end)
-        })
-        .unwrap_or(0.0);
-
-    let (sub_sub_half_start, sub_sub_half_mid, sub_sub_half_end) =
-        if outer_sub_half_score <= 1.0e-12 && inner_sub_half_score <= 1.0e-12 {
-            (sub_half_start, sub_half_mid, sub_half_end)
-        } else if outer_sub_half_score >= inner_sub_half_score {
-            (sub_half_start, outer_sub_half_probe.as_ref()?, sub_half_mid)
-        } else {
-            (sub_half_mid, inner_sub_half_probe.as_ref()?, sub_half_end)
-        };
-
-    let outer_sub_sub_half_probe_t = 0.5 * (sub_sub_half_start.t + sub_sub_half_mid.t);
-    let inner_sub_sub_half_probe_t = 0.5 * (sub_sub_half_mid.t + sub_sub_half_end.t);
-
-    let outer_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_half_probe_t,
-        sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_half_probe_t,
-        sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_half_probe_t,
-        sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_half_probe_t,
-        sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_half_score = outer_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_half_start,
-                probe,
-                sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_half_score = inner_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_half_mid,
-                probe,
-                sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (sub_sub_sub_half_start, sub_sub_sub_half_mid, sub_sub_sub_half_end) =
-        if outer_sub_sub_half_score <= 1.0e-12 && inner_sub_sub_half_score <= 1.0e-12 {
-            (sub_sub_half_start, sub_sub_half_mid, sub_sub_half_end)
-        } else if outer_sub_sub_half_score >= inner_sub_sub_half_score {
-            (
-                sub_sub_half_start,
-                outer_sub_sub_half_probe.as_ref()?,
-                sub_sub_half_mid,
-            )
-        } else {
-            (
-                sub_sub_half_mid,
-                inner_sub_sub_half_probe.as_ref()?,
-                sub_sub_half_end,
-            )
-        };
-
-    let outer_sub_sub_sub_half_probe_t = 0.5 * (sub_sub_sub_half_start.t + sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_half_probe_t = 0.5 * (sub_sub_sub_half_mid.t + sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_half_probe_t,
-        sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_half_probe_t,
-        sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_half_probe_t,
-        sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_half_probe_t,
-        sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_half_score = outer_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_half_start,
-                probe,
-                sub_sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_sub_half_score = inner_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_half_mid,
-                probe,
-                sub_sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (sub_sub_sub_sub_half_start, sub_sub_sub_sub_half_mid, sub_sub_sub_sub_half_end) =
-        if outer_sub_sub_sub_half_score <= 1.0e-12 && inner_sub_sub_sub_half_score <= 1.0e-12 {
-            (
-                sub_sub_sub_half_start,
-                sub_sub_sub_half_mid,
-                sub_sub_sub_half_end,
-            )
-        } else if outer_sub_sub_sub_half_score >= inner_sub_sub_sub_half_score {
-            (
-                sub_sub_sub_half_start,
-                outer_sub_sub_sub_half_probe.as_ref()?,
-                sub_sub_sub_half_mid,
-            )
-        } else {
-            (
-                sub_sub_sub_half_mid,
-                inner_sub_sub_sub_half_probe.as_ref()?,
-                sub_sub_sub_half_end,
-            )
-        };
-
-    let outer_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_half_start.t + sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_half_score = outer_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_half_start,
-                probe,
-                sub_sub_sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_half_score = inner_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_half_mid,
-                probe,
-                sub_sub_sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (
-        sub_sub_sub_sub_sub_half_start,
-        sub_sub_sub_sub_sub_half_mid,
-        sub_sub_sub_sub_sub_half_end,
-    ) = if outer_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        (
-            sub_sub_sub_sub_half_start,
-            sub_sub_sub_sub_half_mid,
-            sub_sub_sub_sub_half_end,
-        )
-    } else if outer_sub_sub_sub_sub_half_score >= inner_sub_sub_sub_sub_half_score {
-        (
-            sub_sub_sub_sub_half_start,
-            outer_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_half_mid,
-        )
-    } else {
-        (
-            sub_sub_sub_sub_half_mid,
-            inner_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_half_end,
-        )
-    };
-
-    let outer_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_half_start.t + sub_sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_sub_half_score = outer_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_half_start,
-                probe,
-                sub_sub_sub_sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_sub_half_score = inner_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_half_mid,
-                probe,
-                sub_sub_sub_sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (
-        sub_sub_sub_sub_sub_sub_half_start,
-        sub_sub_sub_sub_sub_sub_half_mid,
-        sub_sub_sub_sub_sub_sub_half_end,
-    ) = if outer_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        (
-            sub_sub_sub_sub_sub_half_start,
-            sub_sub_sub_sub_sub_half_mid,
-            sub_sub_sub_sub_sub_half_end,
-        )
-    } else if outer_sub_sub_sub_sub_sub_half_score >= inner_sub_sub_sub_sub_sub_half_score {
-        (
-            sub_sub_sub_sub_sub_half_start,
-            outer_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_half_mid,
-        )
-    } else {
-        (
-            sub_sub_sub_sub_sub_half_mid,
-            inner_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_half_end,
-        )
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_sub_half_start.t + sub_sub_sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_half_score = outer_sub_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_sub_half_start,
-                probe,
-                sub_sub_sub_sub_sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_sub_sub_half_score = inner_sub_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_sub_half_mid,
-                probe,
-                sub_sub_sub_sub_sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (
-        sub_sub_sub_sub_sub_sub_sub_half_start,
-        sub_sub_sub_sub_sub_sub_sub_half_mid,
-        sub_sub_sub_sub_sub_sub_sub_half_end,
-    ) = if outer_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        (
-            sub_sub_sub_sub_sub_sub_half_start,
-            sub_sub_sub_sub_sub_sub_half_mid,
-            sub_sub_sub_sub_sub_sub_half_end,
-        )
-    } else if outer_sub_sub_sub_sub_sub_sub_half_score >= inner_sub_sub_sub_sub_sub_sub_half_score {
-        (
-            sub_sub_sub_sub_sub_sub_half_start,
-            outer_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_half_mid,
-        )
-    } else {
-        (
-            sub_sub_sub_sub_sub_sub_half_mid,
-            inner_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_half_end,
-        )
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_sub_sub_half_start.t + sub_sub_sub_sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_sub_sub_sub_half_probe_t =
-        0.5 * (sub_sub_sub_sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, outer_sub_sub_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(edge_shape, inner_sub_sub_sub_sub_sub_sub_sub_half_probe_t)
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_half_score = outer_sub_sub_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_sub_sub_half_start,
-                probe,
-                sub_sub_sub_sub_sub_sub_sub_half_mid,
-            )
-        })
-        .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_sub_sub_sub_half_score = inner_sub_sub_sub_sub_sub_sub_sub_half_probe
-        .as_ref()
-        .map(|probe| {
-            sampled_edge_interval_refinement_signal_strength(
-                sub_sub_sub_sub_sub_sub_sub_half_mid,
-                probe,
-                sub_sub_sub_sub_sub_sub_sub_half_end,
-            )
-        })
-        .unwrap_or(0.0);
-
-    let (
-        sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-    ) = if outer_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        (
-            sub_sub_sub_sub_sub_sub_sub_half_start,
-            sub_sub_sub_sub_sub_sub_sub_half_mid,
-            sub_sub_sub_sub_sub_sub_sub_half_end,
-        )
-    } else if outer_sub_sub_sub_sub_sub_sub_sub_half_score
-        >= inner_sub_sub_sub_sub_sub_sub_sub_half_score
-    {
-        (
-            sub_sub_sub_sub_sub_sub_sub_half_start,
-            outer_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_sub_half_mid,
-        )
-    } else {
-        (
-            sub_sub_sub_sub_sub_sub_sub_half_mid,
-            inner_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_sub_half_end,
-        )
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
-        * (sub_sub_sub_sub_sub_sub_sub_sub_half_start.t
-            + sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
-        * (sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t + sub_sub_sub_sub_sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(
-                    edge_shape,
-                    outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-                )
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(
-                    edge_shape,
-                    inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-                )
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
-            .as_ref()
-            .map(|probe| {
-                sampled_edge_interval_refinement_signal_strength(
-                    sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-                    probe,
-                    sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-                )
-            })
-            .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
-            .as_ref()
-            .map(|probe| {
-                sampled_edge_interval_refinement_signal_strength(
-                    sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-                    probe,
-                    sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-                )
-            })
-            .unwrap_or(0.0);
-
-    let (
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-    ) = if outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        (
-            sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-            sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-            sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-        )
-    } else if outer_sub_sub_sub_sub_sub_sub_sub_sub_half_score
-        >= inner_sub_sub_sub_sub_sub_sub_sub_sub_half_score
-    {
-        (
-            sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-            outer_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-        )
-    } else {
-        (
-            sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-            inner_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?,
-            sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-        )
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
-        * (sub_sub_sub_sub_sub_sub_sub_sub_sub_half_start.t
-            + sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t);
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t = 0.5
-        * (sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t
-            + sub_sub_sub_sub_sub_sub_sub_sub_sub_half_end.t);
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_start.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(
-                    edge_shape,
-                    outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-                )
-                .ok()?,
-        })
-    };
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe = if approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid.t,
-        1.0e-12,
-        1.0e-12,
-    ) || approx_eq(
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_end.t,
-        1.0e-12,
-        1.0e-12,
-    ) {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-            sample: context
-                .edge_sample(
-                    edge_shape,
-                    inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe_t,
-                )
-                .ok()?,
-        })
-    };
-
-    let outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
-            .as_ref()
-            .map(|probe| {
-                sampled_edge_interval_refinement_signal_strength(
-                    sub_sub_sub_sub_sub_sub_sub_sub_sub_half_start,
-                    probe,
-                    sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-                )
-            })
-            .unwrap_or(0.0);
-    let inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score =
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe
-            .as_ref()
-            .map(|probe| {
-                sampled_edge_interval_refinement_signal_strength(
-                    sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid,
-                    probe,
-                    sub_sub_sub_sub_sub_sub_sub_sub_sub_half_end,
-                )
-            })
-            .unwrap_or(0.0);
-
-    let biased_probe = if outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-        && inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score <= 1.0e-12
-    {
-        sub_sub_sub_sub_sub_sub_sub_sub_sub_half_mid
-    } else if outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score
-        >= inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_score
-    {
-        outer_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
-    } else {
-        inner_sub_sub_sub_sub_sub_sub_sub_sub_sub_half_probe.as_ref()?
-    };
-
-    Some(sampled_edge_interval_needs_refinement(
-        probe_start,
-        biased_probe,
-        probe_end,
-    ))
+    Some(Some(NormalizedEdgeSample {
+        t: probe_t,
+        sample: context.edge_sample(edge_shape, probe_t).ok()?,
+    }))
 }
 
 fn sampled_edge_interval_refinement_signal_strength(
