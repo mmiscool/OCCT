@@ -1461,6 +1461,41 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             Err(result) => result,
         }
     }
+
+    fn needs_refinement_or_continue_with_stage<const NEXT_N: usize>(
+        self,
+        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_N>,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+        continue_with_samples: impl FnOnce([NormalizedEdgeSample; NEXT_N]) -> Option<bool>,
+    ) -> Option<bool> {
+        self.needs_refinement_or_continue(context, edge_shape, source, |samples| {
+            next_stage.needs_refinement_or_continue(
+                context,
+                edge_shape,
+                samples,
+                continue_with_samples,
+            )
+        })
+    }
+
+    fn needs_refinement_or_continue_with_stage_and_tail(
+        self,
+        next_stage: EarlyProbeStageLayout<STAGE_N, 7>,
+        tail: EarlyProbeIntervalAwareTail,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+    ) -> Option<bool> {
+        self.needs_refinement_or_continue_with_stage(
+            next_stage,
+            context,
+            edge_shape,
+            source,
+            |samples| tail.needs_refinement(samples, context, edge_shape),
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1519,22 +1554,19 @@ impl EarlyProbeSampleRole {
 struct EarlyProbeStagePair {
     midpoint_stage: EarlyProbeStageLayout<3, 5>,
     outer_stage: EarlyProbeStageLayout<5, 7>,
-    interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
-    coarse_refinement_checks_before_adaptive_chase: usize,
+    interval_aware_tail: EarlyProbeIntervalAwareTail,
 }
 
 impl EarlyProbeStagePair {
     const fn new(
         midpoint_stage: EarlyProbeStageLayout<3, 5>,
         outer_stage: EarlyProbeStageLayout<5, 7>,
-        interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
-        coarse_refinement_checks_before_adaptive_chase: usize,
+        interval_aware_tail: EarlyProbeIntervalAwareTail,
     ) -> Self {
         Self {
             midpoint_stage,
             outer_stage,
-            interval_aware_side_layouts,
-            coarse_refinement_checks_before_adaptive_chase,
+            interval_aware_tail,
         }
     }
 
@@ -1546,25 +1578,45 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.midpoint_stage.needs_refinement_or_continue(
+        self.midpoint_stage
+            .needs_refinement_or_continue_with_stage_and_tail(
+                self.outer_stage,
+                self.interval_aware_tail,
+                context,
+                edge_shape,
+                [*start, *midpoint, *end],
+            )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EarlyProbeIntervalAwareTail {
+    side_layouts: PreparedIntervalAwareRefinementSideLayouts,
+    coarse_refinement_checks_before_adaptive_chase: usize,
+}
+
+impl EarlyProbeIntervalAwareTail {
+    const fn new(
+        side_layouts: PreparedIntervalAwareRefinementSideLayouts,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Self {
+        Self {
+            side_layouts,
+            coarse_refinement_checks_before_adaptive_chase,
+        }
+    }
+
+    fn needs_refinement(
+        self,
+        samples: [NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        self.side_layouts.needs_refinement(
+            samples,
             context,
             edge_shape,
-            [*start, *midpoint, *end],
-            |midpoint_samples| {
-                self.outer_stage.needs_refinement_or_continue(
-                    context,
-                    edge_shape,
-                    midpoint_samples,
-                    |samples| {
-                        self.interval_aware_side_layouts.needs_refinement(
-                            samples,
-                            context,
-                            edge_shape,
-                            self.coarse_refinement_checks_before_adaptive_chase,
-                        )
-                    },
-                )
-            },
+            self.coarse_refinement_checks_before_adaptive_chase,
         )
     }
 }
@@ -2037,8 +2089,7 @@ const OUTER_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<5, 7> = EarlyProbeSt
 const EARLY_PROBE_REFINEMENT_STAGES: EarlyProbeStagePair = EarlyProbeStagePair::new(
     MIDPOINT_EARLY_PROBE_STAGE_LAYOUT,
     OUTER_EARLY_PROBE_STAGE_LAYOUT,
-    PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS,
-    3,
+    EarlyProbeIntervalAwareTail::new(PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS, 3),
 );
 
 fn sampled_edge_sample_windows_need_refinement(samples: &[NormalizedEdgeSample]) -> bool {
