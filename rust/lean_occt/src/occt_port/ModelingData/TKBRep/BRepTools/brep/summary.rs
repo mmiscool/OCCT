@@ -1404,23 +1404,24 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         edge_shape: &Shape,
         source: &[NormalizedEdgeSample; SOURCE_N],
     ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
-        self.refinement_result_from_source(context, edge_shape, |index| source[index])
+        self.refinement_result_from_source(
+            context,
+            edge_shape,
+            EarlyProbeStageSource::Array(source),
+        )
     }
 
-    fn refinement_result_from_source<F>(
+    fn refinement_result_from_source(
         &self,
         context: &Context,
         edge_shape: &Shape,
-        source_sample: F,
-    ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>>
-    where
-        F: Fn(usize) -> NormalizedEdgeSample,
-    {
+        source: EarlyProbeStageSource<'_, SOURCE_N>,
+    ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
         let Some(probes) = MidpointEdgeProbePairRequest::new(
-            source_sample(self.request_source_indices[0]),
-            source_sample(self.request_source_indices[1]),
-            source_sample(self.request_source_indices[2]),
-            source_sample(self.request_source_indices[3]),
+            source.source_sample(self.request_source_indices[0]),
+            source.source_sample(self.request_source_indices[1]),
+            source.source_sample(self.request_source_indices[2]),
+            source.source_sample(self.request_source_indices[3]),
         )
         .probe_pair(context, edge_shape)?
         else {
@@ -1429,7 +1430,7 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
 
         let samples = self
             .sample_roles
-            .map(|role| role.stage_sample_from_source(&source_sample, &probes));
+            .map(|role| role.stage_sample_from_source(source, &probes));
         if sampled_edge_sample_windows_need_refinement(samples.as_ref()) {
             Some(Err(true))
         } else {
@@ -1446,18 +1447,30 @@ enum EarlyProbeSampleRole {
 }
 
 impl EarlyProbeSampleRole {
-    fn stage_sample_from_source<F>(
+    fn stage_sample_from_source<const SOURCE_N: usize>(
         self,
-        source_sample: &F,
+        source: EarlyProbeStageSource<'_, SOURCE_N>,
         probes: &MidpointEdgeProbePair,
-    ) -> NormalizedEdgeSample
-    where
-        F: Fn(usize) -> NormalizedEdgeSample,
-    {
+    ) -> NormalizedEdgeSample {
         match self {
-            EarlyProbeSampleRole::Source(index) => source_sample(index),
+            EarlyProbeSampleRole::Source(index) => source.source_sample(index),
             EarlyProbeSampleRole::FirstProbe => probes.first_probe,
             EarlyProbeSampleRole::SecondProbe => probes.second_probe,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EarlyProbeStageSource<'a, const SOURCE_N: usize> {
+    Array(&'a [NormalizedEdgeSample; SOURCE_N]),
+    Triplet(EarlyProbeTripletSource<'a>),
+}
+
+impl<const SOURCE_N: usize> EarlyProbeStageSource<'_, SOURCE_N> {
+    fn source_sample(self, index: usize) -> NormalizedEdgeSample {
+        match self {
+            EarlyProbeStageSource::Array(source) => source[index],
+            EarlyProbeStageSource::Triplet(source) => source.source_sample(index),
         }
     }
 }
@@ -1557,7 +1570,7 @@ impl EarlyProbeRefinementStages {
         let midpoint_samples = match self.midpoint_stage.refinement_result_from_source(
             context,
             edge_shape,
-            |index| midpoint_source.source_sample(index),
+            EarlyProbeStageSource::Triplet(midpoint_source),
         )? {
             Ok(samples) => samples,
             Err(result) => return Some(result),
