@@ -1402,7 +1402,7 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         &self,
         context: &Context,
         edge_shape: &Shape,
-        source: EarlyProbeStageSource<'_, SOURCE_N>,
+        source: EarlyProbeStageSource<SOURCE_N>,
     ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
         let Some(probes) = MidpointEdgeProbePairRequest::new(
             source.source_sample(self.request_source_indices[0]),
@@ -1436,7 +1436,7 @@ enum EarlyProbeSampleRole {
 impl EarlyProbeSampleRole {
     fn stage_sample_from_source<const SOURCE_N: usize>(
         self,
-        source: EarlyProbeStageSource<'_, SOURCE_N>,
+        source: EarlyProbeStageSource<SOURCE_N>,
         probes: &MidpointEdgeProbePair,
     ) -> NormalizedEdgeSample {
         match self {
@@ -1448,30 +1448,17 @@ impl EarlyProbeSampleRole {
 }
 
 #[derive(Clone, Copy)]
-enum EarlyProbeStageSource<'a, const SOURCE_N: usize> {
-    Array(&'a [NormalizedEdgeSample; SOURCE_N]),
-    Triplet {
-        start: &'a NormalizedEdgeSample,
-        midpoint: &'a NormalizedEdgeSample,
-        end: &'a NormalizedEdgeSample,
-    },
+struct EarlyProbeStageSource<const SOURCE_N: usize> {
+    samples: [NormalizedEdgeSample; SOURCE_N],
 }
 
-impl<const SOURCE_N: usize> EarlyProbeStageSource<'_, SOURCE_N> {
+impl<const SOURCE_N: usize> EarlyProbeStageSource<SOURCE_N> {
+    const fn new(samples: [NormalizedEdgeSample; SOURCE_N]) -> Self {
+        Self { samples }
+    }
+
     fn source_sample(self, index: usize) -> NormalizedEdgeSample {
-        match self {
-            EarlyProbeStageSource::Array(source) => source[index],
-            EarlyProbeStageSource::Triplet {
-                start,
-                midpoint,
-                end,
-            } => match index {
-                0 => *start,
-                1 => *midpoint,
-                2 => *end,
-                _ => unreachable!("midpoint-stage source index out of bounds"),
-            },
-        }
+        self.samples[index]
     }
 }
 
@@ -1534,9 +1521,12 @@ impl EarlyProbeRefinementStages {
         self,
         context: &Context,
         edge_shape: &Shape,
-        midpoint_source: EarlyProbeStageSource<'_, 3>,
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
         terminal: EarlyProbeRefinementTerminal,
     ) -> Option<bool> {
+        let midpoint_source = EarlyProbeStageSource::new([*start, *midpoint, *end]);
         let midpoint_samples =
             match self
                 .midpoint_stage
@@ -1549,7 +1539,7 @@ impl EarlyProbeRefinementStages {
         let outer_samples = match self.outer_stage.refinement_result(
             context,
             edge_shape,
-            EarlyProbeStageSource::Array(&midpoint_samples),
+            EarlyProbeStageSource::new(midpoint_samples),
         )? {
             Ok(samples) => samples,
             Err(result) => return Some(result),
@@ -1581,16 +1571,8 @@ impl EarlyProbeRefinementPipeline {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.stages.needs_refinement(
-            context,
-            edge_shape,
-            EarlyProbeStageSource::Triplet {
-                start,
-                midpoint,
-                end,
-            },
-            self.terminal,
-        )
+        self.stages
+            .needs_refinement(context, edge_shape, start, midpoint, end, self.terminal)
     }
 }
 
