@@ -1262,7 +1262,8 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
         samples.push(NormalizedEdgeSample { t, sample });
     }
 
-    for window in samples.windows(2) {
+    let coarse_samples = samples.clone();
+    for window in coarse_samples.windows(2) {
         refine_sampled_edge_interval(
             context,
             edge_shape,
@@ -1270,8 +1271,12 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
             &window[1],
             refinement_depth,
             &mut points,
+            &mut samples,
         )?;
     }
+
+    samples.sort_by(|lhs, rhs| lhs.t.total_cmp(&rhs.t));
+    append_axis_turning_edge_samples(context, edge_shape, &samples, &mut points)?;
 
     bbox_from_points(points)
 }
@@ -1301,6 +1306,7 @@ fn refine_sampled_edge_interval(
     end: &NormalizedEdgeSample,
     remaining_depth: usize,
     points: &mut Vec<[f64; 3]>,
+    samples: &mut Vec<NormalizedEdgeSample>,
 ) -> Option<()> {
     if remaining_depth == 0 {
         return Some(());
@@ -1323,6 +1329,7 @@ fn refine_sampled_edge_interval(
     }
 
     points.push(midpoint_sample.sample.position);
+    samples.push(midpoint_sample);
     refine_sampled_edge_interval(
         context,
         edge_shape,
@@ -1330,6 +1337,7 @@ fn refine_sampled_edge_interval(
         &midpoint_sample,
         remaining_depth - 1,
         points,
+        samples,
     )?;
     refine_sampled_edge_interval(
         context,
@@ -1338,7 +1346,79 @@ fn refine_sampled_edge_interval(
         end,
         remaining_depth - 1,
         points,
+        samples,
     )
+}
+
+fn append_axis_turning_edge_samples(
+    context: &Context,
+    edge_shape: &Shape,
+    samples: &[NormalizedEdgeSample],
+    points: &mut Vec<[f64; 3]>,
+) -> Option<()> {
+    for window in samples.windows(2) {
+        for axis in 0..3 {
+            let Some(extremum_sample) =
+                axis_turning_edge_sample(context, edge_shape, &window[0], &window[1], axis)?
+            else {
+                continue;
+            };
+            points.push(extremum_sample.position);
+        }
+    }
+    Some(())
+}
+
+fn axis_turning_edge_sample(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+) -> Option<Option<EdgeSample>> {
+    if !tangent_sign_changes(start.sample.tangent[axis], end.sample.tangent[axis]) {
+        return Some(None);
+    }
+
+    let mut low = *start;
+    let mut high = *end;
+    for _ in 0..24 {
+        let midpoint_t = 0.5 * (low.t + high.t);
+        if approx_eq(midpoint_t, low.t, 1.0e-12, 1.0e-12)
+            || approx_eq(midpoint_t, high.t, 1.0e-12, 1.0e-12)
+        {
+            break;
+        }
+
+        let midpoint = NormalizedEdgeSample {
+            t: midpoint_t,
+            sample: context.edge_sample(edge_shape, midpoint_t).ok()?,
+        };
+        let midpoint_tangent = midpoint.sample.tangent[axis];
+        if midpoint_tangent.abs() <= 1.0e-9 {
+            return Some(Some(midpoint.sample));
+        }
+
+        if tangent_sign_changes(low.sample.tangent[axis], midpoint_tangent) {
+            high = midpoint;
+            continue;
+        }
+        if tangent_sign_changes(midpoint_tangent, high.sample.tangent[axis]) {
+            low = midpoint;
+            continue;
+        }
+
+        return Some(Some(midpoint.sample));
+    }
+
+    let midpoint_t = 0.5 * (low.t + high.t);
+    if approx_eq(midpoint_t, low.t, 1.0e-12, 1.0e-12)
+        || approx_eq(midpoint_t, high.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(None);
+    }
+
+    Some(Some(context.edge_sample(edge_shape, midpoint_t).ok()?))
 }
 
 fn sampled_edge_interval_needs_refinement(
