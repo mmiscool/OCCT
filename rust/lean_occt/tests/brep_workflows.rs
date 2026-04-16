@@ -1422,6 +1422,8 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
         "brep_workflows",
         "offset_surface_rust_area",
     )?;
+    let summary = kernel.summarize(&offset_surface)?;
+    let occt_summary = kernel.context().describe_shape_occt(&offset_surface)?;
     let brep = kernel.brep(&offset_surface)?;
     let offset_face = brep
         .faces
@@ -1439,6 +1441,22 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
 
     assert_eq!(brep.summary.primary_kind, ShapeKind::Shell);
     assert_eq!(brep.summary.face_count, 1);
+    assert_bbox_close(
+        "offset shell kernel summary",
+        summary.bbox_min,
+        summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        5.0e-2,
+    )?;
+    assert_bbox_close(
+        "offset shell brep summary",
+        brep.summary.bbox_min,
+        brep.summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        5.0e-2,
+    )?;
     assert!(
         offset_face.ported_surface.is_none(),
         "offset face should stay on the dedicated offset surface path"
@@ -1556,6 +1574,22 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         brep.summary.volume,
         summary.volume
     );
+    assert_bbox_close(
+        "offset solid kernel summary",
+        summary.bbox_min,
+        summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        5.0e-2,
+    )?;
+    assert_bbox_close(
+        "offset solid brep summary",
+        brep.summary.bbox_min,
+        brep.summary.bbox_max,
+        occt_summary.bbox_min,
+        occt_summary.bbox_max,
+        5.0e-2,
+    )?;
     assert!(artifact.is_file());
 
     Ok(())

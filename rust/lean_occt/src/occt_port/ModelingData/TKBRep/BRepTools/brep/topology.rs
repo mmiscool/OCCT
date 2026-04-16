@@ -6,6 +6,7 @@ use super::wire_topology::{pack_wire_topology, root_wire_topology, PreparedRootW
 use super::*;
 
 struct TopologySnapshotRootFields {
+    vertex_shapes: Vec<Shape>,
     vertex_positions: Vec<[f64; 3]>,
     edge_shapes: Vec<Shape>,
     face_shapes: Vec<Shape>,
@@ -22,6 +23,7 @@ struct TopologySnapshotRootFields {
 
 pub(super) struct LoadedPortedTopology {
     pub(super) topology: TopologySnapshot,
+    pub(super) vertex_shapes: Vec<Shape>,
     pub(super) edge_shapes: Vec<Shape>,
     pub(super) face_shapes: Vec<Shape>,
 }
@@ -94,6 +96,7 @@ fn load_root_topology_snapshot(
         .collect::<Result<Vec<_>, Error>>()?;
 
     Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
         vertex_positions,
         edge_shapes,
         face_shapes,
@@ -114,6 +117,7 @@ pub(super) fn load_ported_topology(
     shape: &Shape,
 ) -> Result<Option<LoadedPortedTopology>, Error> {
     let Some(TopologySnapshotRootFields {
+        vertex_shapes,
         vertex_positions,
         edge_shapes,
         face_shapes,
@@ -167,6 +171,7 @@ pub(super) fn load_ported_topology(
             face_wire_orientations,
             face_wire_roles,
         },
+        vertex_shapes,
         edge_shapes,
         face_shapes,
     }))

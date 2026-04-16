@@ -108,6 +108,7 @@ pub(super) fn ported_shape_summary(
     wires: &[BrepWire],
     edges: &[BrepEdge],
     faces: &[BrepFace],
+    vertex_shapes: &[Shape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
 ) -> Result<ShapeSummary, Error> {
@@ -118,9 +119,27 @@ pub(super) fn ported_shape_summary(
         exact_primitive_shape_summary(primary_kind, counts.solid_count, vertices, edges, faces);
     let closed_volume_topology = has_closed_volume_topology(faces, edges);
     let fallback_summary = || context.describe_shape_occt(shape).ok();
+    let contains_offset_faces = faces
+        .iter()
+        .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
     let (bbox_min, bbox_max) = exact_primitive
         .and_then(|summary| summary.bbox)
-        .or_else(|| ported_shape_bbox(context, shape, vertices, edges, faces))
+        .or_else(|| ported_shape_bbox(vertices, edges, faces))
+        .or_else(|| {
+            if contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0 {
+                offset_shape_bbox_occt(context, faces, vertex_shapes, face_shapes, edge_shapes)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if contains_offset_faces && (counts.solid_count > 0 || counts.compsolid_count > 0) {
+                fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
+            } else {
+                None
+            }
+        })
+        .or_else(|| mesh_shape_bbox(context, shape))
         .or_else(|| fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max)))
         .unwrap_or(([0.0; 3], [0.0; 3]));
 
@@ -617,13 +636,11 @@ fn mesh_shape_volume(context: &Context, shape: &Shape, counts: ShapeCounts) -> O
 }
 
 fn ported_shape_bbox(
-    context: &Context,
-    shape: &Shape,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
     faces: &[BrepFace],
 ) -> Option<([f64; 3], [f64; 3])> {
-    topological_shape_bbox(vertices, edges, faces).or_else(|| mesh_shape_bbox(context, shape))
+    topological_shape_bbox(vertices, edges, faces)
 }
 
 pub(super) fn shape_counts(
@@ -728,6 +745,47 @@ fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool 
                 )
             )
         })
+}
+
+fn offset_shape_bbox_occt(
+    context: &Context,
+    faces: &[BrepFace],
+    vertex_shapes: &[Shape],
+    face_shapes: &[Shape],
+    edge_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    if faces.is_empty()
+        || face_shapes.is_empty()
+        || !faces
+            .iter()
+            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
+    {
+        return None;
+    }
+
+    let mut bbox_min = [f64::INFINITY; 3];
+    let mut bbox_max = [f64::NEG_INFINITY; 3];
+    for shape in vertex_shapes
+        .iter()
+        .chain(face_shapes.iter())
+        .chain(edge_shapes.iter())
+    {
+        let summary = context.describe_shape_occt(shape).ok()?;
+        for coordinate in 0..3 {
+            bbox_min[coordinate] = bbox_min[coordinate].min(summary.bbox_min[coordinate]);
+            bbox_max[coordinate] = bbox_max[coordinate].max(summary.bbox_max[coordinate]);
+        }
+    }
+
+    if bbox_min
+        .iter()
+        .zip(bbox_max.iter())
+        .all(|(min, max)| min.is_finite() && max.is_finite())
+    {
+        Some((bbox_min, bbox_max))
+    } else {
+        None
+    }
 }
 
 fn line_segment_points_bbox(
