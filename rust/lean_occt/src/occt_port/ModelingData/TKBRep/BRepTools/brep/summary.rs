@@ -1336,7 +1336,8 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        EARLY_PROBE_KICKOFF.needs_refinement(
+        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT.needs_refinement_with_stage_result_tail(
+            EARLY_PROBE_STAGE_RESULT_TAIL,
             context,
             edge_shape,
             [*start, midpoint_sample, *end],
@@ -1448,6 +1449,19 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
     }
 }
 
+impl EarlyProbeStageLayout<3, 5> {
+    fn needs_refinement_with_stage_result_tail(
+        self,
+        tail: EarlyProbeStageResultTail,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; 3],
+    ) -> Option<bool> {
+        self.stage_samples_or_refinement(context, edge_shape, source)
+            .continue_with_stage_result_tail(tail, context, edge_shape)
+    }
+}
+
 struct EarlyProbeStageResult<const STAGE_N: usize>(
     Result<[NormalizedEdgeSample; STAGE_N], Option<bool>>,
 );
@@ -1508,35 +1522,6 @@ impl EarlyProbeStageResultTail {
             next_stage,
             interval_aware_tail,
         }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct EarlyProbeKickoff {
-    kickoff_stage: EarlyProbeStageLayout<3, 5>,
-    stage_result_tail: EarlyProbeStageResultTail,
-}
-
-impl EarlyProbeKickoff {
-    const fn new(
-        kickoff_stage: EarlyProbeStageLayout<3, 5>,
-        stage_result_tail: EarlyProbeStageResultTail,
-    ) -> Self {
-        Self {
-            kickoff_stage,
-            stage_result_tail,
-        }
-    }
-
-    fn needs_refinement(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; 3],
-    ) -> Option<bool> {
-        self.kickoff_stage
-            .stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with_stage_result_tail(self.stage_result_tail, context, edge_shape)
     }
 }
 
@@ -2095,11 +2080,6 @@ const EARLY_PROBE_INTERVAL_AWARE_TAIL: EarlyProbeIntervalAwareTail =
 const EARLY_PROBE_STAGE_RESULT_TAIL: EarlyProbeStageResultTail = EarlyProbeStageResultTail::new(
     OUTER_EARLY_PROBE_STAGE_LAYOUT,
     EARLY_PROBE_INTERVAL_AWARE_TAIL,
-);
-
-const EARLY_PROBE_KICKOFF: EarlyProbeKickoff = EarlyProbeKickoff::new(
-    MIDPOINT_EARLY_PROBE_STAGE_LAYOUT,
-    EARLY_PROBE_STAGE_RESULT_TAIL,
 );
 
 fn sampled_edge_sample_windows_need_refinement(samples: &[NormalizedEdgeSample]) -> bool {
