@@ -1540,23 +1540,20 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let midpoint_samples = match self
-            .midpoint_stage
-            .stage_outcome(context, edge_shape, [*start, *midpoint, *end])?
-            .refinement_result()
-        {
-            Ok(samples) => samples,
-            Err(result) => return Some(result),
-        };
+        macro_rules! stage_samples {
+            ($stage:expr, $source:expr) => {
+                match $stage
+                    .stage_outcome(context, edge_shape, $source)?
+                    .refinement_result()
+                {
+                    Ok(samples) => samples,
+                    Err(result) => return Some(result),
+                }
+            };
+        }
 
-        let outer_samples = match self
-            .outer_stage
-            .stage_outcome(context, edge_shape, midpoint_samples)?
-            .refinement_result()
-        {
-            Ok(samples) => samples,
-            Err(result) => return Some(result),
-        };
+        let midpoint_samples = stage_samples!(self.midpoint_stage, [*start, *midpoint, *end]);
+        let outer_samples = stage_samples!(self.outer_stage, midpoint_samples);
 
         self.interval_aware_side_layouts.needs_refinement(
             &outer_samples,
