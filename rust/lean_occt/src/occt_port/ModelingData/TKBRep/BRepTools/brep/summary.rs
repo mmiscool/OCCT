@@ -1621,28 +1621,6 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         Self { left, right }
     }
 
-    fn prepare_refinement_segment(
-        self,
-        samples: &[NormalizedEdgeSample; 7],
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        let Some((layout, _)) = RefinementSegment::choose_stronger(
-            (self.left, self.left.coarse.refinement_segment(samples)),
-            (self.right, self.right.coarse.refinement_segment(samples)),
-        ) else {
-            return Some(None);
-        };
-        let outer_segment = layout.outer.refinement_segment(samples);
-        let inner_segment = layout
-            .inner
-            .midpoint_segment(samples, context, edge_shape)?;
-        Some(
-            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
-                .map(|(_, segment)| segment),
-        )
-    }
-
     fn needs_refinement(
         self,
         samples: &[NormalizedEdgeSample; 7],
@@ -1650,7 +1628,18 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         edge_shape: &Shape,
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Option<bool> {
-        let Some(probe_segment) = self.prepare_refinement_segment(samples, context, edge_shape)?
+        let Some((layout, _)) = RefinementSegment::choose_stronger(
+            (self.left, self.left.coarse.refinement_segment(samples)),
+            (self.right, self.right.coarse.refinement_segment(samples)),
+        ) else {
+            return Some(false);
+        };
+        let outer_segment = layout.outer.refinement_segment(samples);
+        let inner_segment = layout
+            .inner
+            .midpoint_segment(samples, context, edge_shape)?;
+        let Some((_, probe_segment)) =
+            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
         else {
             return Some(false);
         };

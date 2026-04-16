@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the now one-use `prepare_refinement_segment()` bounce inside `PreparedIntervalAwareRefinementSideLayouts`, so the typed interval-aware pair keeps winning-segment materialization and `needs_refinement(...)` dispatch together instead of splitting that work across two helpers.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to replace the remaining nested `Option<Option<RefinementSegment>>` boundary in `PreparedRefinementSpanLayout::midpoint_segment()` with an explicit typed outcome, so the interval-aware pair no longer has to thread ambiguous “sampling failed” vs “no inner segment” state through the shell-edge refinement path.
 
 ## Current State
 
@@ -33,7 +33,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now routes both midpoint-stage and outer-stage through the shared typed `stage_progress()` / `continue_with_stage()` boundary, so the old duplicated `refinement_result(...)? -> match Ok/Err` stage-step execution is gone too
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
-  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, and the terminal `needs_refinement(...)` dispatch from the outer-stage closure
+  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, and the terminal `needs_refinement(...)` dispatch from the outer-stage closure in one typed helper boundary
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still owns score-based creation, stronger-segment choice, local-window checks, and the adaptive stronger-half chase
 - The exercised non-solid offset shell fixture stays green on the Rust-first path.
 - The exercised closed offset solid fixture stays green, including the direct shell-local parity assertion in [`ported_brep_uses_rust_owned_volume_for_offset_solids()`](rust/lean_occt/tests/brep_workflows.rs).
@@ -50,10 +50,10 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the midpoint-stage and outer-stage now both reach the shared stage layout through the same direct array-backed `refinement_result()` entry
 - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns both midpoint-stage and outer-stage source materialization, plus the typed interval-aware tail dispatch
 - the stage runner now shares the stage-step `refinement_result(...)? -> ControlFlow` boundary across midpoint-stage and outer-stage
-- [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false` and terminal `segment.needs_refinement(...)` dispatch too
-- but that typed pair helper still splits winning-segment materialization across a one-use `prepare_refinement_segment()` helper and its `needs_refinement()` wrapper
+- [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
+- but the interval-aware inner-segment path still comes through [`PreparedRefinementSpanLayout::midpoint_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) as a nested `Option<Option<RefinementSegment>>`, so “sampling failed” and “no usable inner segment” are still expressed through ambiguous nesting
 
-The next blocker is to collapse that now one-use winning-segment bounce so `PreparedIntervalAwareRefinementSideLayouts` can keep interval-aware segment selection and terminal dispatch inside one typed helper boundary instead of splitting them between `prepare_refinement_segment()` and `needs_refinement()`.
+The next blocker is to flatten that nested midpoint-segment carrier so the interval-aware pair can stay on explicit typed Rust-side state instead of threading the last ambiguous nested `Option` through shell-edge refinement.
 
 ## Focus
 
@@ -71,4 +71,4 @@ The next blocker is to collapse that now one-use winning-segment bounce so `Prep
 
 ## Why This Is Next
 
-This turn finished collapsing the duplicated midpoint-stage and outer-stage step execution too: `EarlyProbeRefinementStages` now runs both stages through the shared typed `stage_progress()` / `continue_with_stage()` boundary, and the interval-aware pair helper already owns the outer-stage closure’s terminal dispatch. That leaves the next real seam one level smaller again: `PreparedIntervalAwareRefinementSideLayouts` still splits winning-segment materialization across a one-use `prepare_refinement_segment()` bounce before `needs_refinement()`.
+This turn finished collapsing the one-use `prepare_refinement_segment()` bounce too: `PreparedIntervalAwareRefinementSideLayouts` now keeps stronger coarse-side choice, winning outer-vs-inner segment materialization, and terminal dispatch inside one typed helper. That leaves the next real seam one level smaller again: `PreparedRefinementSpanLayout::midpoint_segment()` still returns a nested `Option<Option<RefinementSegment>>` instead of an explicit typed outcome.
