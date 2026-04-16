@@ -1514,8 +1514,11 @@ impl PreparedOuterProbeChain {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        PreparedIntervalAwareRefinementSides::from_samples(&self.samples())
-            .prepare_refinement_segment(context, edge_shape)
+        PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_DESCRIPTORS.prepare_refinement_segment(
+            &self.samples(),
+            context,
+            edge_shape,
+        )
     }
 }
 
@@ -1576,35 +1579,100 @@ struct PreparedIntervalAwareRefinementSide {
     inner: PreparedRefinementSpan,
 }
 
-impl PreparedIntervalAwareRefinementSide {
-    fn new(
-        start: NormalizedEdgeSample,
-        outer_probe: NormalizedEdgeSample,
-        pivot: NormalizedEdgeSample,
-        end: NormalizedEdgeSample,
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSideDescriptor {
+    start: usize,
+    outer_probe: usize,
+    pivot: usize,
+    end: usize,
+    outer_probe_first: bool,
+}
+
+impl PreparedIntervalAwareRefinementSideDescriptor {
+    const fn new(
+        start: usize,
+        outer_probe: usize,
+        pivot: usize,
+        end: usize,
         outer_probe_first: bool,
     ) -> Self {
         Self {
+            start,
+            outer_probe,
+            pivot,
+            end,
+            outer_probe_first,
+        }
+    }
+
+    fn sample(self, samples: &[NormalizedEdgeSample; 7], index: usize) -> NormalizedEdgeSample {
+        samples[index]
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSideDescriptors {
+    left: PreparedIntervalAwareRefinementSideDescriptor,
+    right: PreparedIntervalAwareRefinementSideDescriptor,
+}
+
+impl PreparedIntervalAwareRefinementSideDescriptors {
+    const fn new(
+        left: PreparedIntervalAwareRefinementSideDescriptor,
+        right: PreparedIntervalAwareRefinementSideDescriptor,
+    ) -> Self {
+        Self { left, right }
+    }
+
+    fn prepare_refinement_segment(
+        self,
+        samples: &[NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<Option<RefinementSegment>> {
+        let left = PreparedIntervalAwareRefinementSide::from_samples(samples, self.left);
+        let right = PreparedIntervalAwareRefinementSide::from_samples(samples, self.right);
+        let Some(side) = RefinementSegment::choose_stronger(
+            (left, left.coarse_segment()),
+            (right, right.coarse_segment()),
+        )
+        .map(|(side, _)| side) else {
+            return Some(None);
+        };
+
+        side.prepare_refinement_segment(context, edge_shape)
+    }
+}
+
+const PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_DESCRIPTORS:
+    PreparedIntervalAwareRefinementSideDescriptors =
+    PreparedIntervalAwareRefinementSideDescriptors::new(
+        PreparedIntervalAwareRefinementSideDescriptor::new(0, 1, 2, 3, true),
+        PreparedIntervalAwareRefinementSideDescriptor::new(3, 5, 4, 6, false),
+    );
+
+impl PreparedIntervalAwareRefinementSide {
+    fn from_samples(
+        samples: &[NormalizedEdgeSample; 7],
+        descriptor: PreparedIntervalAwareRefinementSideDescriptor,
+    ) -> Self {
+        let start = descriptor.sample(samples, descriptor.start);
+        let outer_probe = descriptor.sample(samples, descriptor.outer_probe);
+        let pivot = descriptor.sample(samples, descriptor.pivot);
+        let end = descriptor.sample(samples, descriptor.end);
+        Self {
             coarse: PreparedRefinementTriplet::new(start, pivot, end),
-            outer: if outer_probe_first {
+            outer: if descriptor.outer_probe_first {
                 PreparedRefinementTriplet::new(start, outer_probe, pivot)
             } else {
                 PreparedRefinementTriplet::new(pivot, outer_probe, end)
             },
-            inner: if outer_probe_first {
+            inner: if descriptor.outer_probe_first {
                 PreparedRefinementSpan::new(pivot, end)
             } else {
                 PreparedRefinementSpan::new(start, pivot)
             },
         }
-    }
-
-    fn left(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self::new(samples[0], samples[1], samples[2], samples[3], true)
-    }
-
-    fn right(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self::new(samples[3], samples[5], samples[4], samples[6], false)
     }
 
     fn prepare_refinement_segment(
@@ -1634,41 +1702,6 @@ impl PreparedIntervalAwareRefinementSide {
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
         self.inner.midpoint_segment(context, edge_shape)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSides {
-    left: PreparedIntervalAwareRefinementSide,
-    right: PreparedIntervalAwareRefinementSide,
-}
-
-impl PreparedIntervalAwareRefinementSides {
-    fn from_samples(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self {
-            left: PreparedIntervalAwareRefinementSide::left(samples),
-            right: PreparedIntervalAwareRefinementSide::right(samples),
-        }
-    }
-
-    fn prepare_refinement_segment(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
-        let Some(side) = self.choose() else {
-            return Some(None);
-        };
-
-        side.prepare_refinement_segment(context, edge_shape)
-    }
-
-    fn choose(self) -> Option<PreparedIntervalAwareRefinementSide> {
-        RefinementSegment::choose_stronger(
-            (self.left, self.left.coarse_segment()),
-            (self.right, self.right.coarse_segment()),
-        )
-        .map(|(side, _)| side)
     }
 }
 
