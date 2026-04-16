@@ -1458,21 +1458,6 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             Err(result) => ControlFlow::Break(result),
         })
     }
-
-    fn continue_stage_progress<const NEXT_N: usize>(
-        self,
-        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_N>,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<ControlFlow<bool, [NormalizedEdgeSample; NEXT_N]>> {
-        match self.stage_progress(context, edge_shape, source)? {
-            ControlFlow::Continue(samples) => {
-                next_stage.stage_progress(context, edge_shape, samples)
-            }
-            ControlFlow::Break(result) => Some(ControlFlow::Break(result)),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1558,13 +1543,18 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
+        let outer_stage_progress = match self.midpoint_stage.stage_progress(
+            context,
+            edge_shape,
+            [*start, *midpoint, *end],
+        )? {
+            ControlFlow::Continue(samples) => self
+                .outer_stage
+                .stage_progress(context, edge_shape, samples)?,
+            ControlFlow::Break(result) => ControlFlow::Break(result),
+        };
         self.interval_aware_side_layouts.needs_refinement(
-            self.midpoint_stage.continue_stage_progress(
-                self.outer_stage,
-                context,
-                edge_shape,
-                [*start, *midpoint, *end],
-            )?,
+            outer_stage_progress,
             context,
             edge_shape,
             self.coarse_refinement_checks_before_adaptive_chase,
