@@ -1577,15 +1577,11 @@ struct PreparedIntervalAwareRefinementSide {
 }
 
 impl PreparedIntervalAwareRefinementSide {
-    fn new(
-        coarse: PreparedRefinementTriplet,
-        outer: PreparedRefinementTriplet,
-        inner: PreparedRefinementSpan,
-    ) -> Self {
+    fn from_side_window(window: PreparedIntervalAwareRefinementSideWindow) -> Self {
         Self {
-            coarse,
-            outer,
-            inner,
+            coarse: window.coarse(),
+            outer: window.outer(),
+            inner: window.inner(),
         }
     }
 
@@ -1620,39 +1616,6 @@ impl PreparedIntervalAwareRefinementSide {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideLayout {
-    coarse: PreparedRefinementTriplet,
-    outer: PreparedRefinementTriplet,
-    inner: PreparedRefinementSpan,
-}
-
-impl PreparedIntervalAwareRefinementSideLayout {
-    fn from_side_window(window: PreparedIntervalAwareRefinementSideWindow) -> Self {
-        let coarse = window.coarse();
-        let outer = window.outer();
-        let inner = window.inner();
-
-        Self::new(coarse, outer, inner)
-    }
-
-    fn new(
-        coarse: PreparedRefinementTriplet,
-        outer: PreparedRefinementTriplet,
-        inner: PreparedRefinementSpan,
-    ) -> Self {
-        Self {
-            coarse,
-            outer,
-            inner,
-        }
-    }
-
-    fn into_side(self) -> PreparedIntervalAwareRefinementSide {
-        PreparedIntervalAwareRefinementSide::new(self.coarse, self.outer, self.inner)
-    }
-}
-
-#[derive(Clone, Copy)]
 struct PreparedIntervalAwareRefinementSideWindow {
     start: NormalizedEdgeSample,
     outer_probe: NormalizedEdgeSample,
@@ -1662,17 +1625,28 @@ struct PreparedIntervalAwareRefinementSideWindow {
 }
 
 impl PreparedIntervalAwareRefinementSideWindow {
-    fn from_samples(
-        samples: &[NormalizedEdgeSample; 7],
-        layout: PreparedIntervalAwareRefinementSideWindowSampleLayout,
+    fn new(
+        start: NormalizedEdgeSample,
+        outer_probe: NormalizedEdgeSample,
+        pivot: NormalizedEdgeSample,
+        end: NormalizedEdgeSample,
+        outer_probe_first: bool,
     ) -> Self {
         Self {
-            start: samples[layout.start],
-            outer_probe: samples[layout.outer_probe],
-            pivot: samples[layout.pivot],
-            end: samples[layout.end],
-            outer_probe_first: layout.outer_probe_first,
+            start,
+            outer_probe,
+            pivot,
+            end,
+            outer_probe_first,
         }
+    }
+
+    fn left(samples: &[NormalizedEdgeSample; 7]) -> Self {
+        Self::new(samples[0], samples[1], samples[2], samples[3], true)
+    }
+
+    fn right(samples: &[NormalizedEdgeSample; 7]) -> Self {
+        Self::new(samples[3], samples[5], samples[4], samples[6], false)
     }
 
     fn coarse(self) -> PreparedRefinementTriplet {
@@ -1697,80 +1671,6 @@ impl PreparedIntervalAwareRefinementSideWindow {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideWindowSampleLayout {
-    start: usize,
-    outer_probe: usize,
-    pivot: usize,
-    end: usize,
-    outer_probe_first: bool,
-}
-
-impl PreparedIntervalAwareRefinementSideWindowSampleLayout {
-    const LEFT: Self = Self {
-        start: 0,
-        outer_probe: 1,
-        pivot: 2,
-        end: 3,
-        outer_probe_first: true,
-    };
-
-    const RIGHT: Self = Self {
-        start: 3,
-        outer_probe: 5,
-        pivot: 4,
-        end: 6,
-        outer_probe_first: false,
-    };
-}
-
-#[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideWindows {
-    left: PreparedIntervalAwareRefinementSideWindow,
-    right: PreparedIntervalAwareRefinementSideWindow,
-}
-
-impl PreparedIntervalAwareRefinementSideWindows {
-    fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
-        Self::from_samples(&chain.samples())
-    }
-
-    fn from_samples(samples: &[NormalizedEdgeSample; 7]) -> Self {
-        Self {
-            left: PreparedIntervalAwareRefinementSideWindow::from_samples(
-                samples,
-                PreparedIntervalAwareRefinementSideWindowSampleLayout::LEFT,
-            ),
-            right: PreparedIntervalAwareRefinementSideWindow::from_samples(
-                samples,
-                PreparedIntervalAwareRefinementSideWindowSampleLayout::RIGHT,
-            ),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideLayouts {
-    left: PreparedIntervalAwareRefinementSideLayout,
-    right: PreparedIntervalAwareRefinementSideLayout,
-}
-
-impl PreparedIntervalAwareRefinementSideLayouts {
-    fn from_side_windows(windows: PreparedIntervalAwareRefinementSideWindows) -> Self {
-        Self {
-            left: PreparedIntervalAwareRefinementSideLayout::from_side_window(windows.left),
-            right: PreparedIntervalAwareRefinementSideLayout::from_side_window(windows.right),
-        }
-    }
-
-    fn into_sides(self) -> PreparedIntervalAwareRefinementSides {
-        PreparedIntervalAwareRefinementSides {
-            left: self.left.into_side(),
-            right: self.right.into_side(),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 struct PreparedIntervalAwareRefinementSides {
     left: PreparedIntervalAwareRefinementSide,
     right: PreparedIntervalAwareRefinementSide,
@@ -1778,10 +1678,15 @@ struct PreparedIntervalAwareRefinementSides {
 
 impl PreparedIntervalAwareRefinementSides {
     fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
-        PreparedIntervalAwareRefinementSideLayouts::from_side_windows(
-            PreparedIntervalAwareRefinementSideWindows::from_outer_probe_chain(chain),
-        )
-        .into_sides()
+        let samples = chain.samples();
+        Self {
+            left: PreparedIntervalAwareRefinementSide::from_side_window(
+                PreparedIntervalAwareRefinementSideWindow::left(&samples),
+            ),
+            right: PreparedIntervalAwareRefinementSide::from_side_window(
+                PreparedIntervalAwareRefinementSideWindow::right(&samples),
+            ),
+        }
     }
 
     fn prepare_refinement_segment(
