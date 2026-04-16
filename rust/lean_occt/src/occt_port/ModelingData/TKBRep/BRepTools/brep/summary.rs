@@ -1814,12 +1814,54 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
         .map(|probe| sampled_edge_interval_refinement_signal_strength(probe_mid, probe, probe_end))
         .unwrap_or(0.0);
 
-    let biased_probe = if start_biased_score <= 1.0e-12 && end_biased_score <= 1.0e-12 {
-        probe_mid
-    } else if start_biased_score >= end_biased_score {
-        start_biased_probe.as_ref()?
+    let (side_start, side_mid, side_end) =
+        if start_biased_score <= 1.0e-12 && end_biased_score <= 1.0e-12 {
+            (probe_start, probe_mid, probe_end)
+        } else if start_biased_score >= end_biased_score {
+            (probe_start, start_biased_probe.as_ref()?, probe_mid)
+        } else {
+            (probe_mid, end_biased_probe.as_ref()?, probe_end)
+        };
+
+    let outer_probe_t = 0.5 * (side_start.t + side_mid.t);
+    let inner_probe_t = 0.5 * (side_mid.t + side_end.t);
+
+    let outer_probe = if approx_eq(outer_probe_t, side_start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(outer_probe_t, side_mid.t, 1.0e-12, 1.0e-12)
+    {
+        None
     } else {
-        end_biased_probe.as_ref()?
+        Some(NormalizedEdgeSample {
+            t: outer_probe_t,
+            sample: context.edge_sample(edge_shape, outer_probe_t).ok()?,
+        })
+    };
+    let inner_probe = if approx_eq(inner_probe_t, side_mid.t, 1.0e-12, 1.0e-12)
+        || approx_eq(inner_probe_t, side_end.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: inner_probe_t,
+            sample: context.edge_sample(edge_shape, inner_probe_t).ok()?,
+        })
+    };
+
+    let outer_score = outer_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(side_start, probe, side_mid))
+        .unwrap_or(0.0);
+    let inner_score = inner_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(side_mid, probe, side_end))
+        .unwrap_or(0.0);
+
+    let biased_probe = if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
+        side_mid
+    } else if outer_score >= inner_score {
+        outer_probe.as_ref()?
+    } else {
+        inner_probe.as_ref()?
     };
 
     Some(sampled_edge_interval_needs_refinement(
