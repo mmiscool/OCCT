@@ -1473,11 +1473,32 @@ trait EarlyProbeStageSampleLayout<const SOURCE_N: usize, const STAGE_N: usize>: 
     ) -> [NormalizedEdgeSample; STAGE_N];
 }
 
+#[derive(Clone, Copy)]
+enum EarlyProbeSourcePosition {
+    First,
+    Second,
+    Third,
+    Fourth,
+    Fifth,
+}
+
+impl EarlyProbeSourcePosition {
+    fn index(self) -> usize {
+        match self {
+            Self::First => 0,
+            Self::Second => 1,
+            Self::Third => 2,
+            Self::Fourth => 3,
+            Self::Fifth => 4,
+        }
+    }
+}
+
 trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: Copy {
-    fn source_index(self) -> usize;
+    fn source_position(self) -> EarlyProbeSourcePosition;
 
     fn source_sample(self, source: [NormalizedEdgeSample; SOURCE_N]) -> NormalizedEdgeSample {
-        source[self.source_index()]
+        source[self.source_position().index()]
     }
 }
 
@@ -1541,11 +1562,11 @@ enum MidpointEarlyProbeSourceSampleLayout {
 }
 
 impl EarlyProbeSourceSampleLayout<3> for MidpointEarlyProbeSourceSampleLayout {
-    fn source_index(self) -> usize {
+    fn source_position(self) -> EarlyProbeSourcePosition {
         match self {
-            Self::Start => 0,
-            Self::Midpoint => 1,
-            Self::End => 2,
+            Self::Start => EarlyProbeSourcePosition::First,
+            Self::Midpoint => EarlyProbeSourcePosition::Second,
+            Self::End => EarlyProbeSourcePosition::Third,
         }
     }
 }
@@ -1564,13 +1585,13 @@ enum OuterEarlyProbeSourceSampleLayout {
 }
 
 impl EarlyProbeSourceSampleLayout<5> for OuterEarlyProbeSourceSampleLayout {
-    fn source_index(self) -> usize {
+    fn source_position(self) -> EarlyProbeSourcePosition {
         match self {
-            Self::Start => 0,
-            Self::FirstQuarter => 1,
-            Self::Midpoint => 2,
-            Self::SecondQuarter => 3,
-            Self::End => 4,
+            Self::Start => EarlyProbeSourcePosition::First,
+            Self::FirstQuarter => EarlyProbeSourcePosition::Second,
+            Self::Midpoint => EarlyProbeSourcePosition::Third,
+            Self::SecondQuarter => EarlyProbeSourcePosition::Fourth,
+            Self::End => EarlyProbeSourcePosition::Fifth,
         }
     }
 }

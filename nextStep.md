@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw positional `source_index()` remap in the early shell-edge refinement path, so midpoint-stage and outer-stage typed source-slot enums stop each translating their slots back into array indices separately.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining midpoint-vs-outer `source_position()` remap in the early shell-edge refinement path, so typed source-slot enums stop each spelling out the same ordinal walk into the shared `EarlyProbeSourcePosition` boundary.
 
 ## Current State
 
@@ -20,6 +20,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`MidpointEdgeProbePairRequestLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `source spans -> probe pair outcome` handoff and direct probe execution for early probe stages through explicit `first` / `second` [`MidpointEdgeProbeSpanLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) values, so [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) no longer carries a raw `[usize; 4]` request-source array or bounces through a second request carrier
   - midpoint-stage and outer-stage sample reuse now goes through typed [`MidpointEarlyProbeSourceSampleLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) / [`OuterEarlyProbeSourceSampleLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) enums plus typed [`MidpointEarlyProbeSampleLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) / [`OuterEarlyProbeSampleLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) descriptors, so the stage constants no longer hard-code `Source(usize)` entries
   - midpoint-stage and outer-stage sample reuse now shares one generic Rust-side `EarlyProbeSampleRole` / `EarlyProbeSampleLayout` path behind the typed source-slot enums, so the old duplicated midpoint-vs-outer `source_sample()` / `stage_sample()` ladders are gone
+  - midpoint-stage and outer-stage typed source-slot enums now terminate in one shared [`EarlyProbeSourcePosition`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) boundary, so the old raw positional `source_index()` remaps are gone too
   - [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result path for both early probe stages through the same array-backed source boundary
   - the midpoint-only `EarlyProbeStageLayout<3, _>` specialization is gone
   - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
@@ -64,9 +65,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
 - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
 - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-- but the typed source-slot enums still duplicate the final raw positional remap one level deeper: midpoint-stage and outer-stage each still keep their own `source_index()` match that translates typed slots back into array positions
+- but the typed source-slot enums still duplicate the stage-local slot-to-position remap one level higher: midpoint-stage and outer-stage each still keep their own `source_position()` match that translates typed slots into the shared `EarlyProbeSourcePosition`
 
-The next blocker is to collapse that last raw positional `source_index()` remap into one shared typed boundary, so midpoint-stage and outer-stage source-slot descriptors stop each carrying their own array-position lookup match.
+The next blocker is to collapse that remaining midpoint-vs-outer `source_position()` remap into a smaller shared typed boundary, so the stage-specific source-slot enums stop each carrying their own ordinal walk into `EarlyProbeSourcePosition`.
 
 ## Focus
 
@@ -84,4 +85,4 @@ The next blocker is to collapse that last raw positional `source_index()` remap 
 
 ## Why This Is Next
 
-This turn finished the shared typed early-stage sample-role cut: midpoint-stage and outer-stage now reuse the same generic `EarlyProbeSampleRole` / `EarlyProbeSampleLayout` path, and the duplicated stage-local `source sample` / `stage sample` ladders are gone. That leaves the next real seam one level smaller again: the typed source-slot enums still duplicate the final slot-to-index remap in their own `source_index()` matches.
+This turn finished the shared typed source-position cut: midpoint-stage and outer-stage source-slot enums now end at the same `EarlyProbeSourcePosition` boundary, and the duplicated raw `source_index()` remaps are gone. That leaves the next real seam one level smaller again: the stage-specific source-slot enums still duplicate the slot-to-position remap in their own `source_position()` matches.
