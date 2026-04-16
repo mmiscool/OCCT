@@ -1397,10 +1397,57 @@ fn sampled_edge_interval_needs_probe_refinement(
         sample: context.edge_sample(edge_shape, second_probe_t).ok()?,
     };
 
+    if sampled_edge_interval_needs_refinement(start, &first_probe, midpoint)
+        || sampled_edge_interval_needs_refinement(&first_probe, midpoint, &second_probe)
+        || sampled_edge_interval_needs_refinement(midpoint, &second_probe, end)
+    {
+        return Some(true);
+    }
+
+    sampled_edge_interval_needs_asymmetric_probe_refinement(
+        context,
+        edge_shape,
+        start,
+        &first_probe,
+        midpoint,
+        &second_probe,
+        end,
+    )
+}
+
+fn sampled_edge_interval_needs_asymmetric_probe_refinement(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    first_probe: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    second_probe: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<bool> {
+    let left_outer_probe_t = 0.5 * (start.t + first_probe.t);
+    let right_outer_probe_t = 0.5 * (second_probe.t + end.t);
+    if approx_eq(left_outer_probe_t, start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(left_outer_probe_t, first_probe.t, 1.0e-12, 1.0e-12)
+        || approx_eq(right_outer_probe_t, second_probe.t, 1.0e-12, 1.0e-12)
+        || approx_eq(right_outer_probe_t, end.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(false);
+    }
+
+    let left_outer_probe = NormalizedEdgeSample {
+        t: left_outer_probe_t,
+        sample: context.edge_sample(edge_shape, left_outer_probe_t).ok()?,
+    };
+    let right_outer_probe = NormalizedEdgeSample {
+        t: right_outer_probe_t,
+        sample: context.edge_sample(edge_shape, right_outer_probe_t).ok()?,
+    };
+
     Some(
-        sampled_edge_interval_needs_refinement(start, &first_probe, midpoint)
-            || sampled_edge_interval_needs_refinement(&first_probe, midpoint, &second_probe)
-            || sampled_edge_interval_needs_refinement(midpoint, &second_probe, end),
+        sampled_edge_interval_needs_refinement(start, &left_outer_probe, first_probe)
+            || sampled_edge_interval_needs_refinement(&left_outer_probe, first_probe, midpoint)
+            || sampled_edge_interval_needs_refinement(midpoint, second_probe, &right_outer_probe)
+            || sampled_edge_interval_needs_refinement(second_probe, &right_outer_probe, end),
     )
 }
 
