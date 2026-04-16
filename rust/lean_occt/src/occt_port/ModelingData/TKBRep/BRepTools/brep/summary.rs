@@ -1568,21 +1568,67 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let outer_samples = match self.midpoint_stage.continue_stage_samples_or_result(
-            self.outer_stage,
-            context,
-            edge_shape,
-            [*start, *midpoint, *end],
-        )? {
-            Ok(samples) => samples,
-            Err(result) => return Some(result),
+        self.interval_aware_side_layouts
+            .needs_refinement_from_stage_samples_or_result(
+                self.midpoint_stage.continue_stage_samples_or_result(
+                    self.outer_stage,
+                    context,
+                    edge_shape,
+                    [*start, *midpoint, *end],
+                )?,
+                context,
+                edge_shape,
+                self.coarse_refinement_checks_before_adaptive_chase,
+            )
+    }
+}
+
+impl PreparedIntervalAwareRefinementSideLayouts {
+    fn needs_refinement_from_stage_samples_or_result(
+        self,
+        stage_samples_or_result: Result<[NormalizedEdgeSample; 7], bool>,
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        match stage_samples_or_result {
+            Ok(samples) => self.needs_refinement(
+                &samples,
+                context,
+                edge_shape,
+                coarse_refinement_checks_before_adaptive_chase,
+            ),
+            Err(result) => Some(result),
+        }
+    }
+
+    fn needs_refinement(
+        self,
+        samples: &[NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        let Some((layout, _)) = RefinementSegmentOutcome::choose_stronger_with(
+            (self.left, self.left.coarse.refinement_segment(samples)),
+            (self.right, self.right.coarse.refinement_segment(samples)),
+        ) else {
+            return Some(false);
+        };
+        let outer_segment = layout.outer.refinement_segment(samples);
+        let inner_segment = layout
+            .inner
+            .midpoint_segment(samples, context, edge_shape)?;
+        let Some(probe_segment) =
+            RefinementSegmentOutcome::choose_stronger(outer_segment, inner_segment)
+        else {
+            return Some(false);
         };
 
-        self.interval_aware_side_layouts.needs_refinement(
-            &outer_samples,
+        probe_segment.needs_refinement(
             context,
             edge_shape,
-            self.coarse_refinement_checks_before_adaptive_chase,
+            coarse_refinement_checks_before_adaptive_chase,
         )
     }
 }
@@ -1756,36 +1802,6 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         right: PreparedIntervalAwareRefinementSideLayout,
     ) -> Self {
         Self { left, right }
-    }
-
-    fn needs_refinement(
-        self,
-        samples: &[NormalizedEdgeSample; 7],
-        context: &Context,
-        edge_shape: &Shape,
-        coarse_refinement_checks_before_adaptive_chase: usize,
-    ) -> Option<bool> {
-        let Some((layout, _)) = RefinementSegmentOutcome::choose_stronger_with(
-            (self.left, self.left.coarse.refinement_segment(samples)),
-            (self.right, self.right.coarse.refinement_segment(samples)),
-        ) else {
-            return Some(false);
-        };
-        let outer_segment = layout.outer.refinement_segment(samples);
-        let inner_segment = layout
-            .inner
-            .midpoint_segment(samples, context, edge_shape)?;
-        let Some(probe_segment) =
-            RefinementSegmentOutcome::choose_stronger(outer_segment, inner_segment)
-        else {
-            return Some(false);
-        };
-
-        probe_segment.needs_refinement(
-            context,
-            edge_shape,
-            coarse_refinement_checks_before_adaptive_chase,
-        )
     }
 }
 

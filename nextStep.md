@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining final `Ok(samples)` vs `Err(result)` unwrap between `EarlyProbeStageLayout::continue_stage_samples_or_result(...)` and interval-aware dispatch, so midpoint-stage, outer-stage, and interval-aware dispatch stay on one smaller Rust-owned boundary without a separate stage-to-stage `Result` handoff.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining one-use `EarlyProbeStageLayout::continue_stage_samples_or_result(...)` bounce into the typed interval-aware boundary, so midpoint-stage, outer-stage, and interval-aware dispatch stay on one smaller Rust-owned path without a separate stage-to-stage `Result` helper handoff.
 
 ## Current State
 
@@ -39,7 +39,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`EarlyProbeRefinementStages::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the top-level early-stage -> interval-aware dispatch directly, so the one-use `EarlyProbeStageLayout::continue_stage_progress()` and `PreparedIntervalAwareRefinementSideLayouts::needs_refinement_from_stage_progress()` bounces are gone
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
-  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, the outer-stage `ControlFlow` unwrap, and the terminal `needs_refinement(...)` dispatch in one typed helper boundary, with coarse/outer/midpoint candidates all staying on explicit segment outcomes during stronger-segment choice
+  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, the final early-stage `Result<[NormalizedEdgeSample; 7], bool>` unwrap, and the terminal `needs_refinement(...)` dispatch in one typed helper boundary, with coarse/outer/midpoint candidates all staying on explicit segment outcomes during stronger-segment choice
   - [`PreparedRefinementTripletLayout::refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `RefinementSegmentOutcome` for coarse and outer interval-aware segment candidates
   - triplet-layout segments and midpoint-probe segments now both go through the same shared `RefinementSegmentOutcome::from_samples(...)` constructor instead of each translating `RefinementSegment::new(...)` locally
   - [`PreparedRefinementSpanLayout::midpoint_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `RefinementSegmentOutcome` instead of nested `Option<Option<RefinementSegment>>`
@@ -67,9 +67,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together once the staged runner hands it the final 7-sample boundary
   - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
   - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-  - but the staged early-probe path still bounces once through [`EarlyProbeStageLayout::continue_stage_samples_or_result(...)`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and then unwraps that final `Ok(samples)` vs `Err(result)` stage result one more time inside [`EarlyProbeRefinementStages::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) before interval-aware dispatch
+  - but the staged early-probe path still bounces once through [`EarlyProbeStageLayout::continue_stage_samples_or_result(...)`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and then immediately hands that `Result<[NormalizedEdgeSample; 7], bool>` into the new one-use [`PreparedIntervalAwareRefinementSideLayouts::needs_refinement_from_stage_samples_or_result(...)`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) helper before interval-aware segment selection
 
-The next blocker is to keep that typed stage-result path but collapse the remaining final stage-result unwrap into one smaller stage-owned boundary, so midpoint-stage -> outer-stage progression and interval-aware dispatch stay in the same Rust-owned path without a separate stage-to-stage `Result` bounce.
+The next blocker is to keep that typed stage-result path but collapse the remaining one-use `continue_stage_samples_or_result(...) -> needs_refinement_from_stage_samples_or_result(...)` bounce into one smaller boundary, so midpoint-stage -> outer-stage progression and interval-aware dispatch stay in the same Rust-owned path without a separate stage-to-stage `Result` helper handoff.
 
 ## Focus
 
@@ -87,4 +87,4 @@ The next blocker is to keep that typed stage-result path but collapse the remain
 
 ## Why This Is Next
 
-This turn moved midpoint-stage -> outer-stage result carry onto `EarlyProbeStageLayout::continue_stage_samples_or_result(...)`, so the runner no longer repeats the same direct `Ok(samples)` vs `Err(result)` handoff for both early stages. That leaves the next real seam smaller again: the final stage-result unwrap still sits between that shared helper and the interval-aware segment chooser.
+This turn moved the final stage-result unwrap off `EarlyProbeRefinementStages::needs_refinement()` and onto the typed interval-aware side-layout boundary. That leaves the next real seam smaller again: the early probe path still bounces through one stage-to-stage `Result` helper and then one interval-aware `Result` helper before segment selection.
