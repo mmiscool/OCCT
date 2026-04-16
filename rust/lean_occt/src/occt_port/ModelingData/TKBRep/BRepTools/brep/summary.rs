@@ -1518,7 +1518,7 @@ impl PreparedOuterProbeChain {
             return Some(None);
         };
 
-        side.prepare_refinement_segment(self, context, edge_shape)
+        side.prepare_refinement_segment(context, edge_shape)
     }
 }
 
@@ -1529,58 +1529,87 @@ enum IntervalAwareRefinementSide {
 }
 
 impl IntervalAwareRefinementSide {
-    fn choose(chain: &PreparedOuterProbeChain) -> Option<Self> {
+    fn choose(chain: &PreparedOuterProbeChain) -> Option<PreparedIntervalAwareRefinementSide> {
+        let left = Self::Left.prepare(chain);
+        let right = Self::Right.prepare(chain);
         RefinementSegment::choose_stronger(
-            (Self::Left, Self::Left.coarse_segment(chain)),
-            (Self::Right, Self::Right.coarse_segment(chain)),
+            (left, left.coarse_segment()),
+            (right, right.coarse_segment()),
         )
         .map(|(side, _)| side)
     }
 
+    fn prepare(self, chain: &PreparedOuterProbeChain) -> PreparedIntervalAwareRefinementSide {
+        match self {
+            Self::Left => PreparedIntervalAwareRefinementSide {
+                coarse_start: chain.start,
+                coarse_midpoint: chain.first_probe,
+                coarse_end: chain.midpoint,
+                outer_start: chain.start,
+                outer_midpoint: chain.left_outer_probe,
+                outer_end: chain.first_probe,
+                inner_start: chain.first_probe,
+                inner_end: chain.midpoint,
+            },
+            Self::Right => PreparedIntervalAwareRefinementSide {
+                coarse_start: chain.midpoint,
+                coarse_midpoint: chain.second_probe,
+                coarse_end: chain.end,
+                outer_start: chain.second_probe,
+                outer_midpoint: chain.right_outer_probe,
+                outer_end: chain.end,
+                inner_start: chain.midpoint,
+                inner_end: chain.second_probe,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSide {
+    coarse_start: NormalizedEdgeSample,
+    coarse_midpoint: NormalizedEdgeSample,
+    coarse_end: NormalizedEdgeSample,
+    outer_start: NormalizedEdgeSample,
+    outer_midpoint: NormalizedEdgeSample,
+    outer_end: NormalizedEdgeSample,
+    inner_start: NormalizedEdgeSample,
+    inner_end: NormalizedEdgeSample,
+}
+
+impl PreparedIntervalAwareRefinementSide {
     fn prepare_refinement_segment(
         self,
-        chain: &PreparedOuterProbeChain,
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let outer_segment = self.outer_segment(chain);
-        let inner_segment = self.inner_segment(chain, context, edge_shape)?;
+        let outer_segment = self.outer_segment();
+        let inner_segment = self.inner_segment(context, edge_shape)?;
         Some(
             RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
                 .map(|(_, segment)| segment),
         )
     }
 
-    fn coarse_segment(self, chain: &PreparedOuterProbeChain) -> Option<RefinementSegment> {
-        match self {
-            Self::Left => RefinementSegment::new(&chain.start, &chain.first_probe, &chain.midpoint),
-            Self::Right => RefinementSegment::new(&chain.midpoint, &chain.second_probe, &chain.end),
-        }
+    fn coarse_segment(self) -> Option<RefinementSegment> {
+        RefinementSegment::new(&self.coarse_start, &self.coarse_midpoint, &self.coarse_end)
     }
 
-    fn outer_segment(self, chain: &PreparedOuterProbeChain) -> Option<RefinementSegment> {
-        let (start, midpoint, end) = match self {
-            Self::Left => (&chain.start, &chain.left_outer_probe, &chain.first_probe),
-            Self::Right => (&chain.second_probe, &chain.right_outer_probe, &chain.end),
-        };
-        RefinementSegment::new(start, midpoint, end)
+    fn outer_segment(self) -> Option<RefinementSegment> {
+        RefinementSegment::new(&self.outer_start, &self.outer_midpoint, &self.outer_end)
     }
 
     fn inner_segment(
         self,
-        chain: &PreparedOuterProbeChain,
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let (start, end) = match self {
-            Self::Left => (&chain.first_probe, &chain.midpoint),
-            Self::Right => (&chain.midpoint, &chain.second_probe),
-        };
-        let inner_probe = midpoint_edge_probe(context, edge_shape, start, end)?;
+        let inner_probe =
+            midpoint_edge_probe(context, edge_shape, &self.inner_start, &self.inner_end)?;
         Some(
-            inner_probe
-                .as_ref()
-                .and_then(|probe| RefinementSegment::new(start, probe, end)),
+            inner_probe.as_ref().and_then(|probe| {
+                RefinementSegment::new(&self.inner_start, probe, &self.inner_end)
+            }),
         )
     }
 }
