@@ -1412,18 +1412,7 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             source[self.request_source_indices[3]],
         )
         .probe_pair(context, edge_shape)?;
-        let MidpointEdgeProbePairOutcome::Pair(probes) = probes else {
-            return Some(Err(false));
-        };
-
-        let samples = self
-            .sample_roles
-            .map(|role| role.stage_sample_from_source(source, &probes));
-        if sampled_edge_sample_windows_need_refinement(samples.as_ref()) {
-            Some(Err(true))
-        } else {
-            Some(Ok(samples))
-        }
+        Some(probes.refinement_result(source, self.sample_roles))
     }
 }
 
@@ -1945,6 +1934,25 @@ struct MidpointEdgeProbePair {
 enum MidpointEdgeProbePairOutcome {
     NoPair,
     Pair(MidpointEdgeProbePair),
+}
+
+impl MidpointEdgeProbePairOutcome {
+    fn refinement_result<const SOURCE_N: usize, const STAGE_N: usize>(
+        self,
+        source: [NormalizedEdgeSample; SOURCE_N],
+        sample_roles: [EarlyProbeSampleRole; STAGE_N],
+    ) -> Result<[NormalizedEdgeSample; STAGE_N], bool> {
+        let MidpointEdgeProbePairOutcome::Pair(probes) = self else {
+            return Err(false);
+        };
+
+        let samples = sample_roles.map(|role| role.stage_sample_from_source(source, &probes));
+        if sampled_edge_sample_windows_need_refinement(samples.as_ref()) {
+            Err(true)
+        } else {
+            Ok(samples)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
