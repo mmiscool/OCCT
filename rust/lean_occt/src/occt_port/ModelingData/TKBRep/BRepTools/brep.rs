@@ -20,7 +20,7 @@ mod wire_topology;
 
 use self::brep_materialize::{ported_brep_edges, ported_brep_vertices, ported_brep_wires};
 pub(crate) use self::face_queries::{ported_face_area, ported_face_surface_descriptor};
-use self::face_surface::{ported_brep_faces, ported_brep_summary_faces};
+use self::face_surface::ported_brep_faces;
 use self::face_topology::FaceSurfaceRoute;
 use self::math::{add3, approx_eq, cross3, dot3, norm3, normalize3, scale3, subtract3};
 use self::mesh::{
@@ -152,23 +152,6 @@ impl Context {
             &edge_shapes,
             face_route,
         )?;
-        // For summary derivation, analytic and offset faces are route-independent and
-        // are reused directly from the public face inventory.  Swept faces are
-        // re-prepared on the Raw route until their summary formulas are verified
-        // against OCCT-parity tests.
-        let summary_faces = match face_route {
-            FaceSurfaceRoute::Raw => faces.clone(),
-            FaceSurfaceRoute::Public => ported_brep_summary_faces(
-                self,
-                &face_shapes,
-                &topology,
-                &wires,
-                &edges,
-                &edge_shapes,
-                &faces,
-            )?,
-        };
-
         let summary = ported_shape_summary(
             self,
             shape,
@@ -176,7 +159,7 @@ impl Context {
             &topology,
             &wires,
             &edges,
-            &summary_faces,
+            &faces,
             &face_shapes,
             &edge_shapes,
         )?;

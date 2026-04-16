@@ -1,25 +1,24 @@
 # Next Task
 
-Retire the remaining summary-face split in `ported_brep()` so the successful Rust-topology path can hand its Public face inventory directly to `ported_shape_summary()`.
+Narrow the remaining whole-shape OCCT summary fallback in `ported_shape_summary()`, starting with bounding-box derivation for shapes that already have Rust-owned topology, edges, and faces.
 
 ## Current State
 
-- `analytic_face_volume` in [`face_metrics.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_metrics.rs) no longer uses the Raw-only planar shortcut based on `face.area` and `face.sample`.
-- `ported_brep_summary_faces` in [`face_surface.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_surface.rs) now reuses Public faces for:
-  - `PortedFaceSurface::Analytic`
-  - `PortedFaceSurface::Offset`
-  - `PortedFaceSurface::Swept`
-- The top-level BRep path in [`brep.rs`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs) still builds a separate `summary_faces` inventory, even though the known Rust-owned face kinds are now already summary-safe on the Public route.
+- [`ported_brep()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs) now hands its existing `faces` inventory directly to [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs); the extra `summary_faces` rebuild is gone.
+- The successful Rust-topology path now carries Public faces all the way through summary derivation, including `ported_face_surface == None` faces that resolve sample/area through the mesh fallback already stored in `BrepFace`.
+- [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still keeps a broad `fallback_summary = || context.describe_shape_occt(shape).ok()` escape hatch for:
+  - bbox fallback after `exact_primitive_shape_summary(...)` and `ported_shape_bbox(...)`
+  - final volume fallback after exact, analytic, and mesh Rust-owned paths decline
 
 ## Remaining Blocker
 
-The leftover duplication is only there for faces where `ported_face_surface == None`. Those faces still get rebuilt on the `Raw` route before summary derivation, even though the successful Rust-topology branch already has a Public `faces` inventory in hand.
+The next coarse OCCT boundary is no longer a face-preparation split; it is the whole-shape `describe_shape_occt()` fallback inside summary derivation. That fallback is wider than necessary now that the Rust path already owns the full BRep/topology inventory.
 
 ## Focus
 
-1. Prove whether `ported_shape_summary()` can consume the existing Public `faces` inventory directly, including the `None` face-surface path.
-2. If the unknown-face path is already summary-safe, remove `ported_brep_summary_faces()` and the extra `summary_faces` split from `ported_brep()`.
-3. If it is not fully safe yet, narrow the fallback boundary as much as possible so the duplicated summary face rebuild is smaller and explicitly justified.
+1. Measure and narrow the bbox fallthrough first, because it is lower-risk than the remaining volume fallback.
+2. Keep using the existing Rust-owned `vertices`, `edges`, `faces`, and topology data before crossing back to whole-shape OCCT summary.
+3. Leave the final volume fallback in place unless a clearly bounded Rust-owned replacement falls out naturally from the bbox work.
 4. Keep the verification bar unchanged:
    - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
    - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
@@ -27,4 +26,4 @@ The leftover duplication is only there for faces where `ported_face_surface == N
 
 ## Why This Is Next
 
-The analytic, offset, and swept summary-face split is gone. The next aggressive Rust-first step is to remove the remaining top-level summary-face duplication, so the Rust-topology BRep path stops rebuilding a second face inventory before summary generation.
+The summary-face duplication is gone. The next aggressive Rust-first step is to replace the remaining coarse whole-shape summary fallback with logic that stays on the Rust-owned BRep/topology path for as long as possible.
