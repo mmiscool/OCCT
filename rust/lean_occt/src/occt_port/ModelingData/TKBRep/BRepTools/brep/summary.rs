@@ -1378,29 +1378,19 @@ fn sampled_edge_interval_needs_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let first_probe_t = 0.5 * (start.t + midpoint.t);
-    let second_probe_t = 0.5 * (midpoint.t + end.t);
-    if approx_eq(first_probe_t, start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(first_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-        || approx_eq(second_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-        || approx_eq(second_probe_t, end.t, 1.0e-12, 1.0e-12)
-    {
+    let Some(probes) =
+        midpoint_edge_probe_pair(context, edge_shape, start, midpoint, midpoint, end)?
+    else {
         return Some(false);
-    }
-
-    let first_probe = NormalizedEdgeSample {
-        t: first_probe_t,
-        sample: context.edge_sample(edge_shape, first_probe_t).ok()?,
-    };
-    let second_probe = NormalizedEdgeSample {
-        t: second_probe_t,
-        sample: context.edge_sample(edge_shape, second_probe_t).ok()?,
     };
 
-    if sampled_edge_interval_needs_refinement(start, &first_probe, midpoint)
-        || sampled_edge_interval_needs_refinement(&first_probe, midpoint, &second_probe)
-        || sampled_edge_interval_needs_refinement(midpoint, &second_probe, end)
-    {
+    if sampled_edge_sample_windows_need_refinement(&[
+        *start,
+        probes.first_probe,
+        *midpoint,
+        probes.second_probe,
+        *end,
+    ]) {
         return Some(true);
     }
 
@@ -1408,9 +1398,9 @@ fn sampled_edge_interval_needs_probe_refinement(
         context,
         edge_shape,
         start,
-        &first_probe,
+        &probes.first_probe,
         midpoint,
-        &second_probe,
+        &probes.second_probe,
         end,
     )
 }
@@ -1424,30 +1414,21 @@ fn sampled_edge_interval_needs_asymmetric_probe_refinement(
     second_probe: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let left_outer_probe_t = 0.5 * (start.t + first_probe.t);
-    let right_outer_probe_t = 0.5 * (second_probe.t + end.t);
-    if approx_eq(left_outer_probe_t, start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(left_outer_probe_t, first_probe.t, 1.0e-12, 1.0e-12)
-        || approx_eq(right_outer_probe_t, second_probe.t, 1.0e-12, 1.0e-12)
-        || approx_eq(right_outer_probe_t, end.t, 1.0e-12, 1.0e-12)
-    {
+    let Some(outer_probes) =
+        midpoint_edge_probe_pair(context, edge_shape, start, first_probe, second_probe, end)?
+    else {
         return Some(false);
-    }
-
-    let left_outer_probe = NormalizedEdgeSample {
-        t: left_outer_probe_t,
-        sample: context.edge_sample(edge_shape, left_outer_probe_t).ok()?,
-    };
-    let right_outer_probe = NormalizedEdgeSample {
-        t: right_outer_probe_t,
-        sample: context.edge_sample(edge_shape, right_outer_probe_t).ok()?,
     };
 
-    if sampled_edge_interval_needs_refinement(start, &left_outer_probe, first_probe)
-        || sampled_edge_interval_needs_refinement(&left_outer_probe, first_probe, midpoint)
-        || sampled_edge_interval_needs_refinement(midpoint, second_probe, &right_outer_probe)
-        || sampled_edge_interval_needs_refinement(second_probe, &right_outer_probe, end)
-    {
+    if sampled_edge_sample_windows_need_refinement(&[
+        *start,
+        outer_probes.first_probe,
+        *first_probe,
+        *midpoint,
+        *second_probe,
+        outer_probes.second_probe,
+        *end,
+    ]) {
         return Some(true);
     }
 
@@ -1455,11 +1436,11 @@ fn sampled_edge_interval_needs_asymmetric_probe_refinement(
         context,
         edge_shape,
         start,
-        &left_outer_probe,
+        &outer_probes.first_probe,
         first_probe,
         midpoint,
         second_probe,
-        &right_outer_probe,
+        &outer_probes.second_probe,
         end,
     )
 }
@@ -1789,6 +1770,37 @@ fn midpoint_edge_probe(
         t: probe_t,
         sample: context.edge_sample(edge_shape, probe_t).ok()?,
     }))
+}
+
+#[derive(Clone, Copy)]
+struct MidpointEdgeProbePair {
+    first_probe: NormalizedEdgeSample,
+    second_probe: NormalizedEdgeSample,
+}
+
+fn midpoint_edge_probe_pair(
+    context: &Context,
+    edge_shape: &Shape,
+    first_start: &NormalizedEdgeSample,
+    first_end: &NormalizedEdgeSample,
+    second_start: &NormalizedEdgeSample,
+    second_end: &NormalizedEdgeSample,
+) -> Option<Option<MidpointEdgeProbePair>> {
+    let first_probe = midpoint_edge_probe(context, edge_shape, first_start, first_end)?;
+    let second_probe = midpoint_edge_probe(context, edge_shape, second_start, second_end)?;
+    match (first_probe, second_probe) {
+        (Some(first_probe), Some(second_probe)) => Some(Some(MidpointEdgeProbePair {
+            first_probe,
+            second_probe,
+        })),
+        _ => Some(None),
+    }
+}
+
+fn sampled_edge_sample_windows_need_refinement(samples: &[NormalizedEdgeSample]) -> bool {
+    samples
+        .windows(3)
+        .any(|window| sampled_edge_interval_needs_refinement(&window[0], &window[1], &window[2]))
 }
 
 fn sampled_edge_interval_refinement_signal_strength(
