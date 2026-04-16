@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The mixed-edge shell-boundary union now includes an adaptive sampled public-edge tier plus four public unsupported-edge extremum passes: bracketed axis-turning polish, a near-flat tangent-dip probe, a local axis-position extremum search, and a broader run-based seeded axis-position extremum search. The next task is broadening interval refinement beyond a single midpoint so off-center shell-edge extrema can trigger denser public sampling before those four solvers run.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The mixed-edge shell-boundary union now includes an adaptive sampled public-edge tier plus four public unsupported-edge extremum passes: bracketed axis-turning polish, a near-flat tangent-dip probe, a local axis-position extremum search, and a broader run-based seeded axis-position extremum search. The next task is broadening the new probe-driven refinement prepass beyond a symmetric quarter-point split so more asymmetric shell-edge extrema can trigger denser public sampling before those four solvers run.
 
 ## Current State
 
@@ -26,6 +26,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - unsupported shell edges no longer fail the whole shell-boundary candidate immediately
   - unsupported shell edges now also get a validated adaptive public-edge sampling chance before the later mesh/summary tiers
   - that sampled tier now recursively refines intervals when midpoint samples expand the interval bbox, when sampled tangents indicate an axis turn, when midpoint axis position departs materially from endpoint-linear interpolation, or when the midpoint bends materially away from the chord
+  - if that midpoint-only gate declines, the same tier now also runs a small quarter-point probe-driven prepass and subdivides when any `(start, q1, midpoint)`, `(q1, midpoint, q3)`, or `(midpoint, q3, end)` triple shows the same missed-extremum signals
   - after refinement, adjacent sampled intervals now also get a public-edge tangent-root polish pass, so interior axis extrema with a bracketed tangent sign change can contribute directly to the shell boundary bbox
   - adjacent sampled intervals that still have no clean tangent sign bracket now also get a public-edge near-flat tangent-dip probe, so local interior extrema can still contribute when the sampled tangent magnitude drops sharply without a clean sign flip at the current interval endpoints
   - adjacent sampled triples now also get a public-edge local axis-position extremum search seeded from quadratic position fits, so unsupported edges can still contribute interior extrema when the decisive bbox driver is visible in sampled positions even though the public tangent-based solvers never produce a clean bracket or dip
@@ -41,7 +42,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - every shell edge that matters to the bbox admits a Rust/public exact boundary bbox, or
 - the current adaptive public-edge sampling, interval refinement, and tangent-root polish hits the remaining shell-boundary extrema closely enough to validate.
 
-The remaining blocker is shell edges whose decisive bbox extrema still sit off-center inside a sampled interval, so the current midpoint-only subdivision gate still does not expose enough structure for the later public solvers. Even after the new midpoint axis-shoulder refinement trigger, bracketed tangent-root polish, the near-flat tangent-dip search, the local axis-position extremum search, and the broader run-based seeded axis-position search, those shells still skip straight to the later mesh/summary candidates and eventually the raw shell-local OCCT bbox.
+The remaining blocker is shell edges whose decisive bbox extrema still sit outside the midpoint and symmetric quarter-probe triples inside a sampled interval, so the current refinement prepass still does not expose enough structure for the later public solvers. Even after the midpoint axis-shoulder refinement trigger, the new quarter-point probe-driven refinement prepass, bracketed tangent-root polish, the near-flat tangent-dip search, the local axis-position extremum search, and the broader run-based seeded axis-position search, those shells still skip straight to the later mesh/summary candidates and eventually the raw shell-local OCCT bbox.
 
 ## Focus
 
@@ -69,5 +70,6 @@ This turn moved more of the offset bbox path onto Rust-owned data without weaken
 - sampled triples that already show a local axis bulge now also get a public position-based extremum search before the shell falls through to later tiers
 - the same sampled boundary path now also broadens that position search across a monotone run around the best interior sampled point per axis, so more unsupported edges can contribute Rust-owned extrema even when their decisive shoulder is wider than the old fixed seeded window
 - the refinement gate now also subdivides intervals when the midpoint axis position departs materially from endpoint-linear interpolation, so shallow one-axis shoulders can seed denser public samples even while staying inside the coarse interval bbox
+- if the midpoint still does not justify subdivision, the refinement gate now also runs a public quarter-point probe prepass before giving up on the interval, so off-center interior bulges can still trigger the existing recursive sampling path
 
-The next step is to make that shell-local Rust boundary path cover more real offset shells by broadening the sampled public-edge contribution for unsupported shell edges beyond a single midpoint refinement test. The next bounded cut is a small public probe-driven refinement prepass for off-center interval bulges, not widening fallback elsewhere.
+The next step is to make that shell-local Rust boundary path cover more real offset shells by broadening the sampled public-edge contribution for unsupported shell edges beyond the new midpoint-plus-quarter-probe refinement test. The next bounded cut is widening that public probe placement for asymmetric interval bulges, not widening fallback elsewhere.

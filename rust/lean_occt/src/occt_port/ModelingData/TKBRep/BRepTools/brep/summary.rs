@@ -1333,7 +1333,19 @@ fn refine_sampled_edge_interval(
         sample: context.edge_sample(edge_shape, midpoint_t).ok()?,
     };
 
-    if !sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
+    let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
+        true
+    } else {
+        sampled_edge_interval_needs_probe_refinement(
+            context,
+            edge_shape,
+            start,
+            &midpoint_sample,
+            end,
+        )?
+    };
+
+    if !needs_refinement {
         return Some(());
     }
 
@@ -1356,6 +1368,39 @@ fn refine_sampled_edge_interval(
         remaining_depth - 1,
         points,
         samples,
+    )
+}
+
+fn sampled_edge_interval_needs_probe_refinement(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<bool> {
+    let first_probe_t = 0.5 * (start.t + midpoint.t);
+    let second_probe_t = 0.5 * (midpoint.t + end.t);
+    if approx_eq(first_probe_t, start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(first_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
+        || approx_eq(second_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
+        || approx_eq(second_probe_t, end.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(false);
+    }
+
+    let first_probe = NormalizedEdgeSample {
+        t: first_probe_t,
+        sample: context.edge_sample(edge_shape, first_probe_t).ok()?,
+    };
+    let second_probe = NormalizedEdgeSample {
+        t: second_probe_t,
+        sample: context.edge_sample(edge_shape, second_probe_t).ok()?,
+    };
+
+    Some(
+        sampled_edge_interval_needs_refinement(start, &first_probe, midpoint)
+            || sampled_edge_interval_needs_refinement(&first_probe, midpoint, &second_probe)
+            || sampled_edge_interval_needs_refinement(midpoint, &second_probe, end),
     )
 }
 
