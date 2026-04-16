@@ -1672,15 +1672,15 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         Self { left, right }
     }
 
-    fn stronger_side_layout(
+    fn stronger_side(
         self,
         samples: &[NormalizedEdgeSample; 7],
-    ) -> Option<PreparedIntervalAwareRefinementSideLayout> {
+    ) -> Option<PreparedIntervalAwareRefinementSide> {
         RefinementSegment::choose_stronger(
             (self.left, self.left.coarse_segment(samples)),
             (self.right, self.right.coarse_segment(samples)),
         )
-        .map(|(layout, _)| layout)
+        .map(|(layout, _)| layout.from_samples(samples))
     }
 
     fn prepare_refinement_segment(
@@ -1689,13 +1689,11 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let Some(side_layout) = self.stronger_side_layout(samples) else {
+        let Some(side) = self.stronger_side(samples) else {
             return Some(None);
         };
 
-        side_layout
-            .from_samples(samples)
-            .prepare_refinement_segment(context, edge_shape)
+        side.prepare_refinement_segment(context, edge_shape)
     }
 }
 
