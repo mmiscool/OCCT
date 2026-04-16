@@ -1,5 +1,7 @@
 use super::*;
 
+use std::ops::ControlFlow;
+
 use crate::EdgeSample;
 
 use super::face_metrics::{
@@ -1442,18 +1444,19 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         }
     }
 
-    fn stage_outcome(
+    fn stage_progress(
         self,
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<EarlyProbeStageOutcome<STAGE_N>> {
+    ) -> Option<ControlFlow<bool, [NormalizedEdgeSample; STAGE_N]>> {
         let probes = self
             .probe_request_layout
             .probe_pair(context, edge_shape, source)?;
-        Some(EarlyProbeStageOutcome::from_refinement_result(
-            probes.refinement_result(source, self.sample_roles),
-        ))
+        Some(match probes.refinement_result(source, self.sample_roles) {
+            Ok(samples) => ControlFlow::Continue(samples),
+            Err(result) => ControlFlow::Break(result),
+        })
     }
 }
 
@@ -1540,20 +1543,22 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        macro_rules! stage_samples {
-            ($stage:expr, $source:expr) => {
-                match $stage
-                    .stage_outcome(context, edge_shape, $source)?
-                    .refinement_result()
-                {
-                    Ok(samples) => samples,
-                    Err(result) => return Some(result),
-                }
+        let midpoint_samples = match self.midpoint_stage.stage_progress(
+            context,
+            edge_shape,
+            [*start, *midpoint, *end],
+        )? {
+            ControlFlow::Continue(samples) => samples,
+            ControlFlow::Break(result) => return Some(result),
+        };
+        let outer_samples =
+            match self
+                .outer_stage
+                .stage_progress(context, edge_shape, midpoint_samples)?
+            {
+                ControlFlow::Continue(samples) => samples,
+                ControlFlow::Break(result) => return Some(result),
             };
-        }
-
-        let midpoint_samples = stage_samples!(self.midpoint_stage, [*start, *midpoint, *end]);
-        let outer_samples = stage_samples!(self.outer_stage, midpoint_samples);
 
         self.interval_aware_side_layouts.needs_refinement(
             &outer_samples,
@@ -1561,27 +1566,6 @@ impl EarlyProbeRefinementStages {
             edge_shape,
             self.coarse_refinement_checks_before_adaptive_chase,
         )
-    }
-}
-
-enum EarlyProbeStageOutcome<const STAGE_N: usize> {
-    Complete(bool),
-    Samples([NormalizedEdgeSample; STAGE_N]),
-}
-
-impl<const STAGE_N: usize> EarlyProbeStageOutcome<STAGE_N> {
-    fn from_refinement_result(result: Result<[NormalizedEdgeSample; STAGE_N], bool>) -> Self {
-        match result {
-            Ok(samples) => Self::Samples(samples),
-            Err(result) => Self::Complete(result),
-        }
-    }
-
-    fn refinement_result(self) -> Result<[NormalizedEdgeSample; STAGE_N], bool> {
-        match self {
-            Self::Complete(result) => Err(result),
-            Self::Samples(samples) => Ok(samples),
-        }
     }
 }
 
