@@ -1455,9 +1455,11 @@ fn sampled_edge_interval_needs_asymmetric_probe_refinement(
         context,
         edge_shape,
         start,
+        &left_outer_probe,
         first_probe,
         midpoint,
         second_probe,
+        &right_outer_probe,
         end,
     )
 }
@@ -1466,9 +1468,11 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
     context: &Context,
     edge_shape: &Shape,
     start: &NormalizedEdgeSample,
+    left_outer_probe: &NormalizedEdgeSample,
     first_probe: &NormalizedEdgeSample,
     midpoint: &NormalizedEdgeSample,
     second_probe: &NormalizedEdgeSample,
+    right_outer_probe: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
     let left_score = sampled_edge_interval_refinement_signal_strength(start, first_probe, midpoint);
@@ -1477,27 +1481,41 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
         return Some(false);
     }
 
-    let (probe_start, probe_end) = if left_score >= right_score {
-        (first_probe, midpoint)
+    let (outer_start, outer_mid, outer_end, inner_start, inner_end) = if left_score >= right_score {
+        (start, left_outer_probe, first_probe, first_probe, midpoint)
     } else {
-        (midpoint, second_probe)
+        (second_probe, right_outer_probe, end, midpoint, second_probe)
     };
 
-    let biased_probe_t = 0.5 * (probe_start.t + probe_end.t);
-    if approx_eq(biased_probe_t, probe_start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(biased_probe_t, probe_end.t, 1.0e-12, 1.0e-12)
+    let inner_probe_t = 0.5 * (inner_start.t + inner_end.t);
+    if approx_eq(inner_probe_t, inner_start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(inner_probe_t, inner_end.t, 1.0e-12, 1.0e-12)
     {
         return Some(false);
     }
 
-    let biased_probe = NormalizedEdgeSample {
-        t: biased_probe_t,
-        sample: context.edge_sample(edge_shape, biased_probe_t).ok()?,
+    let inner_probe = NormalizedEdgeSample {
+        t: inner_probe_t,
+        sample: context.edge_sample(edge_shape, inner_probe_t).ok()?,
+    };
+
+    let outer_score =
+        sampled_edge_interval_refinement_signal_strength(outer_start, outer_mid, outer_end);
+    let inner_score =
+        sampled_edge_interval_refinement_signal_strength(inner_start, &inner_probe, inner_end);
+    if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
+        return Some(false);
+    }
+
+    let (probe_start, probe_mid, probe_end) = if outer_score >= inner_score {
+        (outer_start, outer_mid, outer_end)
+    } else {
+        (inner_start, &inner_probe, inner_end)
     };
 
     Some(sampled_edge_interval_needs_refinement(
         probe_start,
-        &biased_probe,
+        probe_mid,
         probe_end,
     ))
 }
