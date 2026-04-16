@@ -3,6 +3,7 @@ use super::*;
 use super::face_metrics::{
     analytic_face_volume, analytic_offset_face_volume, analytic_ported_swept_face_volume,
 };
+use super::topology::PreparedShellShape;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeshFaceProperties {
@@ -109,7 +110,7 @@ pub(super) fn ported_shape_summary(
     edges: &[BrepEdge],
     faces: &[BrepFace],
     vertex_shapes: &[Shape],
-    shell_shapes: &[Shape],
+    prepared_shell_shapes: &[PreparedShellShape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
 ) -> Result<ShapeSummary, Error> {
@@ -142,7 +143,7 @@ pub(super) fn ported_shape_summary(
         })
         .or_else(|| {
             if contains_offset_faces && (counts.solid_count > 0 || counts.compsolid_count > 0) {
-                offset_solid_shell_bbox_occt(context, faces, shell_shapes).or_else(|| {
+                offset_solid_shell_bbox_occt(context, faces, prepared_shell_shapes).or_else(|| {
                     fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
                 })
             } else {
@@ -819,9 +820,9 @@ fn offset_shape_bbox_occt(
 fn offset_solid_shell_bbox_occt(
     context: &Context,
     faces: &[BrepFace],
-    shell_shapes: &[Shape],
+    prepared_shell_shapes: &[PreparedShellShape],
 ) -> Option<([f64; 3], [f64; 3])> {
-    if shell_shapes.is_empty()
+    if prepared_shell_shapes.is_empty()
         || !faces
             .iter()
             .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
@@ -829,7 +830,13 @@ fn offset_solid_shell_bbox_occt(
         return None;
     }
 
-    union_shape_bboxes_occt(context, shell_shapes.iter())
+    union_shape_bboxes_occt(
+        context,
+        prepared_shell_shapes
+            .iter()
+            .filter(|prepared_shell_shape| !prepared_shell_shape.shell_face_shapes.is_empty())
+            .map(|prepared_shell_shape| &prepared_shell_shape.shell_shape),
+    )
 }
 
 fn union_shape_bboxes_occt<'a, I>(context: &Context, shapes: I) -> Option<([f64; 3], [f64; 3])>

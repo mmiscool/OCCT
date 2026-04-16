@@ -31,7 +31,7 @@ use self::shape_queries::{
     ported_edge_endpoints, ported_subshape, ported_subshapes, ported_vertex_point,
 };
 use self::summary::ported_shape_summary;
-use self::topology::{load_ported_topology, ported_topology_snapshot};
+use self::topology::{load_ported_topology, ported_topology_snapshot, PreparedShellShape};
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
@@ -125,24 +125,37 @@ impl Context {
     }
 
     pub fn ported_brep(&self, shape: &Shape) -> Result<BrepShape, Error> {
-        let (topology, vertex_shapes, edge_shapes, shell_shapes, face_shapes, face_route) =
+        let (topology, vertex_shapes, edge_shapes, prepared_shell_shapes, face_shapes, face_route) =
             match load_ported_topology(self, shape)? {
                 Some(loaded) => (
                     loaded.topology,
                     loaded.vertex_shapes,
                     loaded.edge_shapes,
-                    loaded.shell_shapes,
+                    loaded.prepared_shell_shapes,
                     loaded.face_shapes,
                     FaceSurfaceRoute::Public,
                 ),
-                None => (
-                    self.topology_occt(shape)?,
-                    self.subshapes_occt(shape, ShapeKind::Vertex)?,
-                    self.subshapes_occt(shape, ShapeKind::Edge)?,
-                    self.subshapes_occt(shape, ShapeKind::Shell)?,
-                    self.subshapes_occt(shape, ShapeKind::Face)?,
-                    FaceSurfaceRoute::Raw,
-                ),
+                None => {
+                    let prepared_shell_shapes = self
+                        .subshapes_occt(shape, ShapeKind::Shell)?
+                        .into_iter()
+                        .map(|shell_shape| {
+                            Ok(PreparedShellShape {
+                                shell_face_shapes: self
+                                    .subshapes_occt(&shell_shape, ShapeKind::Face)?,
+                                shell_shape,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Error>>()?;
+                    (
+                        self.topology_occt(shape)?,
+                        self.subshapes_occt(shape, ShapeKind::Vertex)?,
+                        self.subshapes_occt(shape, ShapeKind::Edge)?,
+                        prepared_shell_shapes,
+                        self.subshapes_occt(shape, ShapeKind::Face)?,
+                        FaceSurfaceRoute::Raw,
+                    )
+                }
             };
         let vertices = ported_brep_vertices(&topology);
         let wires = ported_brep_wires(&topology);
@@ -165,7 +178,7 @@ impl Context {
             &edges,
             &faces,
             &vertex_shapes,
-            &shell_shapes,
+            &prepared_shell_shapes,
             &face_shapes,
             &edge_shapes,
         )?;
