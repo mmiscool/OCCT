@@ -1641,6 +1641,70 @@ fn sampled_edge_interval_needs_endpoint_probe_refinement(
         (midpoint, end_endpoint_probe.as_ref()?, end)
     };
 
+    if sampled_edge_interval_needs_refinement(probe_start, probe_mid, probe_end) {
+        return Some(true);
+    }
+
+    sampled_edge_interval_needs_terminal_probe_refinement(
+        context,
+        edge_shape,
+        probe_start,
+        probe_mid,
+        probe_end,
+    )
+}
+
+fn sampled_edge_interval_needs_terminal_probe_refinement(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<bool> {
+    let start_terminal_probe_t = 0.5 * (start.t + midpoint.t);
+    let end_terminal_probe_t = 0.5 * (midpoint.t + end.t);
+
+    let start_terminal_probe = if approx_eq(start_terminal_probe_t, start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(start_terminal_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: start_terminal_probe_t,
+            sample: context
+                .edge_sample(edge_shape, start_terminal_probe_t)
+                .ok()?,
+        })
+    };
+    let end_terminal_probe = if approx_eq(end_terminal_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
+        || approx_eq(end_terminal_probe_t, end.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: end_terminal_probe_t,
+            sample: context.edge_sample(edge_shape, end_terminal_probe_t).ok()?,
+        })
+    };
+
+    let start_terminal_score = start_terminal_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
+        .unwrap_or(0.0);
+    let end_terminal_score = end_terminal_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
+        .unwrap_or(0.0);
+    if start_terminal_score <= 1.0e-12 && end_terminal_score <= 1.0e-12 {
+        return Some(false);
+    }
+
+    let (probe_start, probe_mid, probe_end) = if start_terminal_score >= end_terminal_score {
+        (start, start_terminal_probe.as_ref()?, midpoint)
+    } else {
+        (midpoint, end_terminal_probe.as_ref()?, end)
+    };
+
     Some(sampled_edge_interval_needs_refinement(
         probe_start,
         probe_mid,
