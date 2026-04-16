@@ -1442,20 +1442,20 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         }
     }
 
-    fn stage_samples_or_result(
+    fn stage_samples_or_refinement(
         self,
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Result<Option<[NormalizedEdgeSample; STAGE_N]>, bool> {
+    ) -> Result<[NormalizedEdgeSample; STAGE_N], Option<bool>> {
         let probes = self
             .probe_request_layout
             .probe_pair(context, edge_shape, source);
         match probes {
             Some(probes) => probes
                 .refinement_result(source, self.sample_roles)
-                .map(Some),
-            None => Ok(None),
+                .map_err(Some),
+            None => Err(None),
         }
     }
 }
@@ -1543,28 +1543,23 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let midpoint_samples = match self.midpoint_stage.stage_samples_or_result(
-            context,
-            edge_shape,
-            [*start, *midpoint, *end],
-        ) {
-            Ok(Some(samples)) => samples,
-            Ok(None) => return None,
-            Err(result) => return Some(result),
-        };
-        match self
-            .outer_stage
-            .stage_samples_or_result(context, edge_shape, midpoint_samples)
-        {
-            Ok(Some(samples)) => self.interval_aware_side_layouts.needs_refinement(
-                samples,
-                context,
-                edge_shape,
-                self.coarse_refinement_checks_before_adaptive_chase,
-            ),
-            Ok(None) => None,
-            Err(result) => Some(result),
-        }
+        self.midpoint_stage
+            .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
+            .and_then(|midpoint_samples| {
+                self.outer_stage
+                    .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
+            })
+            .map_or_else(
+                |result| result,
+                |samples| {
+                    self.interval_aware_side_layouts.needs_refinement(
+                        samples,
+                        context,
+                        edge_shape,
+                        self.coarse_refinement_checks_before_adaptive_chase,
+                    )
+                },
+            )
     }
 }
 
