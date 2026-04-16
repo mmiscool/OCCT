@@ -1405,14 +1405,14 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
     ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
-        let Some(probes) = MidpointEdgeProbePairRequest::new(
+        let probes = MidpointEdgeProbePairRequest::new(
             source[self.request_source_indices[0]],
             source[self.request_source_indices[1]],
             source[self.request_source_indices[2]],
             source[self.request_source_indices[3]],
         )
-        .probe_pair(context, edge_shape)?
-        else {
+        .probe_pair(context, edge_shape)?;
+        let MidpointEdgeProbePairOutcome::Pair(probes) = probes else {
             return Some(Err(false));
         };
 
@@ -1559,6 +1559,43 @@ impl PreparedRefinementTripletLayout {
 }
 
 #[derive(Clone, Copy)]
+enum MidpointRefinementSegmentOutcome {
+    NoSegment,
+    Segment(RefinementSegment),
+}
+
+impl MidpointRefinementSegmentOutcome {
+    fn segment(self) -> Option<RefinementSegment> {
+        match self {
+            Self::NoSegment => None,
+            Self::Segment(segment) => Some(segment),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MidpointEdgeProbeOutcome {
+    NoProbe,
+    Probe(NormalizedEdgeSample),
+}
+
+impl MidpointEdgeProbeOutcome {
+    fn midpoint_segment(
+        self,
+        start: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> MidpointRefinementSegmentOutcome {
+        match self {
+            Self::NoProbe => MidpointRefinementSegmentOutcome::NoSegment,
+            Self::Probe(probe) => RefinementSegment::new(start, &probe, end).map_or(
+                MidpointRefinementSegmentOutcome::NoSegment,
+                MidpointRefinementSegmentOutcome::Segment,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct PreparedRefinementSpanLayout {
     start: usize,
     end: usize,
@@ -1574,15 +1611,11 @@ impl PreparedRefinementSpanLayout {
         samples: &[NormalizedEdgeSample; 7],
         context: &Context,
         edge_shape: &Shape,
-    ) -> Option<Option<RefinementSegment>> {
+    ) -> Option<MidpointRefinementSegmentOutcome> {
         let start = samples[self.start];
         let end = samples[self.end];
         let inner_probe = midpoint_edge_probe(context, edge_shape, &start, &end)?;
-        Some(
-            inner_probe
-                .as_ref()
-                .and_then(|probe| RefinementSegment::new(&start, probe, &end)),
-        )
+        Some(inner_probe.midpoint_segment(&start, &end))
     }
 }
 
@@ -1638,9 +1671,10 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         let inner_segment = layout
             .inner
             .midpoint_segment(samples, context, edge_shape)?;
-        let Some((_, probe_segment)) =
-            RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
-        else {
+        let Some((_, probe_segment)) = RefinementSegment::choose_stronger(
+            (false, outer_segment),
+            (true, inner_segment.segment()),
+        ) else {
             return Some(false);
         };
 
@@ -1797,14 +1831,14 @@ impl RefinementSegment {
             (
                 (),
                 outer_probe
-                    .as_ref()
-                    .and_then(|probe| Self::new(&self.start, probe, &self.midpoint)),
+                    .midpoint_segment(&self.start, &self.midpoint)
+                    .segment(),
             ),
             (
                 (),
                 inner_probe
-                    .as_ref()
-                    .and_then(|probe| Self::new(&self.midpoint, probe, &self.end)),
+                    .midpoint_segment(&self.midpoint, &self.end)
+                    .segment(),
             ),
         )
         .map(|(_, segment)| segment);
@@ -1848,14 +1882,14 @@ fn midpoint_edge_probe(
     edge_shape: &Shape,
     start: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
-) -> Option<Option<NormalizedEdgeSample>> {
+) -> Option<MidpointEdgeProbeOutcome> {
     let probe_t = 0.5 * (start.t + end.t);
     if approx_eq(probe_t, start.t, 1.0e-12, 1.0e-12) || approx_eq(probe_t, end.t, 1.0e-12, 1.0e-12)
     {
-        return Some(None);
+        return Some(MidpointEdgeProbeOutcome::NoProbe);
     }
 
-    Some(Some(NormalizedEdgeSample {
+    Some(MidpointEdgeProbeOutcome::Probe(NormalizedEdgeSample {
         t: probe_t,
         sample: context.edge_sample(edge_shape, probe_t).ok()?,
     }))
@@ -1865,6 +1899,12 @@ fn midpoint_edge_probe(
 struct MidpointEdgeProbePair {
     first_probe: NormalizedEdgeSample,
     second_probe: NormalizedEdgeSample,
+}
+
+#[derive(Clone, Copy)]
+enum MidpointEdgeProbePairOutcome {
+    NoPair,
+    Pair(MidpointEdgeProbePair),
 }
 
 #[derive(Clone, Copy)]
@@ -1894,17 +1934,20 @@ impl MidpointEdgeProbePairRequest {
         &self,
         context: &Context,
         edge_shape: &Shape,
-    ) -> Option<Option<MidpointEdgeProbePair>> {
+    ) -> Option<MidpointEdgeProbePairOutcome> {
         let first_probe =
             midpoint_edge_probe(context, edge_shape, &self.first_start, &self.first_end)?;
         let second_probe =
             midpoint_edge_probe(context, edge_shape, &self.second_start, &self.second_end)?;
         match (first_probe, second_probe) {
-            (Some(first_probe), Some(second_probe)) => Some(Some(MidpointEdgeProbePair {
+            (
+                MidpointEdgeProbeOutcome::Probe(first_probe),
+                MidpointEdgeProbeOutcome::Probe(second_probe),
+            ) => Some(MidpointEdgeProbePairOutcome::Pair(MidpointEdgeProbePair {
                 first_probe,
                 second_probe,
             })),
-            _ => Some(None),
+            _ => Some(MidpointEdgeProbePairOutcome::NoPair),
         }
     }
 }
