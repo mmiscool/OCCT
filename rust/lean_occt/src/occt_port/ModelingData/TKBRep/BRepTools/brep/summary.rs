@@ -1336,14 +1336,7 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT
-            .stage_samples_or_refinement(context, edge_shape, [*start, midpoint_sample, *end])
-            .continue_with_tail(
-                OUTER_EARLY_PROBE_STAGE_LAYOUT,
-                EARLY_PROBE_INTERVAL_AWARE_TAIL,
-                context,
-                edge_shape,
-            )?
+        early_probe_needs_refinement(context, edge_shape, [*start, midpoint_sample, *end])?
     };
 
     if !needs_refinement {
@@ -1481,6 +1474,21 @@ impl EarlyProbeStageResult<5> {
         self.continue_with(next_stage, context, edge_shape)
             .needs_refinement(tail, context, edge_shape)
     }
+}
+
+fn early_probe_needs_refinement(
+    context: &Context,
+    edge_shape: &Shape,
+    source: [NormalizedEdgeSample; 3],
+) -> Option<bool> {
+    MIDPOINT_EARLY_PROBE_STAGE_LAYOUT
+        .stage_samples_or_refinement(context, edge_shape, source)
+        .continue_with_tail(
+            OUTER_EARLY_PROBE_STAGE_LAYOUT,
+            EARLY_PROBE_INTERVAL_AWARE_TAIL,
+            context,
+            edge_shape,
+        )
 }
 
 impl EarlyProbeStageResult<7> {

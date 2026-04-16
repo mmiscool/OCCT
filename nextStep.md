@@ -1,10 +1,10 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now-inline top-level kickoff:
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to keep the typed midpoint stage, typed outer stage, typed interval-aware tail, and the typed stage-result boundary in place while collapsing the now one-use early-probe entry helper:
 
-`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT.stage_samples_or_refinement(...).continue_with_tail(OUTER_EARLY_PROBE_STAGE_LAYOUT, EARLY_PROBE_INTERVAL_AWARE_TAIL, ...)`
+`early_probe_needs_refinement(...): MIDPOINT_EARLY_PROBE_STAGE_LAYOUT.stage_samples_or_refinement(...).continue_with_tail(OUTER_EARLY_PROBE_STAGE_LAYOUT, EARLY_PROBE_INTERVAL_AWARE_TAIL, ...)`
 
-behind one smaller Rust-owned entry boundary without reintroducing the old stage-chain wrapper.
+behind a smaller Rust-owned kickoff boundary or typed continuation boundary, without reintroducing the old stage-chain wrapper stack.
 
 ## Current State
 
@@ -23,7 +23,7 @@ behind one smaller Rust-owned entry boundary without reintroducing the old stage
   - `EarlyProbeStageLayout::stage_samples_or_refinement(...)` owns the per-stage `Result<[NormalizedEdgeSample; N], Option<bool>>` carry
   - `EarlyProbeStageResult` owns midpoint-stage to outer-stage continuation plus the final interval-aware tail handoff
   - the old `EarlyProbeStageChain`, `EarlyProbeRefinementStages`, `EarlyProbeStageSequence`, `EarlyProbeStagePair`, `EarlyProbeOuterStageTail`, `EarlyProbeStageSamplesOrRefinement`, and the top-level `sampled_edge_interval_needs_probe_refinement()` bridge are all gone
-  - the top-level early probe entry inside `refine_sampled_edge_interval()` now directly composes `MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`, `OUTER_EARLY_PROBE_STAGE_LAYOUT`, `EARLY_PROBE_INTERVAL_AWARE_TAIL`, and the typed stage-result boundary
+  - the top-level early probe entry inside `refine_sampled_edge_interval()` now delegates through `early_probe_needs_refinement(...)`, so the interval-refinement path no longer spells the fixed midpoint-stage + outer-stage + interval-aware-tail composition inline
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - `PreparedIntervalAwareRefinementSideLayouts` owns stronger coarse-side choice, winning outer-vs-inner segment selection, and terminal `segment.needs_refinement(...)` dispatch directly on the final 7-sample boundary
   - midpoint, coarse, and outer candidates all stay on explicit `RefinementSegmentOutcome`
@@ -38,9 +38,9 @@ behind one smaller Rust-owned entry boundary without reintroducing the old stage
 
 - the midpoint-stage kickoff, outer-stage progression, and interval-aware tail are all already typed
 - the old stage-chain wrapper is gone
-- but `refine_sampled_edge_interval()` still spells the fixed early-probe composition inline by naming the midpoint-stage constant, the outer-stage constant, the interval-aware tail constant, and the `stage_samples_or_refinement(...).continue_with_tail(...)` chain directly
+- but the new `early_probe_needs_refinement(...)` helper is still a one-use fixed-composition bridge that names the midpoint-stage constant, the outer-stage constant, the interval-aware tail constant, and the `stage_samples_or_refinement(...).continue_with_tail(...)` chain directly
 
-The next blocker is to keep those typed pieces and the typed stage-result boundary, but hide that fixed composition behind one smaller Rust-owned kickoff boundary so the top-level interval refinement path stops knowing how the early probe stages are stitched together.
+The next blocker is to keep those typed pieces and the typed stage-result boundary, but hide that fixed composition behind one smaller Rust-owned kickoff or continuation boundary so the early probe entry stops being a one-off composition shim.
 
 ## Focus
 
@@ -58,4 +58,4 @@ The next blocker is to keep those typed pieces and the typed stage-result bounda
 
 ## Why This Is Next
 
-This turn removed the dead `EarlyProbeStageChain` wrapper and then removed the follow-on `EarlyProbeStageLayout<3, 5>::needs_refinement_with_tail(...)` wrapper too. The remaining early-probe seam is no longer inside the stage machinery itself; it is the fact that `refine_sampled_edge_interval()` still wires the three typed early-probe constants together inline.
+This turn removed the old inline kickoff from `refine_sampled_edge_interval()` by pushing it behind `early_probe_needs_refinement(...)`. The remaining early-probe seam is smaller now: the top-level path no longer wires the three typed constants together inline, but the new helper is still only a one-use fixed-composition bridge.
