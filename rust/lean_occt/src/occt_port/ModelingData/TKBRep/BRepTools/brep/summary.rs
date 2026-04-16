@@ -1779,9 +1779,52 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
             (midpoint, end_terminal_endpoint_probe.as_ref()?, end)
         };
 
+    let start_biased_probe_t = 0.5 * (probe_start.t + probe_mid.t);
+    let end_biased_probe_t = 0.5 * (probe_mid.t + probe_end.t);
+
+    let start_biased_probe = if approx_eq(start_biased_probe_t, probe_start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(start_biased_probe_t, probe_mid.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: start_biased_probe_t,
+            sample: context.edge_sample(edge_shape, start_biased_probe_t).ok()?,
+        })
+    };
+    let end_biased_probe = if approx_eq(end_biased_probe_t, probe_mid.t, 1.0e-12, 1.0e-12)
+        || approx_eq(end_biased_probe_t, probe_end.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: end_biased_probe_t,
+            sample: context.edge_sample(edge_shape, end_biased_probe_t).ok()?,
+        })
+    };
+
+    let start_biased_score = start_biased_probe
+        .as_ref()
+        .map(|probe| {
+            sampled_edge_interval_refinement_signal_strength(probe_start, probe, probe_mid)
+        })
+        .unwrap_or(0.0);
+    let end_biased_score = end_biased_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(probe_mid, probe, probe_end))
+        .unwrap_or(0.0);
+
+    let biased_probe = if start_biased_score <= 1.0e-12 && end_biased_score <= 1.0e-12 {
+        probe_mid
+    } else if start_biased_score >= end_biased_score {
+        start_biased_probe.as_ref()?
+    } else {
+        end_biased_probe.as_ref()?
+    };
+
     Some(sampled_edge_interval_needs_refinement(
         probe_start,
-        probe_mid,
+        biased_probe,
         probe_end,
     ))
 }
