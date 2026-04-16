@@ -1070,21 +1070,17 @@ fn shell_boundary_shape_bbox(
     context: &Context,
     prepared_shell_shape: &PreparedShellShape,
 ) -> Option<([f64; 3], [f64; 3])> {
-    analytic_edge_shapes_bbox(context, &prepared_shell_shape.shell_edge_shapes)
-        .or_else(|| {
-            line_segment_shape_bbox(
-                context,
-                &prepared_shell_shape.shell_vertex_shapes,
-                &prepared_shell_shape.shell_edge_shapes,
-            )
-        })
-        .or_else(|| {
-            if prepared_shell_shape.shell_edge_shapes.is_empty() {
-                vertex_shapes_bbox(context, &prepared_shell_shape.shell_vertex_shapes)
-            } else {
-                None
-            }
-        })
+    let mut bbox = vertex_shapes_bbox(context, &prepared_shell_shape.shell_vertex_shapes);
+    for edge_shape in &prepared_shell_shape.shell_edge_shapes {
+        let Some(edge_bbox) = boundary_edge_shape_bbox(context, edge_shape) else {
+            continue;
+        };
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, edge_bbox),
+            None => edge_bbox,
+        });
+    }
+    bbox
 }
 
 fn shape_bbox_occt(context: &Context, shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
@@ -1174,21 +1170,6 @@ fn analytic_edges_bbox(edges: &[BrepEdge]) -> Option<([f64; 3], [f64; 3])> {
     bbox
 }
 
-fn analytic_edge_shapes_bbox(
-    context: &Context,
-    edge_shapes: &[Shape],
-) -> Option<([f64; 3], [f64; 3])> {
-    let mut bbox = None;
-    for edge_shape in edge_shapes {
-        let edge_bbox = analytic_edge_shape_bbox(context, edge_shape)?;
-        bbox = Some(match bbox {
-            Some(accumulated) => union_bbox(accumulated, edge_bbox),
-            None => edge_bbox,
-        });
-    }
-    bbox
-}
-
 fn analytic_edge_bbox(edge: &BrepEdge) -> Option<([f64; 3], [f64; 3])> {
     ported_curve_bbox(
         edge.ported_curve?,
@@ -1202,6 +1183,11 @@ fn analytic_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f
     let curve =
         PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry).ok()??;
     ported_curve_bbox(curve, geometry.start_parameter, geometry.end_parameter)
+}
+
+fn boundary_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+    analytic_edge_shape_bbox(context, edge_shape)
+        .or_else(|| line_segment_edge_shape_bbox(context, edge_shape))
 }
 
 fn ported_curve_bbox(curve: PortedCurve, start: f64, end: f64) -> Option<([f64; 3], [f64; 3])> {
@@ -1248,31 +1234,17 @@ fn vertex_shapes_bbox(context: &Context, vertex_shapes: &[Shape]) -> Option<([f6
     )
 }
 
-fn line_segment_shape_bbox(
+fn line_segment_edge_shape_bbox(
     context: &Context,
-    vertex_shapes: &[Shape],
-    edge_shapes: &[Shape],
+    edge_shape: &Shape,
 ) -> Option<([f64; 3], [f64; 3])> {
-    if edge_shapes.is_empty() {
+    let geometry = context.edge_geometry(edge_shape).ok()?;
+    if !matches!(geometry.kind, crate::CurveKind::Line) {
         return None;
     }
 
-    let mut points = vertex_shapes
-        .iter()
-        .map(|vertex_shape| context.vertex_point(vertex_shape).ok())
-        .collect::<Option<Vec<_>>>()?;
-    for edge_shape in edge_shapes {
-        let geometry = context.edge_geometry(edge_shape).ok()?;
-        if !matches!(geometry.kind, crate::CurveKind::Line) {
-            return None;
-        }
-
-        let endpoints = context.edge_endpoints(edge_shape).ok()?;
-        points.push(endpoints.start);
-        points.push(endpoints.end);
-    }
-
-    bbox_from_points(points)
+    let endpoints = context.edge_endpoints(edge_shape).ok()?;
+    bbox_from_points(vec![endpoints.start, endpoints.end])
 }
 
 fn periodic_curve_bbox(
