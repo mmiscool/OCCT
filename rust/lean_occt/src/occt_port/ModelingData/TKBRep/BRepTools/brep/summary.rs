@@ -1336,7 +1336,7 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        sampled_edge_interval_needs_probe_refinement(
+        EARLY_PROBE_REFINEMENT_STAGES.needs_refinement(
             context,
             edge_shape,
             start,
@@ -1369,31 +1369,6 @@ fn refine_sampled_edge_interval(
         points,
         samples,
     )
-}
-
-fn sampled_edge_interval_needs_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<bool> {
-    EARLY_PROBE_REFINEMENT_STAGES
-        .stage_samples_or_refinement(context, edge_shape, start, midpoint, end)
-        .map_or_else(
-            |result| result,
-            |samples| {
-                EARLY_PROBE_REFINEMENT_STAGES
-                    .interval_aware_side_layouts
-                    .needs_refinement(
-                        samples,
-                        context,
-                        edge_shape,
-                        EARLY_PROBE_REFINEMENT_STAGES
-                            .coarse_refinement_checks_before_adaptive_chase,
-                    )
-            },
-        )
 }
 
 #[derive(Clone, Copy)]
@@ -1550,20 +1525,29 @@ impl EarlyProbeStagePair {
         }
     }
 
-    fn stage_samples_or_refinement(
+    fn needs_refinement(
         self,
         context: &Context,
         edge_shape: &Shape,
         start: &NormalizedEdgeSample,
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
-    ) -> Result<[NormalizedEdgeSample; 7], Option<bool>> {
-        self.midpoint_stage
+    ) -> Option<bool> {
+        match self
+            .midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
             .and_then(|midpoint_samples| {
                 self.outer_stage
                     .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
-            })
+            }) {
+            Ok(samples) => self.interval_aware_side_layouts.needs_refinement(
+                samples,
+                context,
+                edge_shape,
+                self.coarse_refinement_checks_before_adaptive_chase,
+            ),
+            Err(result) => result,
+        }
     }
 }
 
