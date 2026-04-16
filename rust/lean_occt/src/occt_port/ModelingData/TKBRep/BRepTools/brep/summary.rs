@@ -1659,11 +1659,28 @@ impl PreparedIntervalAwareRefinementSideLayout {
 }
 
 #[derive(Clone, Copy)]
-struct PreparedIntervalAwareRefinementSideLayouts([PreparedIntervalAwareRefinementSideLayout; 2]);
+struct PreparedIntervalAwareRefinementSideLayouts {
+    left: PreparedIntervalAwareRefinementSideLayout,
+    right: PreparedIntervalAwareRefinementSideLayout,
+}
 
 impl PreparedIntervalAwareRefinementSideLayouts {
-    const fn new(layouts: [PreparedIntervalAwareRefinementSideLayout; 2]) -> Self {
-        Self(layouts)
+    const fn new(
+        left: PreparedIntervalAwareRefinementSideLayout,
+        right: PreparedIntervalAwareRefinementSideLayout,
+    ) -> Self {
+        Self { left, right }
+    }
+
+    fn stronger_side_layout(
+        self,
+        samples: &[NormalizedEdgeSample; 7],
+    ) -> Option<PreparedIntervalAwareRefinementSideLayout> {
+        RefinementSegment::choose_stronger(
+            (self.left, self.left.coarse_segment(samples)),
+            (self.right, self.right.coarse_segment(samples)),
+        )
+        .map(|(layout, _)| layout)
     }
 
     fn prepare_refinement_segment(
@@ -1672,11 +1689,7 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let Some(side_layout) = RefinementSegment::choose_stronger(
-            (self.0[0], self.0[0].coarse_segment(samples)),
-            (self.0[1], self.0[1].coarse_segment(samples)),
-        )
-        .map(|(layout, _)| layout) else {
+        let Some(side_layout) = self.stronger_side_layout(samples) else {
             return Some(None);
         };
 
@@ -1687,7 +1700,7 @@ impl PreparedIntervalAwareRefinementSideLayouts {
 }
 
 const PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS: PreparedIntervalAwareRefinementSideLayouts =
-    PreparedIntervalAwareRefinementSideLayouts::new([
+    PreparedIntervalAwareRefinementSideLayouts::new(
         PreparedIntervalAwareRefinementSideLayout::new(
             PreparedRefinementTripletLayout::new(0, 2, 3),
             PreparedRefinementTripletLayout::new(0, 1, 2),
@@ -1698,7 +1711,7 @@ const PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS: PreparedIntervalAwareRefi
             PreparedRefinementTripletLayout::new(4, 5, 6),
             PreparedRefinementSpanLayout::new(3, 4),
         ),
-    ]);
+    );
 
 impl PreparedIntervalAwareRefinementSide {
     fn prepare_refinement_segment(
