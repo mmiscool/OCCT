@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The early unsupported-edge probe-refinement entry now shares midpoint-pair preparation and local sliding-window refinement checks. The next bounded Rust-first cut is to stop threading those early stages through long raw sample argument lists and instead carry a prepared probe chain into the asymmetric and interval-aware refinement stages.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The early unsupported-edge probe-refinement entry now carries prepared midpoint and outer probe chains instead of threading long raw sample lists through the asymmetric and interval-aware stages. The next bounded Rust-first cut is to move the remaining interval-aware side selection and side-specific segment preparation onto that prepared outer-probe-chain boundary so the early refinement entry becomes type-owned end to end.
 
 ## Current State
 
@@ -19,6 +19,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`choose_interval_aware_refinement_side()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`prepare_interval_aware_refinement_side()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now isolate the last side-specific assembly at the interval-aware entry, including reuse of [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
   - [`midpoint_edge_probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now prepares the earlier midpoint and outer probe pairs once for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared sliding 3-sample window checks used by those early entry stages
+  - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/first_probe/midpoint/second_probe/end` early probe carrier passed into the asymmetric stage
+  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier passed into the interval-aware stage
   - [`sampled_edge_interval_needs_stronger_half_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still owns the shared stronger-half chase
   - [`choose_stronger_refinement_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now serve the later shoulder/endpoint/terminal narrowing path through one helper with staged coarse checks
   - [`half_refinement_should_continue()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now provides the shared signal/span-driven adaptive stop rule, with the max-step limit kept only as a safety ceiling
@@ -29,12 +31,12 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 `offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. The deeper late refinement tail is no longer the structural problem: early probe preparation, local probe-window checks, interval-aware side preparation, and the later stronger-half refinement now share the same midpoint-probe and scored-segment machinery.
 
-The remaining duplication is now the hand-assembled early probe chain. [`sampled_edge_interval_needs_asymmetric_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`sampled_edge_interval_needs_interval_aware_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still manually:
+The remaining duplication is no longer the raw early probe chain; that handoff is now carried by prepared midpoint and outer probe-chain structs. The remaining structural gap is that the interval-aware stage still treats those carriers as dumb bags of samples. [`sampled_edge_interval_needs_interval_aware_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still relies on free helpers that manually:
 
-- thread long `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` argument lists instead of carrying a prepared probe-chain descriptor
-- rebuild stage-specific sample groupings inline before the interval-aware side chooser instead of handing that chooser a single prepared early-stage carrier
+- choose the suspicious `left` vs `right` interval-aware side outside the prepared carrier
+- rebuild the side-specific `outer` and `inner` segment grouping from the carrier fields outside the prepared carrier before handing off to the shared stronger-half chase
 
-The next blocker is to introduce that prepared early probe-chain carrier so the early stages become: prepare midpoint/outer probes once, run the shared local window checks, then hand the asymmetric and interval-aware stages one prepared chain instead of reassembling raw sample lists per stage.
+The next blocker is to move that interval-aware side choice and side-specific segment preparation under `PreparedOuterProbeChain`, so the early stages become: prepare midpoint/outer probes once, run the shared local window checks, then hand the prepared chain one responsibility boundary at a time instead of bouncing between free helpers that reopen its fields.
 
 ## Focus
 
@@ -51,6 +53,6 @@ The next blocker is to introduce that prepared early probe-chain carrier so the 
 
 ## Why This Is Next
 
-This turn finished the intended earlier probe-entry cleanup: midpoint and outer probe construction now reuse `midpoint_edge_probe_pair()`, and the local sliding refinement checks now reuse `sampled_edge_sample_windows_need_refinement()`.
+This turn finished the intended earlier probe-entry cleanup: midpoint and outer probe construction now feed `PreparedMidpointProbeChain` and `PreparedOuterProbeChain`, and the asymmetric plus interval-aware stages no longer thread long raw sample argument lists.
 
-The next bounded step is to carry that consolidation through the remaining call boundary. If the early stages stop threading long raw sample lists and instead pass a prepared probe chain into the asymmetric and interval-aware stages, the unsupported-edge shell-boundary path gets a cleaner Rust-owned refinement boundary without adding another fallback tier.
+The next bounded step is to carry that consolidation one boundary deeper. If the interval-aware side choice and side preparation move under `PreparedOuterProbeChain`, the unsupported-edge shell-boundary path gets a cleaner Rust-owned early-refinement boundary without adding another fallback tier.

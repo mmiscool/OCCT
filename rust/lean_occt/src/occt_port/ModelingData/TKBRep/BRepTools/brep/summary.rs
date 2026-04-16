@@ -1378,102 +1378,52 @@ fn sampled_edge_interval_needs_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let Some(probes) =
-        midpoint_edge_probe_pair(context, edge_shape, start, midpoint, midpoint, end)?
+    let Some(probe_chain) =
+        PreparedMidpointProbeChain::prepare(context, edge_shape, start, midpoint, end)?
     else {
         return Some(false);
     };
 
-    if sampled_edge_sample_windows_need_refinement(&[
-        *start,
-        probes.first_probe,
-        *midpoint,
-        probes.second_probe,
-        *end,
-    ]) {
+    if sampled_edge_sample_windows_need_refinement(&probe_chain.samples()) {
         return Some(true);
     }
 
-    sampled_edge_interval_needs_asymmetric_probe_refinement(
-        context,
-        edge_shape,
-        start,
-        &probes.first_probe,
-        midpoint,
-        &probes.second_probe,
-        end,
-    )
+    sampled_edge_interval_needs_asymmetric_probe_refinement(context, edge_shape, &probe_chain)
 }
 
 fn sampled_edge_interval_needs_asymmetric_probe_refinement(
     context: &Context,
     edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    first_probe: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    second_probe: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
+    probe_chain: &PreparedMidpointProbeChain,
 ) -> Option<bool> {
-    let Some(outer_probes) =
-        midpoint_edge_probe_pair(context, edge_shape, start, first_probe, second_probe, end)?
+    let Some(outer_probe_chain) =
+        PreparedOuterProbeChain::prepare(context, edge_shape, probe_chain)?
     else {
         return Some(false);
     };
 
-    if sampled_edge_sample_windows_need_refinement(&[
-        *start,
-        outer_probes.first_probe,
-        *first_probe,
-        *midpoint,
-        *second_probe,
-        outer_probes.second_probe,
-        *end,
-    ]) {
+    if sampled_edge_sample_windows_need_refinement(&outer_probe_chain.samples()) {
         return Some(true);
     }
 
     sampled_edge_interval_needs_interval_aware_probe_refinement(
         context,
         edge_shape,
-        start,
-        &outer_probes.first_probe,
-        first_probe,
-        midpoint,
-        second_probe,
-        &outer_probes.second_probe,
-        end,
+        &outer_probe_chain,
     )
 }
 
 fn sampled_edge_interval_needs_interval_aware_probe_refinement(
     context: &Context,
     edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    left_outer_probe: &NormalizedEdgeSample,
-    first_probe: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    second_probe: &NormalizedEdgeSample,
-    right_outer_probe: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
+    probe_chain: &PreparedOuterProbeChain,
 ) -> Option<bool> {
-    let Some(side) =
-        choose_interval_aware_refinement_side(start, first_probe, midpoint, second_probe, end)
-    else {
+    let Some(side) = choose_interval_aware_refinement_side(probe_chain) else {
         return Some(false);
     };
 
-    let prepared_side = prepare_interval_aware_refinement_side(
-        context,
-        edge_shape,
-        side,
-        start,
-        left_outer_probe,
-        first_probe,
-        midpoint,
-        second_probe,
-        right_outer_probe,
-        end,
-    )?;
+    let prepared_side =
+        prepare_interval_aware_refinement_side(context, edge_shape, side, probe_chain)?;
 
     let Some((_, probe_segment)) = choose_stronger_refinement_segment(
         (false, prepared_side.outer_segment),
@@ -1501,6 +1451,102 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
 }
 
 #[derive(Clone, Copy)]
+struct PreparedMidpointProbeChain {
+    start: NormalizedEdgeSample,
+    first_probe: NormalizedEdgeSample,
+    midpoint: NormalizedEdgeSample,
+    second_probe: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+}
+
+impl PreparedMidpointProbeChain {
+    fn prepare(
+        context: &Context,
+        edge_shape: &Shape,
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> Option<Option<Self>> {
+        let Some(probes) =
+            midpoint_edge_probe_pair(context, edge_shape, start, midpoint, midpoint, end)?
+        else {
+            return Some(None);
+        };
+
+        Some(Some(Self {
+            start: *start,
+            first_probe: probes.first_probe,
+            midpoint: *midpoint,
+            second_probe: probes.second_probe,
+            end: *end,
+        }))
+    }
+
+    fn samples(&self) -> [NormalizedEdgeSample; 5] {
+        [
+            self.start,
+            self.first_probe,
+            self.midpoint,
+            self.second_probe,
+            self.end,
+        ]
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedOuterProbeChain {
+    start: NormalizedEdgeSample,
+    left_outer_probe: NormalizedEdgeSample,
+    first_probe: NormalizedEdgeSample,
+    midpoint: NormalizedEdgeSample,
+    second_probe: NormalizedEdgeSample,
+    right_outer_probe: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+}
+
+impl PreparedOuterProbeChain {
+    fn prepare(
+        context: &Context,
+        edge_shape: &Shape,
+        midpoint_probe_chain: &PreparedMidpointProbeChain,
+    ) -> Option<Option<Self>> {
+        let Some(outer_probes) = midpoint_edge_probe_pair(
+            context,
+            edge_shape,
+            &midpoint_probe_chain.start,
+            &midpoint_probe_chain.first_probe,
+            &midpoint_probe_chain.second_probe,
+            &midpoint_probe_chain.end,
+        )?
+        else {
+            return Some(None);
+        };
+
+        Some(Some(Self {
+            start: midpoint_probe_chain.start,
+            left_outer_probe: outer_probes.first_probe,
+            first_probe: midpoint_probe_chain.first_probe,
+            midpoint: midpoint_probe_chain.midpoint,
+            second_probe: midpoint_probe_chain.second_probe,
+            right_outer_probe: outer_probes.second_probe,
+            end: midpoint_probe_chain.end,
+        }))
+    }
+
+    fn samples(&self) -> [NormalizedEdgeSample; 7] {
+        [
+            self.start,
+            self.left_outer_probe,
+            self.first_probe,
+            self.midpoint,
+            self.second_probe,
+            self.right_outer_probe,
+            self.end,
+        ]
+    }
+}
+
+#[derive(Clone, Copy)]
 enum IntervalAwareRefinementSide {
     Left,
     Right,
@@ -1513,20 +1559,24 @@ struct PreparedIntervalAwareRefinementSide {
 }
 
 fn choose_interval_aware_refinement_side(
-    start: &NormalizedEdgeSample,
-    first_probe: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    second_probe: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
+    probe_chain: &PreparedOuterProbeChain,
 ) -> Option<IntervalAwareRefinementSide> {
     choose_stronger_refinement_segment(
         (
             IntervalAwareRefinementSide::Left,
-            scored_refinement_segment(start, first_probe, midpoint),
+            scored_refinement_segment(
+                &probe_chain.start,
+                &probe_chain.first_probe,
+                &probe_chain.midpoint,
+            ),
         ),
         (
             IntervalAwareRefinementSide::Right,
-            scored_refinement_segment(midpoint, second_probe, end),
+            scored_refinement_segment(
+                &probe_chain.midpoint,
+                &probe_chain.second_probe,
+                &probe_chain.end,
+            ),
         ),
     )
     .map(|(side, _)| side)
@@ -1536,22 +1586,24 @@ fn prepare_interval_aware_refinement_side(
     context: &Context,
     edge_shape: &Shape,
     side: IntervalAwareRefinementSide,
-    start: &NormalizedEdgeSample,
-    left_outer_probe: &NormalizedEdgeSample,
-    first_probe: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    second_probe: &NormalizedEdgeSample,
-    right_outer_probe: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
+    probe_chain: &PreparedOuterProbeChain,
 ) -> Option<PreparedIntervalAwareRefinementSide> {
     let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = match side {
         IntervalAwareRefinementSide::Left => (
-            (start, left_outer_probe, first_probe),
-            (first_probe, midpoint),
+            (
+                &probe_chain.start,
+                &probe_chain.left_outer_probe,
+                &probe_chain.first_probe,
+            ),
+            (&probe_chain.first_probe, &probe_chain.midpoint),
         ),
         IntervalAwareRefinementSide::Right => (
-            (second_probe, right_outer_probe, end),
-            (midpoint, second_probe),
+            (
+                &probe_chain.second_probe,
+                &probe_chain.right_outer_probe,
+                &probe_chain.end,
+            ),
+            (&probe_chain.midpoint, &probe_chain.second_probe),
         ),
     };
     let inner_probe = midpoint_edge_probe(context, edge_shape, inner_start, inner_end)?;
