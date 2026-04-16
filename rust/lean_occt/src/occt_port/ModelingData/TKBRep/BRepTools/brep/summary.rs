@@ -1,7 +1,5 @@
 use super::*;
 
-use std::ops::ControlFlow;
-
 use crate::EdgeSample;
 
 use super::face_metrics::{
@@ -1444,19 +1442,21 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
         }
     }
 
-    fn stage_progress(
+    fn stage_samples_or_result(
         self,
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<ControlFlow<bool, [NormalizedEdgeSample; STAGE_N]>> {
+    ) -> Result<Option<[NormalizedEdgeSample; STAGE_N]>, bool> {
         let probes = self
             .probe_request_layout
-            .probe_pair(context, edge_shape, source)?;
-        Some(match probes.refinement_result(source, self.sample_roles) {
-            Ok(samples) => ControlFlow::Continue(samples),
-            Err(result) => ControlFlow::Break(result),
-        })
+            .probe_pair(context, edge_shape, source);
+        match probes {
+            Some(probes) => probes
+                .refinement_result(source, self.sample_roles)
+                .map(Some),
+            None => Ok(None),
+        }
     }
 }
 
@@ -1543,28 +1543,31 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let midpoint_samples = match self.midpoint_stage.stage_progress(
-            context,
-            edge_shape,
-            [*start, *midpoint, *end],
-        )? {
-            ControlFlow::Continue(samples) => samples,
-            ControlFlow::Break(result) => return Some(result),
-        };
-        let samples =
-            match self
-                .outer_stage
-                .stage_progress(context, edge_shape, midpoint_samples)?
-            {
-                ControlFlow::Continue(samples) => samples,
-                ControlFlow::Break(result) => return Some(result),
+        match (|| -> Result<Option<bool>, bool> {
+            let Some(midpoint_samples) = self.midpoint_stage.stage_samples_or_result(
+                context,
+                edge_shape,
+                [*start, *midpoint, *end],
+            )?
+            else {
+                return Ok(None);
             };
-        self.interval_aware_side_layouts.needs_refinement(
-            samples,
-            context,
-            edge_shape,
-            self.coarse_refinement_checks_before_adaptive_chase,
-        )
+            let Some(samples) =
+                self.outer_stage
+                    .stage_samples_or_result(context, edge_shape, midpoint_samples)?
+            else {
+                return Ok(None);
+            };
+            Ok(self.interval_aware_side_layouts.needs_refinement(
+                samples,
+                context,
+                edge_shape,
+                self.coarse_refinement_checks_before_adaptive_chase,
+            ))
+        })() {
+            Ok(result) => result,
+            Err(result) => Some(result),
+        }
     }
 }
 
