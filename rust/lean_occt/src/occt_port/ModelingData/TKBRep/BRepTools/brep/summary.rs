@@ -143,7 +143,7 @@ pub(super) fn ported_shape_summary(
         })
         .or_else(|| {
             if contains_offset_faces && (counts.solid_count > 0 || counts.compsolid_count > 0) {
-                offset_solid_shell_bbox_occt(context, faces, prepared_shell_shapes).or_else(|| {
+                offset_solid_shell_bbox(context, faces, prepared_shell_shapes).or_else(|| {
                     fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
                 })
             } else {
@@ -817,7 +817,7 @@ fn offset_shape_bbox_occt(
     )
 }
 
-fn offset_solid_shell_bbox_occt(
+fn offset_solid_shell_bbox(
     context: &Context,
     faces: &[BrepFace],
     prepared_shell_shapes: &[PreparedShellShape],
@@ -830,13 +830,48 @@ fn offset_solid_shell_bbox_occt(
         return None;
     }
 
-    union_shape_bboxes_occt(
-        context,
-        prepared_shell_shapes
-            .iter()
-            .filter(|prepared_shell_shape| !prepared_shell_shape.shell_face_shapes.is_empty())
-            .map(|prepared_shell_shape| &prepared_shell_shape.shell_shape),
-    )
+    let mut bbox = None;
+    for prepared_shell_shape in prepared_shell_shapes
+        .iter()
+        .filter(|prepared_shell_shape| !prepared_shell_shape.shell_face_shapes.is_empty())
+    {
+        let shell_bbox = offset_shell_bbox(context, prepared_shell_shape)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, shell_bbox),
+            None => shell_bbox,
+        });
+    }
+    bbox
+}
+
+fn offset_shell_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+) -> Option<([f64; 3], [f64; 3])> {
+    let shell_occt_bbox = shape_bbox_occt(context, &prepared_shell_shape.shell_shape)?;
+    context
+        .ported_brep(&prepared_shell_shape.shell_shape)
+        .ok()
+        .map(|brep| (brep.summary.bbox_min, brep.summary.bbox_max))
+        .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
+        .or(Some(shell_occt_bbox))
+}
+
+fn shape_bbox_occt(context: &Context, shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+    context
+        .describe_shape_occt(shape)
+        .ok()
+        .map(|summary| (summary.bbox_min, summary.bbox_max))
+}
+
+fn bbox_matches(lhs: ([f64; 3], [f64; 3]), rhs: ([f64; 3], [f64; 3])) -> bool {
+    lhs.0
+        .iter()
+        .chain(lhs.1.iter())
+        .zip(rhs.0.iter().chain(rhs.1.iter()))
+        .all(|(lhs_coordinate, rhs_coordinate)| {
+            approx_eq(*lhs_coordinate, *rhs_coordinate, 1.0e-6, 1.0e-6)
+        })
 }
 
 fn union_shape_bboxes_occt<'a, I>(context: &Context, shapes: I) -> Option<([f64; 3], [f64; 3])>
@@ -848,10 +883,10 @@ where
     let mut any_shapes = false;
     for shape in shapes {
         any_shapes = true;
-        let summary = context.describe_shape_occt(shape).ok()?;
+        let shape_bbox = shape_bbox_occt(context, shape)?;
         for coordinate in 0..3 {
-            bbox_min[coordinate] = bbox_min[coordinate].min(summary.bbox_min[coordinate]);
-            bbox_max[coordinate] = bbox_max[coordinate].max(summary.bbox_max[coordinate]);
+            bbox_min[coordinate] = bbox_min[coordinate].min(shape_bbox.0[coordinate]);
+            bbox_max[coordinate] = bbox_max[coordinate].max(shape_bbox.1[coordinate]);
         }
     }
 
