@@ -1533,21 +1533,35 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        match self
-            .midpoint_stage
-            .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
-            .and_then(|midpoint_samples| {
-                self.outer_stage
-                    .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
-            }) {
-            Ok(samples) => self.interval_aware_side_layouts.needs_refinement(
-                samples,
-                context,
-                edge_shape,
-                self.coarse_refinement_checks_before_adaptive_chase,
-            ),
-            Err(result) => result,
-        }
+        self.stage_samples_or_refinement(context, edge_shape, start, midpoint, end)
+            .map_or_else(
+                |result| result,
+                |samples| {
+                    self.interval_aware_side_layouts.needs_refinement(
+                        samples,
+                        context,
+                        edge_shape,
+                        self.coarse_refinement_checks_before_adaptive_chase,
+                    )
+                },
+            )
+    }
+
+    fn stage_samples_or_refinement(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> Result<[NormalizedEdgeSample; 7], Option<bool>> {
+        let midpoint_samples = self.midpoint_stage.stage_samples_or_refinement(
+            context,
+            edge_shape,
+            [*start, *midpoint, *end],
+        )?;
+        self.outer_stage
+            .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
     }
 }
 
