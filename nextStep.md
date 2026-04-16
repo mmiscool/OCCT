@@ -1,29 +1,32 @@
 # Next Task
 
-Keep narrowing the remaining OCCT bbox fallback in `ported_shape_summary()`, but now work from the new validated shape-local mesh and shell-local Rust-first boundaries for offset shapes.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, using the new validated Rust-first shell candidates that are now green on the exercised closed offset solid.
 
 ## Current State
 
 - [`ported_shape_summary()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now has these relevant offset bbox tiers:
-  - non-solid offset shapes first try [`offset_faces_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), which now validates the shape-local Rust mesh bbox first, then tries the validated Rust face-BRep union, and only then falls back to the per-face OCCT bbox union over loaded root `face_shapes`
-  - non-solid offset shapes still keep [`offset_shape_bbox_occt()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) behind that as a narrower raw escape hatch
-  - offset solids and compsolids now use [`offset_solid_shell_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and each shell now tries a validated shell-local Rust face-BRep union, then a validated shell-local Rust mesh bbox, then a validated `context.ported_brep(shell).summary`, before falling back to shell-local OCCT bbox
-  - whole-shape `describe_shape_occt()` remains the last bbox escape hatch
+  - non-solid offset shapes first try [`offset_faces_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), which now validates the shape-local Rust mesh bbox first, then the validated Rust face-BRep union, then the per-face OCCT bbox union over loaded root `face_shapes`
+  - non-solid offset shapes keep [`offset_shape_bbox_occt()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) behind that as a narrower raw escape hatch, and only accept the shape-local Rust mesh bbox when it validates against OCCT
+  - offset solids and compsolids now use [`offset_solid_shell_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and each shell now tries:
+    - a validated shell-local Rust face-BRep union built from [`validated_face_brep_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+    - a validated shell-local Rust mesh bbox
+    - a validated shell-local Rust `ported_brep(shell).summary`, including an offset-distance expansion candidate through [`offset_expanded_brep_bbox()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+    - only then the shell-local OCCT bbox
 - [`load_ported_topology()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs) still preserves `PreparedShellShape { shell_shape, shell_face_shapes }` on the successful Rust-topology path.
 - The exercised non-solid offset shell fixture stays green on the newer Rust-first path.
-- The exercised closed offset solid fixture stays green on the validated shell-local Rust-first path.
+- The exercised closed offset solid fixture now also stays green with a direct per-shell parity assertion in [`ported_brep_uses_rust_owned_volume_for_offset_solids()`](rust/lean_occt/tests/brep_workflows.rs).
 
 ## Remaining Blocker
 
-Closed offset-solid shells still have hard cases where the shell-root Rust summary underestimates the OCCT bbox by about the offset distance on some axes, so those shells still fall back to shell-local OCCT bbox. The direct shell-root summary itself is not parity-safe yet, even though the validated shell-local path keeps the parent solid green.
+`offset_shell_bbox()` still ends at the raw shell-local OCCT bbox for shells that fail all current validated Rust candidates. The exercised offset solid is green now, but there are still unproven shell shapes where the remaining shell-local OCCT fallback may be hit.
 
 ## Focus
 
 1. Keep the non-solid offset bbox win in place.
-2. Keep the validated shell-local Rust-first path in place for closed offset solids and compsolids.
-3. Use `PreparedShellShape::shell_face_shapes` and shell-local loaded data; do not go back to reloading shell faces through fresh raw `subshapes_occt()` calls.
-4. Improve shell-root Rust bbox parity so more shells clear validation before the per-shell OCCT fallback.
-5. Prefer shell-local face descriptors, shell-local face BReps, shell-local mesh/boundary data, or explicit offset-distance-aware adjustments; do not revisit root-face unions.
+2. Keep the now-green direct shell parity check for the exercised closed offset solid.
+3. Stay on `PreparedShellShape::shell_face_shapes` and shell-local loaded data; do not reintroduce fresh raw `subshapes_occt()` traversal.
+4. Add more validated Rust-first shell candidates inside `offset_shell_bbox()` before the final raw shell bbox.
+5. Prefer offset-distance-aware shell-local mesh or boundary adjustments, or other shell-local Rust-owned candidates, but validate every new candidate against the shell-local OCCT bbox before accepting it.
 6. Keep the verification bar unchanged:
    - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
    - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
@@ -31,9 +34,10 @@ Closed offset-solid shells still have hard cases where the shell-root Rust summa
 
 ## Why This Is Next
 
-This turn made the offset bbox path more Rust-first without weakening parity:
+This turn moved more of the shell-level offset bbox path onto Rust-owned data without weakening parity:
 
-- non-solid offset shapes now get a validated shape-local Rust mesh bbox chance before raw face bbox union
-- closed offset-solid shells now get a validated shell-local Rust mesh bbox chance before raw shell bbox fallback
+- shell-local face unions now reuse the same validated Rust-first face bbox path as the non-solid offset route
+- shell-local `ported_brep(shell).summary` now gets an offset-aware expansion candidate before the raw shell bbox fallback
+- the exercised closed offset solid now passes a direct per-shell Rust-vs-OCCT bbox parity assertion
 
-The next step is to fix the shell-root summary drift itself so those validated shell-local candidates succeed more often.
+The next step is to shrink the remaining shell-local OCCT fallback itself, not to widen fallback elsewhere.

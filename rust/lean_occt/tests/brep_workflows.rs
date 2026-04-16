@@ -1590,6 +1590,24 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         occt_summary.bbox_max,
         5.0e-2,
     )?;
+    for (shell_index, shell_shape) in kernel
+        .context()
+        .subshapes(&offset, ShapeKind::Shell)?
+        .into_iter()
+        .enumerate()
+    {
+        let shell_brep = kernel.context().ported_brep(&shell_shape)?;
+        let shell_occt = kernel.context().describe_shape_occt(&shell_shape)?;
+        let label = format!("offset solid shell {shell_index} brep summary");
+        assert_bbox_close(
+            &label,
+            shell_brep.summary.bbox_min,
+            shell_brep.summary.bbox_max,
+            shell_occt.bbox_min,
+            shell_occt.bbox_max,
+            5.0e-2,
+        )?;
+    }
     assert!(artifact.is_file());
 
     Ok(())
