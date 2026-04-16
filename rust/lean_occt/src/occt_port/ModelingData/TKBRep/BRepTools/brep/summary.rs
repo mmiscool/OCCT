@@ -1422,12 +1422,63 @@ impl PreparedMidpointProbeChain {
             return Some(true);
         }
 
-        let Some(outer_probe_chain) = PreparedOuterProbeChain::prepare(context, edge_shape, self)?
+        let Some(outer_probe_chain) = self.outer_probe_seed().prepare_chain(context, edge_shape)?
         else {
             return Some(false);
         };
 
         outer_probe_chain.needs_refinement(context, edge_shape)
+    }
+
+    fn outer_probe_seed(&self) -> PreparedOuterProbeSeed {
+        PreparedOuterProbeSeed {
+            start: self.samples[0],
+            first_probe: self.samples[1],
+            midpoint: self.samples[2],
+            second_probe: self.samples[3],
+            end: self.samples[4],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedOuterProbeSeed {
+    start: NormalizedEdgeSample,
+    first_probe: NormalizedEdgeSample,
+    midpoint: NormalizedEdgeSample,
+    second_probe: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+}
+
+impl PreparedOuterProbeSeed {
+    fn prepare_chain(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<Option<PreparedOuterProbeChain>> {
+        let Some(outer_probes) = midpoint_edge_probe_pair(
+            context,
+            edge_shape,
+            &self.start,
+            &self.first_probe,
+            &self.second_probe,
+            &self.end,
+        )?
+        else {
+            return Some(None);
+        };
+
+        Some(Some(PreparedOuterProbeChain {
+            samples: [
+                self.start,
+                outer_probes.first_probe,
+                self.first_probe,
+                self.midpoint,
+                self.second_probe,
+                outer_probes.second_probe,
+                self.end,
+            ],
+        }))
     }
 }
 
@@ -1437,36 +1488,6 @@ struct PreparedOuterProbeChain {
 }
 
 impl PreparedOuterProbeChain {
-    fn prepare(
-        context: &Context,
-        edge_shape: &Shape,
-        midpoint_probe_chain: &PreparedMidpointProbeChain,
-    ) -> Option<Option<Self>> {
-        let Some(outer_probes) = midpoint_edge_probe_pair(
-            context,
-            edge_shape,
-            &midpoint_probe_chain.samples[0],
-            &midpoint_probe_chain.samples[1],
-            &midpoint_probe_chain.samples[3],
-            &midpoint_probe_chain.samples[4],
-        )?
-        else {
-            return Some(None);
-        };
-
-        Some(Some(Self {
-            samples: [
-                midpoint_probe_chain.samples[0],
-                outer_probes.first_probe,
-                midpoint_probe_chain.samples[1],
-                midpoint_probe_chain.samples[2],
-                midpoint_probe_chain.samples[3],
-                outer_probes.second_probe,
-                midpoint_probe_chain.samples[4],
-            ],
-        }))
-    }
-
     fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
         if sampled_edge_sample_windows_need_refinement(&self.samples) {
             return Some(true);

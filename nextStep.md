@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining raw midpoint-sample indexing in `PreparedOuterProbeChain::prepare()`, so the midpoint-to-outer handoff goes through a typed Rust-side boundary instead of hard-coded `[0] / [1] / [3] / [4]` remaps.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining one-use `PreparedMidpointProbeChain::outer_probe_seed()` bounce, so the midpoint stage hands its stable five-sample boundary directly into typed outer-probe preparation instead of materializing a transient seed wrapper first.
 
 ## Current State
 
@@ -17,7 +17,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`midpoint_edge_probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) prepares the earlier midpoint and outer probe pairs once for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the shared sliding 3-sample window checks used by those early entry stages
   - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns a stable five-sample array boundary for the `start/first_probe/midpoint/second_probe/end` early probe carrier and still decides when midpoint-stage evidence is strong enough to advance into outer probes
-  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns a stable seven-sample array boundary, keeps the interval-aware handoff directly in `needs_refinement()`, and hands that prepared sample array straight to the typed interval-aware side-layout pair there
+  - [`PreparedOuterProbeSeed`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed midpoint-to-outer handoff, including the outer-probe request and seven-sample outer-chain assembly, so the old raw `[0] / [1] / [3] / [4]` remap is gone
+  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns a stable seven-sample array boundary, keeps the interval-aware handoff directly in `needs_refinement()`, and receives that prepared sample array from the typed outer-probe seed
   - [`PreparedIntervalAwareRefinementSideWindow`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
   - the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap is gone
   - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
@@ -42,15 +43,17 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - the temporary [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carriers are gone
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now compares coarse segments on the layout path and keeps both winning-side descriptor materialization and outer-vs-inner winning-segment choice on that same typed boundary
 
-The next blocker is now the last raw midpoint-to-outer remap before the outer-probe stage:
+The next blocker is now the smaller midpoint-to-outer stage bounce:
 
 - the pair-to-layout winning-segment bounce is gone
 - the one-use [`PreparedOuterProbeChain::prepare_interval_aware_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper is gone
 - the one-use [`PreparedOuterProbeChain::samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) rematerialization is gone
 - the one-use [`PreparedMidpointProbeChain::samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) rematerialization is gone
-- but [`PreparedOuterProbeChain::prepare()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still hard-codes midpoint-sample index remaps (`[0] / [1] / [3] / [4]`) when it asks for outer probes and rebuilds the seven-sample outer chain from the midpoint chain
+- the one-use [`PreparedOuterProbeChain::prepare()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper is gone
+- the raw midpoint-sample index remaps are gone
+- but [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still advances into outer probes through a one-use [`PreparedOuterProbeSeed`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) conversion bounce
 
-The next blocker is to move that midpoint-to-outer remap behind a typed handoff boundary too, so the early probe stage stays cleaner on the Rust-owned side before it advances into outer probes.
+The next blocker is to move that outer-probe preparation boundary under the midpoint carrier too, so the early probe stage stays type-owned end to end before it advances into interval-aware refinement.
 
 ## Focus
 
@@ -68,6 +71,6 @@ The next blocker is to move that midpoint-to-outer remap behind a typed handoff 
 
 ## Why This Is Next
 
-This turn finished the midpoint sample-boundary cleanup step. `PreparedMidpointProbeChain` now owns its stable five-sample array directly, so the early refinement entry reuses that prepared boundary for both the local window check and the outer-probe transition.
+This turn finished the midpoint-to-outer typed handoff step. `PreparedMidpointProbeChain` still owns its stable five-sample array directly, and the midpoint-to-outer transition now goes through `PreparedOuterProbeSeed`, which owns the outer-probe request plus seven-sample outer-chain assembly without raw sample indexing.
 
-What remains is the next smaller structural bounce between the midpoint and outer-probe carriers: the midpoint carrier now owns the five-sample chain directly, but the outer-probe preparation still reaches into that array through hard-coded `[0] / [1] / [3] / [4]` remaps when it asks for outer probes and rebuilds the seven-sample outer chain. If that midpoint-to-outer handoff moves behind a typed boundary too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is the next smaller structural bounce between the midpoint and outer-probe carriers: the raw index remap is gone, but the midpoint stage still converts into a transient outer-probe seed before advancing. If that outer-probe preparation moves under the midpoint carrier too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
