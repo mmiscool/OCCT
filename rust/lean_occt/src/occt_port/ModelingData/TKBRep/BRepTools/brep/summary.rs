@@ -1279,6 +1279,7 @@ fn sampled_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f6
     append_axis_turning_edge_samples(context, edge_shape, &samples, &mut points)?;
     append_near_flat_axis_edge_samples(context, edge_shape, &samples, &mut points)?;
     append_axis_position_extremum_samples(context, edge_shape, &samples, &mut points)?;
+    append_seeded_axis_position_extremum_samples(context, edge_shape, &samples, &mut points)?;
 
     bbox_from_points(points)
 }
@@ -1406,6 +1407,46 @@ fn append_axis_position_extremum_samples(
         for axis in 0..3 {
             let Some(extremum_sample) = axis_position_extremum_edge_sample(
                 context, edge_shape, &window[0], &window[1], &window[2], axis,
+            )?
+            else {
+                continue;
+            };
+            points.push(extremum_sample.position);
+        }
+    }
+    Some(())
+}
+
+fn append_seeded_axis_position_extremum_samples(
+    context: &Context,
+    edge_shape: &Shape,
+    samples: &[NormalizedEdgeSample],
+    points: &mut Vec<[f64; 3]>,
+) -> Option<()> {
+    if samples.len() < 3 {
+        return Some(());
+    }
+
+    for axis in 0..3 {
+        for extremum_kind in [AxisExtremumKind::Minimum, AxisExtremumKind::Maximum] {
+            let Some(seed_index) = seeded_axis_extremum_sample_index(samples, axis, extremum_kind)
+            else {
+                continue;
+            };
+            let low_index = seed_index.saturating_sub(2);
+            let high_index = (seed_index + 2).min(samples.len() - 1);
+            if low_index == seed_index || high_index == seed_index {
+                continue;
+            }
+
+            let Some(extremum_sample) = seeded_axis_position_extremum_edge_sample(
+                context,
+                edge_shape,
+                &samples[low_index],
+                &samples[seed_index],
+                &samples[high_index],
+                axis,
+                extremum_kind,
             )?
             else {
                 continue;
@@ -1550,6 +1591,70 @@ fn near_flat_axis_edge_sample(
 
         low = left_probe;
         high = right_probe;
+    }
+
+    Some(Some(best_probe.sample))
+}
+
+fn seeded_axis_position_extremum_edge_sample(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    seed: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+    axis: usize,
+    extremum_kind: AxisExtremumKind,
+) -> Option<Option<EdgeSample>> {
+    let mut low = *start;
+    let mut high = *end;
+    let mut best_probe = *seed;
+    for _ in 0..12 {
+        let left_t = 0.5 * (low.t + best_probe.t);
+        let right_t = 0.5 * (best_probe.t + high.t);
+        if approx_eq(left_t, low.t, 1.0e-12, 1.0e-12)
+            || approx_eq(left_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, best_probe.t, 1.0e-12, 1.0e-12)
+            || approx_eq(right_t, high.t, 1.0e-12, 1.0e-12)
+        {
+            break;
+        }
+
+        let left_probe = NormalizedEdgeSample {
+            t: left_t,
+            sample: context.edge_sample(edge_shape, left_t).ok()?,
+        };
+        let right_probe = NormalizedEdgeSample {
+            t: right_t,
+            sample: context.edge_sample(edge_shape, right_t).ok()?,
+        };
+        let best_value = best_probe.sample.position[axis];
+        let left_value = left_probe.sample.position[axis];
+        let right_value = right_probe.sample.position[axis];
+        if axis_position_is_better(left_value, best_value, extremum_kind)
+            || axis_position_is_better(right_value, best_value, extremum_kind)
+        {
+            if axis_position_is_better(left_value, right_value, extremum_kind)
+                && axis_position_is_better(left_value, best_value, extremum_kind)
+            {
+                high = best_probe;
+                best_probe = left_probe;
+                continue;
+            }
+            if axis_position_is_better(right_value, best_value, extremum_kind) {
+                low = best_probe;
+                best_probe = right_probe;
+                continue;
+            }
+        }
+
+        low = left_probe;
+        high = right_probe;
+    }
+
+    if !axis_position_probe_is_promising(seed, best_probe, axis, extremum_kind)
+        || approx_eq(best_probe.t, seed.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(None);
     }
 
     Some(Some(best_probe.sample))
@@ -1727,6 +1832,28 @@ fn axis_position_probe_is_promising(
         midpoint.sample.position[axis],
         extremum_kind,
     )
+}
+
+fn seeded_axis_extremum_sample_index(
+    samples: &[NormalizedEdgeSample],
+    axis: usize,
+    extremum_kind: AxisExtremumKind,
+) -> Option<usize> {
+    if samples.len() < 3 {
+        return None;
+    }
+
+    let mut best_index = 1;
+    for index in 2..samples.len() - 1 {
+        if axis_position_is_better(
+            samples[index].sample.position[axis],
+            samples[best_index].sample.position[axis],
+            extremum_kind,
+        ) {
+            best_index = index;
+        }
+    }
+    Some(best_index)
 }
 
 fn sampled_edge_interval_needs_refinement(
