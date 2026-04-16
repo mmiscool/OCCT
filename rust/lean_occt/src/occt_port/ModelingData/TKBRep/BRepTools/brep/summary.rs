@@ -128,6 +128,13 @@ pub(super) fn ported_shape_summary(
         .or_else(|| ported_shape_bbox(vertices, edges, faces))
         .or_else(|| {
             if contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0 {
+                offset_faces_bbox(context, vertices, edges, face_shapes)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0 {
                 offset_shape_bbox_occt(context, faces, vertex_shapes, face_shapes, edge_shapes)
             } else {
                 None
@@ -713,22 +720,56 @@ fn topological_shape_bbox(
     faces: &[BrepFace],
 ) -> Option<([f64; 3], [f64; 3])> {
     if faces.is_empty() {
-        return analytic_edges_bbox(edges)
-            .or_else(|| line_segment_points_bbox(vertices, edges))
-            .or_else(|| {
-                if edges.is_empty() {
-                    bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect())
-                } else {
-                    None
-                }
-            });
+        return boundary_shape_bbox(vertices, edges);
     }
 
     if faces_use_analytic_edge_bbox(edges, faces) {
-        return analytic_edges_bbox(edges).or_else(|| line_segment_points_bbox(vertices, edges));
+        return boundary_shape_bbox(vertices, edges);
     }
 
     None
+}
+
+fn offset_faces_bbox(
+    context: &Context,
+    vertices: &[BrepVertex],
+    edges: &[BrepEdge],
+    face_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    let boundary_bbox = boundary_shape_bbox(vertices, edges);
+    let face_bbox = face_bboxes_occt(context, face_shapes)?;
+    Some(match boundary_bbox {
+        Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
+        None => face_bbox,
+    })
+}
+
+fn face_bboxes_occt(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face_shape in face_shapes {
+        let summary = context.describe_shape_occt(face_shape).ok()?;
+        let face_bbox = (summary.bbox_min, summary.bbox_max);
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
+}
+
+fn boundary_shape_bbox(
+    vertices: &[BrepVertex],
+    edges: &[BrepEdge],
+) -> Option<([f64; 3], [f64; 3])> {
+    analytic_edges_bbox(edges)
+        .or_else(|| line_segment_points_bbox(vertices, edges))
+        .or_else(|| {
+            if edges.is_empty() {
+                bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect())
+            } else {
+                None
+            }
+        })
 }
 
 fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool {
