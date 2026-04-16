@@ -1483,17 +1483,6 @@ enum EarlyProbeSourcePosition {
 }
 
 impl EarlyProbeSourcePosition {
-    fn from_source_ordinal(ordinal: usize) -> Self {
-        match ordinal {
-            0 => Self::First,
-            1 => Self::Second,
-            2 => Self::Third,
-            3 => Self::Fourth,
-            4 => Self::Fifth,
-            _ => unreachable!("early probe source ordinal out of range"),
-        }
-    }
-
     fn index(self) -> usize {
         match self {
             Self::First => 0,
@@ -1505,23 +1494,14 @@ impl EarlyProbeSourcePosition {
     }
 }
 
-trait EarlyProbeSourceSlot: Copy {
-    fn source_ordinal(self) -> usize;
+trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: Copy {
+    fn source_sample(self, source: [NormalizedEdgeSample; SOURCE_N]) -> NormalizedEdgeSample;
 }
 
-trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: EarlyProbeSourceSlot {
-    fn source_position(self) -> EarlyProbeSourcePosition {
-        EarlyProbeSourcePosition::from_source_ordinal(self.source_ordinal())
-    }
-
+impl<const SOURCE_N: usize> EarlyProbeSourceSampleLayout<SOURCE_N> for EarlyProbeSourcePosition {
     fn source_sample(self, source: [NormalizedEdgeSample; SOURCE_N]) -> NormalizedEdgeSample {
-        source[self.source_position().index()]
+        source[self.index()]
     }
-}
-
-impl<SourceLayout, const SOURCE_N: usize> EarlyProbeSourceSampleLayout<SOURCE_N> for SourceLayout where
-    SourceLayout: EarlyProbeSourceSlot
-{
 }
 
 #[derive(Clone, Copy)]
@@ -1576,42 +1556,11 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum MidpointEarlyProbeSourceSampleLayout {
-    Start,
-    Midpoint,
-    End,
-}
+type MidpointEarlyProbeSampleRole = EarlyProbeSampleRole<EarlyProbeSourcePosition>;
+type MidpointEarlyProbeSampleLayout = EarlyProbeSampleLayout<EarlyProbeSourcePosition, 3, 5>;
 
-impl EarlyProbeSourceSlot for MidpointEarlyProbeSourceSampleLayout {
-    fn source_ordinal(self) -> usize {
-        self as usize
-    }
-}
-
-type MidpointEarlyProbeSampleRole = EarlyProbeSampleRole<MidpointEarlyProbeSourceSampleLayout>;
-type MidpointEarlyProbeSampleLayout =
-    EarlyProbeSampleLayout<MidpointEarlyProbeSourceSampleLayout, 3, 5>;
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum OuterEarlyProbeSourceSampleLayout {
-    Start,
-    FirstQuarter,
-    Midpoint,
-    SecondQuarter,
-    End,
-}
-
-impl EarlyProbeSourceSlot for OuterEarlyProbeSourceSampleLayout {
-    fn source_ordinal(self) -> usize {
-        self as usize
-    }
-}
-
-type OuterEarlyProbeSampleRole = EarlyProbeSampleRole<OuterEarlyProbeSourceSampleLayout>;
-type OuterEarlyProbeSampleLayout = EarlyProbeSampleLayout<OuterEarlyProbeSourceSampleLayout, 5, 7>;
+type OuterEarlyProbeSampleRole = EarlyProbeSampleRole<EarlyProbeSourcePosition>;
+type OuterEarlyProbeSampleLayout = EarlyProbeSampleLayout<EarlyProbeSourcePosition, 5, 7>;
 
 #[derive(Clone, Copy)]
 struct EarlyProbeRefinementStages {
@@ -2153,11 +2102,11 @@ const MIDPOINT_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<
         MidpointEdgeProbeSpanLayout::new(1, 2),
     ),
     MidpointEarlyProbeSampleLayout::new([
-        MidpointEarlyProbeSampleRole::Source(MidpointEarlyProbeSourceSampleLayout::Start),
+        MidpointEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::First),
         MidpointEarlyProbeSampleRole::FirstProbe,
-        MidpointEarlyProbeSampleRole::Source(MidpointEarlyProbeSourceSampleLayout::Midpoint),
+        MidpointEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Second),
         MidpointEarlyProbeSampleRole::SecondProbe,
-        MidpointEarlyProbeSampleRole::Source(MidpointEarlyProbeSourceSampleLayout::End),
+        MidpointEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Third),
     ]),
 );
 
@@ -2168,13 +2117,13 @@ const OUTER_EARLY_PROBE_STAGE_LAYOUT: EarlyProbeStageLayout<5, 7, OuterEarlyProb
             MidpointEdgeProbeSpanLayout::new(3, 4),
         ),
         OuterEarlyProbeSampleLayout::new([
-            OuterEarlyProbeSampleRole::Source(OuterEarlyProbeSourceSampleLayout::Start),
+            OuterEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::First),
             OuterEarlyProbeSampleRole::FirstProbe,
-            OuterEarlyProbeSampleRole::Source(OuterEarlyProbeSourceSampleLayout::FirstQuarter),
-            OuterEarlyProbeSampleRole::Source(OuterEarlyProbeSourceSampleLayout::Midpoint),
-            OuterEarlyProbeSampleRole::Source(OuterEarlyProbeSourceSampleLayout::SecondQuarter),
+            OuterEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Second),
+            OuterEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Third),
+            OuterEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Fourth),
             OuterEarlyProbeSampleRole::SecondProbe,
-            OuterEarlyProbeSampleRole::Source(OuterEarlyProbeSourceSampleLayout::End),
+            OuterEarlyProbeSampleRole::Source(EarlyProbeSourcePosition::Fifth),
         ]),
     );
 
