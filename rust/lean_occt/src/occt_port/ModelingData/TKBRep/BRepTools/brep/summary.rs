@@ -1336,11 +1336,9 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        EARLY_PROBE_REFINEMENT_STAGES.needs_refinement(
-            context,
-            edge_shape,
-            [*start, midpoint_sample, *end],
-        )?
+        EARLY_PROBE_REFINEMENT_STAGES
+            .stage_samples_or_refinement(context, edge_shape, [*start, midpoint_sample, *end])
+            .needs_refinement(context, edge_shape)?
     };
 
     if !needs_refinement {
@@ -1504,8 +1502,56 @@ impl EarlyProbeSampleRole {
 struct EarlyProbeStageChain {
     midpoint_stage: EarlyProbeStageLayout<3, 5>,
     outer_stage: EarlyProbeStageLayout<5, 7>,
+    interval_aware_tail: EarlyProbeIntervalAwareTail,
+}
+
+#[derive(Clone, Copy)]
+struct EarlyProbeIntervalAwareTail {
     side_layouts: PreparedIntervalAwareRefinementSideLayouts,
     coarse_refinement_checks_before_adaptive_chase: usize,
+}
+
+impl EarlyProbeIntervalAwareTail {
+    const fn new(
+        side_layouts: PreparedIntervalAwareRefinementSideLayouts,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Self {
+        Self {
+            side_layouts,
+            coarse_refinement_checks_before_adaptive_chase,
+        }
+    }
+
+    fn needs_refinement(
+        self,
+        samples: [NormalizedEdgeSample; 7],
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        self.side_layouts.needs_refinement(
+            samples,
+            context,
+            edge_shape,
+            self.coarse_refinement_checks_before_adaptive_chase,
+        )
+    }
+}
+
+enum EarlyProbeStageSamplesOrRefinement {
+    Samples {
+        tail: EarlyProbeIntervalAwareTail,
+        samples: [NormalizedEdgeSample; 7],
+    },
+    Refinement(Option<bool>),
+}
+
+impl EarlyProbeStageSamplesOrRefinement {
+    fn needs_refinement(self, context: &Context, edge_shape: &Shape) -> Option<bool> {
+        match self {
+            Self::Samples { tail, samples } => tail.needs_refinement(samples, context, edge_shape),
+            Self::Refinement(result) => result,
+        }
+    }
 }
 
 impl EarlyProbeStageChain {
@@ -1518,8 +1564,10 @@ impl EarlyProbeStageChain {
         Self {
             midpoint_stage,
             outer_stage,
-            side_layouts,
-            coarse_refinement_checks_before_adaptive_chase,
+            interval_aware_tail: EarlyProbeIntervalAwareTail::new(
+                side_layouts,
+                coarse_refinement_checks_before_adaptive_chase,
+            ),
         }
     }
 
@@ -1528,8 +1576,9 @@ impl EarlyProbeStageChain {
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
-    ) -> Result<[NormalizedEdgeSample; 7], Option<bool>> {
-        self.midpoint_stage
+    ) -> EarlyProbeStageSamplesOrRefinement {
+        match self
+            .midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, source)
             .and_then(|midpoint_stage_samples| {
                 self.outer_stage.stage_samples_or_refinement(
@@ -1537,27 +1586,13 @@ impl EarlyProbeStageChain {
                     edge_shape,
                     midpoint_stage_samples,
                 )
-            })
-    }
-
-    fn needs_refinement(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; 3],
-    ) -> Option<bool> {
-        self.stage_samples_or_refinement(context, edge_shape, source)
-            .map_or_else(
-                |result| result,
-                |samples| {
-                    self.side_layouts.needs_refinement(
-                        samples,
-                        context,
-                        edge_shape,
-                        self.coarse_refinement_checks_before_adaptive_chase,
-                    )
-                },
-            )
+            }) {
+            Ok(samples) => EarlyProbeStageSamplesOrRefinement::Samples {
+                tail: self.interval_aware_tail,
+                samples,
+            },
+            Err(result) => EarlyProbeStageSamplesOrRefinement::Refinement(result),
+        }
     }
 }
 
