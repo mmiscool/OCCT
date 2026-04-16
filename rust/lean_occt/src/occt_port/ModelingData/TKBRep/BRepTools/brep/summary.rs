@@ -1526,44 +1526,71 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.continue_with_stage(
+        self.stage_outcome(
             self.midpoint_stage,
             context,
             edge_shape,
             [*start, *midpoint, *end],
-            |midpoint_samples| {
-                self.continue_with_stage(
-                    self.outer_stage,
-                    context,
-                    edge_shape,
-                    midpoint_samples,
-                    |outer_samples| {
-                        self.interval_aware_side_layouts.needs_refinement(
-                            &outer_samples,
-                            context,
-                            edge_shape,
-                            self.coarse_refinement_checks_before_adaptive_chase,
-                        )
-                    },
-                )
-            },
-        )
+        )?
+        .and_then(|midpoint_samples| {
+            self.stage_outcome(self.outer_stage, context, edge_shape, midpoint_samples)
+        })?
+        .finish(|outer_samples| {
+            self.interval_aware_side_layouts.needs_refinement(
+                &outer_samples,
+                context,
+                edge_shape,
+                self.coarse_refinement_checks_before_adaptive_chase,
+            )
+        })
     }
 
-    fn continue_with_stage<const SOURCE_N: usize, const STAGE_N: usize>(
+    fn stage_outcome<const SOURCE_N: usize, const STAGE_N: usize>(
         self,
         layout: EarlyProbeStageLayout<SOURCE_N, STAGE_N>,
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; SOURCE_N],
-        next: impl FnOnce([NormalizedEdgeSample; STAGE_N]) -> Option<bool>,
-    ) -> Option<bool> {
+    ) -> Option<EarlyProbeStageOutcome<STAGE_N>> {
         let probes = layout
             .probe_request_layout
             .probe_pair(context, edge_shape, source)?;
-        match probes.refinement_result(source, layout.sample_roles) {
-            Ok(samples) => next(samples),
-            Err(result) => Some(result),
+        Some(EarlyProbeStageOutcome::from_refinement_result(
+            probes.refinement_result(source, layout.sample_roles),
+        ))
+    }
+}
+
+enum EarlyProbeStageOutcome<const STAGE_N: usize> {
+    Complete(bool),
+    Samples([NormalizedEdgeSample; STAGE_N]),
+}
+
+impl<const STAGE_N: usize> EarlyProbeStageOutcome<STAGE_N> {
+    fn from_refinement_result(result: Result<[NormalizedEdgeSample; STAGE_N], bool>) -> Self {
+        match result {
+            Ok(samples) => Self::Samples(samples),
+            Err(result) => Self::Complete(result),
+        }
+    }
+
+    fn and_then<const NEXT_N: usize>(
+        self,
+        next: impl FnOnce([NormalizedEdgeSample; STAGE_N]) -> Option<EarlyProbeStageOutcome<NEXT_N>>,
+    ) -> Option<EarlyProbeStageOutcome<NEXT_N>> {
+        match self {
+            Self::Complete(result) => Some(EarlyProbeStageOutcome::Complete(result)),
+            Self::Samples(samples) => next(samples),
+        }
+    }
+
+    fn finish(
+        self,
+        next: impl FnOnce([NormalizedEdgeSample; STAGE_N]) -> Option<bool>,
+    ) -> Option<bool> {
+        match self {
+            Self::Complete(result) => Some(result),
+            Self::Samples(samples) => next(samples),
         }
     }
 }
