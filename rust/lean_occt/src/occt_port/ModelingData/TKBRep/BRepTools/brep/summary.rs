@@ -1470,6 +1470,19 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             ControlFlow::Break(result) => Err(result),
         })
     }
+
+    fn continue_stage_samples_or_result<const NEXT_N: usize>(
+        self,
+        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_N>,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+    ) -> Option<Result<[NormalizedEdgeSample; NEXT_N], bool>> {
+        match self.stage_samples_or_result(context, edge_shape, source)? {
+            Ok(samples) => next_stage.stage_samples_or_result(context, edge_shape, samples),
+            Err(result) => Some(Err(result)),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1555,7 +1568,8 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let midpoint_samples = match self.midpoint_stage.stage_samples_or_result(
+        let outer_samples = match self.midpoint_stage.continue_stage_samples_or_result(
+            self.outer_stage,
             context,
             edge_shape,
             [*start, *midpoint, *end],
@@ -1563,15 +1577,6 @@ impl EarlyProbeRefinementStages {
             Ok(samples) => samples,
             Err(result) => return Some(result),
         };
-
-        let outer_samples =
-            match self
-                .outer_stage
-                .stage_samples_or_result(context, edge_shape, midpoint_samples)?
-            {
-                Ok(samples) => samples,
-                Err(result) => return Some(result),
-            };
 
         self.interval_aware_side_layouts.needs_refinement(
             &outer_samples,
