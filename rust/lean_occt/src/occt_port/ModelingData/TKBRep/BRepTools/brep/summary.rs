@@ -1523,12 +1523,12 @@ impl EarlyProbeStageChain {
         }
     }
 
-    fn needs_refinement(
+    fn stage_samples_or_refinement(
         self,
         context: &Context,
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
-    ) -> Option<bool> {
+    ) -> Result<[NormalizedEdgeSample; 7], Option<bool>> {
         self.midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, source)
             .and_then(|midpoint_stage_samples| {
@@ -1538,6 +1538,15 @@ impl EarlyProbeStageChain {
                     midpoint_stage_samples,
                 )
             })
+    }
+
+    fn needs_refinement(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; 3],
+    ) -> Option<bool> {
+        self.stage_samples_or_refinement(context, edge_shape, source)
             .map_or_else(
                 |result| result,
                 |samples| {
