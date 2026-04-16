@@ -1607,12 +1607,6 @@ impl RefinementSegmentOutcome {
 }
 
 #[derive(Clone, Copy)]
-enum StrongerHalfOutcome {
-    NoHalf,
-    Half(RefinementSegment),
-}
-
-#[derive(Clone, Copy)]
 enum EdgeSampleExtremumOutcome {
     NoSample,
     Sample(EdgeSample),
@@ -1622,19 +1616,6 @@ enum EdgeSampleExtremumOutcome {
 enum MidpointEdgeProbeOutcome {
     NoProbe,
     Probe(NormalizedEdgeSample),
-}
-
-impl MidpointEdgeProbeOutcome {
-    fn midpoint_segment(
-        self,
-        start: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-    ) -> RefinementSegmentOutcome {
-        match self {
-            Self::NoProbe => RefinementSegmentOutcome::NoSegment,
-            Self::Probe(probe) => RefinementSegmentOutcome::from_samples(start, &probe, end),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1656,8 +1637,7 @@ impl PreparedRefinementSpanLayout {
     ) -> Option<RefinementSegmentOutcome> {
         let start = samples[self.start];
         let end = samples[self.end];
-        let inner_probe = midpoint_edge_probe(context, edge_shape, &start, &end)?;
-        Some(inner_probe.midpoint_segment(&start, &end))
+        midpoint_refinement_segment(context, edge_shape, &start, &end)
     }
 }
 
@@ -1806,7 +1786,7 @@ impl RefinementSegment {
         let mut adaptive_probe = *self;
 
         for _ in 0..coarse_refinement_checks_before_adaptive_chase {
-            let StrongerHalfOutcome::Half(probe) =
+            let RefinementSegmentOutcome::Segment(probe) =
                 adaptive_probe.stronger_half(context, edge_shape)?
             else {
                 return Some(false);
@@ -1819,7 +1799,7 @@ impl RefinementSegment {
             adaptive_probe = probe;
         }
 
-        let StrongerHalfOutcome::Half(mut probe) =
+        let RefinementSegmentOutcome::Segment(mut probe) =
             adaptive_probe.stronger_half(context, edge_shape)?
         else {
             return Some(false);
@@ -1840,7 +1820,8 @@ impl RefinementSegment {
             initial_chord_length,
             refinement_steps,
         ) {
-            let StrongerHalfOutcome::Half(next_probe) = probe.stronger_half(context, edge_shape)?
+            let RefinementSegmentOutcome::Segment(next_probe) =
+                probe.stronger_half(context, edge_shape)?
             else {
                 break;
             };
@@ -1851,19 +1832,21 @@ impl RefinementSegment {
         Some(probe.needs_local_refinement())
     }
 
-    fn stronger_half(&self, context: &Context, edge_shape: &Shape) -> Option<StrongerHalfOutcome> {
-        let outer_probe = midpoint_edge_probe(context, edge_shape, &self.start, &self.midpoint)?;
-        let inner_probe = midpoint_edge_probe(context, edge_shape, &self.midpoint, &self.end)?;
-
-        let stronger_half = RefinementSegmentOutcome::choose_stronger(
-            outer_probe.midpoint_segment(&self.start, &self.midpoint),
-            inner_probe.midpoint_segment(&self.midpoint, &self.end),
-        );
-
-        Some(match stronger_half {
-            Some(segment) => StrongerHalfOutcome::Half(segment),
-            None => StrongerHalfOutcome::NoHalf,
-        })
+    fn stronger_half(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<RefinementSegmentOutcome> {
+        Some(
+            RefinementSegmentOutcome::choose_stronger(
+                midpoint_refinement_segment(context, edge_shape, &self.start, &self.midpoint)?,
+                midpoint_refinement_segment(context, edge_shape, &self.midpoint, &self.end)?,
+            )
+            .map_or(
+                RefinementSegmentOutcome::NoSegment,
+                RefinementSegmentOutcome::Segment,
+            ),
+        )
     }
 }
 
@@ -1913,6 +1896,22 @@ fn midpoint_edge_probe(
         t: probe_t,
         sample: context.edge_sample(edge_shape, probe_t).ok()?,
     }))
+}
+
+fn midpoint_refinement_segment(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<RefinementSegmentOutcome> {
+    Some(
+        match midpoint_edge_probe(context, edge_shape, start, end)? {
+            MidpointEdgeProbeOutcome::NoProbe => RefinementSegmentOutcome::NoSegment,
+            MidpointEdgeProbeOutcome::Probe(probe) => {
+                RefinementSegmentOutcome::from_samples(start, &probe, end)
+            }
+        },
+    )
 }
 
 #[derive(Clone, Copy)]
