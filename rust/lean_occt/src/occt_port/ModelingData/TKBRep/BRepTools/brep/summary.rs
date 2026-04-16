@@ -1517,182 +1517,72 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
         return Some(true);
     }
 
-    sampled_edge_interval_needs_shoulder_probe_refinement(
+    sampled_edge_interval_needs_stronger_half_refinement(
         context,
         edge_shape,
         probe_start,
         probe_mid,
         probe_end,
+        3,
     )
 }
 
-fn sampled_edge_interval_needs_shoulder_probe_refinement(
+const HALF_REFINEMENT_MAX_STEPS: usize = 32;
+const HALF_REFINEMENT_RELATIVE_SCORE_FLOOR: f64 = 0.05;
+const HALF_REFINEMENT_ABSOLUTE_SCORE_FLOOR: f64 = 2.5e-4;
+const HALF_REFINEMENT_RELATIVE_T_SPAN_FLOOR: f64 = 1.0 / 16384.0;
+const HALF_REFINEMENT_ABSOLUTE_T_SPAN_FLOOR: f64 = 1.0e-6;
+const HALF_REFINEMENT_RELATIVE_CHORD_FLOOR: f64 = 1.0 / 16384.0;
+const HALF_REFINEMENT_ABSOLUTE_CHORD_FLOOR: f64 = 1.0e-6;
+
+#[derive(Clone, Copy)]
+struct RefinementHalf {
+    start: NormalizedEdgeSample,
+    midpoint: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+    score: f64,
+}
+
+fn sampled_edge_interval_needs_stronger_half_refinement(
     context: &Context,
     edge_shape: &Shape,
     start: &NormalizedEdgeSample,
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
+    coarse_refinement_checks_before_adaptive_chase: usize,
 ) -> Option<bool> {
-    let start_shoulder_probe_t = 0.5 * (start.t + midpoint.t);
-    let end_shoulder_probe_t = 0.5 * (midpoint.t + end.t);
+    let mut adaptive_start = *start;
+    let mut adaptive_midpoint = *midpoint;
+    let mut adaptive_end = *end;
 
-    let start_shoulder_probe = if approx_eq(start_shoulder_probe_t, start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(start_shoulder_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: start_shoulder_probe_t,
-            sample: context
-                .edge_sample(edge_shape, start_shoulder_probe_t)
-                .ok()?,
-        })
-    };
-    let end_shoulder_probe = if approx_eq(end_shoulder_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-        || approx_eq(end_shoulder_probe_t, end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: end_shoulder_probe_t,
-            sample: context.edge_sample(edge_shape, end_shoulder_probe_t).ok()?,
-        })
-    };
+    for _ in 0..coarse_refinement_checks_before_adaptive_chase {
+        let Some(probe) = choose_stronger_refinement_half(
+            context,
+            edge_shape,
+            &adaptive_start,
+            &adaptive_midpoint,
+            &adaptive_end,
+        )?
+        else {
+            return Some(false);
+        };
 
-    let start_shoulder_score = start_shoulder_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
-        .unwrap_or(0.0);
-    let end_shoulder_score = end_shoulder_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
-        .unwrap_or(0.0);
-    if start_shoulder_score <= 1.0e-12 && end_shoulder_score <= 1.0e-12 {
-        return Some(false);
+        if sampled_edge_interval_needs_refinement(&probe.start, &probe.midpoint, &probe.end) {
+            return Some(true);
+        }
+
+        adaptive_start = probe.start;
+        adaptive_midpoint = probe.midpoint;
+        adaptive_end = probe.end;
     }
 
-    let (probe_start, probe_mid, probe_end) = if start_shoulder_score >= end_shoulder_score {
-        (start, start_shoulder_probe.as_ref()?, midpoint)
-    } else {
-        (midpoint, end_shoulder_probe.as_ref()?, end)
-    };
-
-    if sampled_edge_interval_needs_refinement(probe_start, probe_mid, probe_end) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_endpoint_probe_refinement(
+    let Some(mut probe) = choose_stronger_refinement_half(
         context,
         edge_shape,
-        probe_start,
-        probe_mid,
-        probe_end,
-    )
-}
-
-fn sampled_edge_interval_needs_endpoint_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<bool> {
-    let start_endpoint_probe_t = 0.5 * (start.t + midpoint.t);
-    let end_endpoint_probe_t = 0.5 * (midpoint.t + end.t);
-
-    let start_endpoint_probe = if approx_eq(start_endpoint_probe_t, start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(start_endpoint_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: start_endpoint_probe_t,
-            sample: context
-                .edge_sample(edge_shape, start_endpoint_probe_t)
-                .ok()?,
-        })
-    };
-    let end_endpoint_probe = if approx_eq(end_endpoint_probe_t, midpoint.t, 1.0e-12, 1.0e-12)
-        || approx_eq(end_endpoint_probe_t, end.t, 1.0e-12, 1.0e-12)
-    {
-        None
-    } else {
-        Some(NormalizedEdgeSample {
-            t: end_endpoint_probe_t,
-            sample: context.edge_sample(edge_shape, end_endpoint_probe_t).ok()?,
-        })
-    };
-
-    let start_endpoint_score = start_endpoint_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(start, probe, midpoint))
-        .unwrap_or(0.0);
-    let end_endpoint_score = end_endpoint_probe
-        .as_ref()
-        .map(|probe| sampled_edge_interval_refinement_signal_strength(midpoint, probe, end))
-        .unwrap_or(0.0);
-    if start_endpoint_score <= 1.0e-12 && end_endpoint_score <= 1.0e-12 {
-        return Some(false);
-    }
-
-    let (probe_start, probe_mid, probe_end) = if start_endpoint_score >= end_endpoint_score {
-        (start, start_endpoint_probe.as_ref()?, midpoint)
-    } else {
-        (midpoint, end_endpoint_probe.as_ref()?, end)
-    };
-
-    if sampled_edge_interval_needs_refinement(probe_start, probe_mid, probe_end) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_terminal_probe_refinement(
-        context,
-        edge_shape,
-        probe_start,
-        probe_mid,
-        probe_end,
-    )
-}
-
-fn sampled_edge_interval_needs_terminal_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<bool> {
-    let Some(RefinementHalf {
-        start: probe_start,
-        midpoint: probe_mid,
-        end: probe_end,
-        ..
-    }) = choose_stronger_refinement_half(context, edge_shape, start, midpoint, end)?
-    else {
-        return Some(false);
-    };
-
-    if sampled_edge_interval_needs_refinement(&probe_start, &probe_mid, &probe_end) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
-        context,
-        edge_shape,
-        &probe_start,
-        &probe_mid,
-        &probe_end,
-    )
-}
-
-fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    start: &NormalizedEdgeSample,
-    midpoint: &NormalizedEdgeSample,
-    end: &NormalizedEdgeSample,
-) -> Option<bool> {
-    let Some(mut probe) =
-        choose_stronger_refinement_half(context, edge_shape, start, midpoint, end)?
+        &adaptive_start,
+        &adaptive_midpoint,
+        &adaptive_end,
+    )?
     else {
         return Some(false);
     };
@@ -1705,7 +1595,7 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
     ));
     let mut refinement_steps = 1;
 
-    while terminal_endpoint_half_refinement_should_continue(
+    while half_refinement_should_continue(
         &probe,
         initial_score,
         initial_t_span,
@@ -1733,35 +1623,19 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
     ))
 }
 
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_MAX_STEPS: usize = 32;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_SCORE_FLOOR: f64 = 0.05;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_SCORE_FLOOR: f64 = 2.5e-4;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_T_SPAN_FLOOR: f64 = 1.0 / 16384.0;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_T_SPAN_FLOOR: f64 = 1.0e-6;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_CHORD_FLOOR: f64 = 1.0 / 16384.0;
-const TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_CHORD_FLOOR: f64 = 1.0e-6;
-
-#[derive(Clone, Copy)]
-struct RefinementHalf {
-    start: NormalizedEdgeSample,
-    midpoint: NormalizedEdgeSample,
-    end: NormalizedEdgeSample,
-    score: f64,
-}
-
-fn terminal_endpoint_half_refinement_should_continue(
+fn half_refinement_should_continue(
     probe: &RefinementHalf,
     initial_score: f64,
     initial_t_span: f64,
     initial_chord_length: f64,
     refinement_steps: usize,
 ) -> bool {
-    if refinement_steps >= TERMINAL_ENDPOINT_HALF_REFINEMENT_MAX_STEPS {
+    if refinement_steps >= HALF_REFINEMENT_MAX_STEPS {
         return false;
     }
 
-    let signal_floor = TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_SCORE_FLOOR
-        .max(TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_SCORE_FLOOR * initial_score);
+    let signal_floor = HALF_REFINEMENT_ABSOLUTE_SCORE_FLOOR
+        .max(HALF_REFINEMENT_RELATIVE_SCORE_FLOOR * initial_score);
     if probe.score <= signal_floor {
         return false;
     }
@@ -1771,10 +1645,10 @@ fn terminal_endpoint_half_refinement_should_continue(
         probe.end.sample.position,
         probe.start.sample.position,
     ));
-    let t_span_floor = TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_T_SPAN_FLOOR
-        .max(TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_T_SPAN_FLOOR * initial_t_span);
-    let chord_floor = TERMINAL_ENDPOINT_HALF_REFINEMENT_ABSOLUTE_CHORD_FLOOR
-        .max(TERMINAL_ENDPOINT_HALF_REFINEMENT_RELATIVE_CHORD_FLOOR * initial_chord_length);
+    let t_span_floor = HALF_REFINEMENT_ABSOLUTE_T_SPAN_FLOOR
+        .max(HALF_REFINEMENT_RELATIVE_T_SPAN_FLOOR * initial_t_span);
+    let chord_floor = HALF_REFINEMENT_ABSOLUTE_CHORD_FLOOR
+        .max(HALF_REFINEMENT_RELATIVE_CHORD_FLOOR * initial_chord_length);
 
     current_t_span > t_span_floor || current_chord_length > chord_floor
 }
