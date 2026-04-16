@@ -1558,20 +1558,18 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        match self.midpoint_stage.continue_stage_progress(
-            context,
-            edge_shape,
-            [*start, *midpoint, *end],
-            self.outer_stage,
-        )? {
-            ControlFlow::Continue(samples) => self.interval_aware_side_layouts.needs_refinement(
-                &samples,
+        self.interval_aware_side_layouts
+            .needs_refinement_from_stage_progress(
+                self.midpoint_stage.continue_stage_progress(
+                    context,
+                    edge_shape,
+                    [*start, *midpoint, *end],
+                    self.outer_stage,
+                )?,
                 context,
                 edge_shape,
                 self.coarse_refinement_checks_before_adaptive_chase,
-            ),
-            ControlFlow::Break(result) => Some(result),
-        }
+            )
     }
 }
 
@@ -1774,6 +1772,24 @@ impl PreparedIntervalAwareRefinementSideLayouts {
             edge_shape,
             coarse_refinement_checks_before_adaptive_chase,
         )
+    }
+
+    fn needs_refinement_from_stage_progress(
+        self,
+        stage_progress: ControlFlow<bool, [NormalizedEdgeSample; 7]>,
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        match stage_progress {
+            ControlFlow::Continue(samples) => self.needs_refinement(
+                &samples,
+                context,
+                edge_shape,
+                coarse_refinement_checks_before_adaptive_chase,
+            ),
+            ControlFlow::Break(result) => Some(result),
+        }
     }
 }
 
