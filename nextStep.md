@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining one-use final `Result<[NormalizedEdgeSample; 7], Option<bool>> -> Option<bool>` bounce now sitting in `EarlyProbeStagePair::needs_refinement()`, so the typed two-stage early probe progression and interval-aware dispatch can sit on one smaller Rust-owned boundary without the last pair-level terminal translation.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining one-use midpoint-stage to outer-stage `and_then(...)` chain still sitting in `EarlyProbeStagePair::needs_refinement()`, so the typed two-stage early probe progression can sit on one smaller Rust-owned boundary before it hands off to interval-aware dispatch.
 
 ## Current State
 
@@ -44,6 +44,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`MidpointEdgeProbePairOutcome`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `Err(false)` vs staged-sample result translation for early probe stages, so the stage runner no longer matches `MidpointEdgeProbePairOutcome::{NoPair, Pair(...)}` itself
   - [`RefinementSegment::stronger_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now stays on that same explicit `RefinementSegmentOutcome` boundary instead of bouncing through a separate `StrongerHalfOutcome`
   - the four unsupported-edge extremum solvers now return an explicit `EdgeSampleExtremumOutcome` instead of nested `Option<Option<EdgeSample>>`
+  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the final `Result<[NormalizedEdgeSample; 7], Option<bool>> -> Option<bool>` carry through `needs_refinement_from_stage_samples_or_refinement(...)`, so the old pair-level `map_or_else(|result| result, |samples| ...)` terminal bounce is gone
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still owns score-based creation, stronger-segment choice, local-window checks, and the adaptive stronger-half chase
 - The exercised non-solid offset shell fixture stays green on the Rust-first path.
 - The exercised closed offset solid fixture stays green, including the direct shell-local parity assertion in [`ported_brep_uses_rust_owned_volume_for_offset_solids()`](rust/lean_occt/tests/brep_workflows.rs).
@@ -61,9 +62,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns winning-segment selection and terminal `segment.needs_refinement(...)` dispatch once it receives the final 7-sample boundary
   - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
   - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-  - but [`EarlyProbeStagePair::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still finishes the shared stage chain with a one-use `map_or_else(|result| result, |samples| ...)` bounce before interval-aware dispatch
+  - but [`EarlyProbeStagePair::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still carries midpoint-stage output into outer-stage with a one-use shared `and_then(...)` stage chain before it hands the typed result to the interval-aware boundary
 
-The next blocker is to keep the typed stage-pair path but collapse that final `Result<[NormalizedEdgeSample; 7], Option<bool>>` translation inside `EarlyProbeStagePair::needs_refinement()`, so the two-stage early probe progression and interval-aware dispatch can stay on one smaller Rust-owned boundary without the last pair-level terminal bounce.
+The next blocker is to keep the typed stage-pair path but collapse that remaining midpoint-stage to outer-stage `and_then(...)` chain inside `EarlyProbeStagePair::needs_refinement()`, so the two-stage early probe progression can stay on one smaller Rust-owned boundary before interval-aware dispatch.
 
 ## Focus
 
@@ -81,4 +82,4 @@ The next blocker is to keep the typed stage-pair path but collapse that final `R
 
 ## Why This Is Next
 
-This turn moved the early-stage carry onto `EarlyProbeStageLayout::stage_samples_or_refinement()` and then collapsed the duplicated midpoint-stage / outer-stage `Ok(samples)` / `Err(result)` unwrap into one shared `and_then(...)` stage chain inside `EarlyProbeStagePair::needs_refinement()`. That leaves the next real seam smaller again: the pair still finishes that shared chain through a one-use `map_or_else(|result| result, |samples| ...)` bounce before interval-aware dispatch.
+This turn moved the final `Result<[NormalizedEdgeSample; 7], Option<bool>> -> Option<bool>` carry off `EarlyProbeStagePair::needs_refinement()` and onto `PreparedIntervalAwareRefinementSideLayouts::needs_refinement_from_stage_samples_or_refinement(...)`. That leaves the next real seam smaller again: the pair still keeps midpoint-stage to outer-stage progression on a one-use shared `and_then(...)` chain before the typed interval-aware handoff.

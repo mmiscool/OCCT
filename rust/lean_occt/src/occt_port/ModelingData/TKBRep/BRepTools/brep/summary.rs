@@ -1543,27 +1543,45 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        self.midpoint_stage
-            .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
-            .and_then(|midpoint_samples| {
-                self.outer_stage
-                    .stage_samples_or_refinement(context, edge_shape, midpoint_samples)
-            })
-            .map_or_else(
-                |result| result,
-                |samples| {
-                    self.interval_aware_side_layouts.needs_refinement(
-                        samples,
-                        context,
-                        edge_shape,
-                        self.coarse_refinement_checks_before_adaptive_chase,
-                    )
-                },
+        self.interval_aware_side_layouts
+            .needs_refinement_from_stage_samples_or_refinement(
+                self.midpoint_stage
+                    .stage_samples_or_refinement(context, edge_shape, [*start, *midpoint, *end])
+                    .and_then(|midpoint_samples| {
+                        self.outer_stage.stage_samples_or_refinement(
+                            context,
+                            edge_shape,
+                            midpoint_samples,
+                        )
+                    }),
+                context,
+                edge_shape,
+                self.coarse_refinement_checks_before_adaptive_chase,
             )
     }
 }
 
 impl PreparedIntervalAwareRefinementSideLayouts {
+    fn needs_refinement_from_stage_samples_or_refinement(
+        self,
+        samples_or_refinement: Result<[NormalizedEdgeSample; 7], Option<bool>>,
+        context: &Context,
+        edge_shape: &Shape,
+        coarse_refinement_checks_before_adaptive_chase: usize,
+    ) -> Option<bool> {
+        samples_or_refinement.map_or_else(
+            |result| result,
+            |samples| {
+                self.needs_refinement(
+                    samples,
+                    context,
+                    edge_shape,
+                    coarse_refinement_checks_before_adaptive_chase,
+                )
+            },
+        )
+    }
+
     fn needs_refinement(
         self,
         samples: [NormalizedEdgeSample; 7],
