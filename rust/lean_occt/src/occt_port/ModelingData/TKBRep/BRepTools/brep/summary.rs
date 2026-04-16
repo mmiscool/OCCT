@@ -1856,12 +1856,53 @@ fn sampled_edge_interval_needs_terminal_endpoint_probe_refinement(
         .map(|probe| sampled_edge_interval_refinement_signal_strength(side_mid, probe, side_end))
         .unwrap_or(0.0);
 
-    let biased_probe = if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
-        side_mid
+    let (half_start, half_mid, half_end) = if outer_score <= 1.0e-12 && inner_score <= 1.0e-12 {
+        (side_start, side_mid, side_end)
     } else if outer_score >= inner_score {
-        outer_probe.as_ref()?
+        (side_start, outer_probe.as_ref()?, side_mid)
     } else {
-        inner_probe.as_ref()?
+        (side_mid, inner_probe.as_ref()?, side_end)
+    };
+
+    let outer_half_probe_t = 0.5 * (half_start.t + half_mid.t);
+    let inner_half_probe_t = 0.5 * (half_mid.t + half_end.t);
+
+    let outer_half_probe = if approx_eq(outer_half_probe_t, half_start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(outer_half_probe_t, half_mid.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: outer_half_probe_t,
+            sample: context.edge_sample(edge_shape, outer_half_probe_t).ok()?,
+        })
+    };
+    let inner_half_probe = if approx_eq(inner_half_probe_t, half_mid.t, 1.0e-12, 1.0e-12)
+        || approx_eq(inner_half_probe_t, half_end.t, 1.0e-12, 1.0e-12)
+    {
+        None
+    } else {
+        Some(NormalizedEdgeSample {
+            t: inner_half_probe_t,
+            sample: context.edge_sample(edge_shape, inner_half_probe_t).ok()?,
+        })
+    };
+
+    let outer_half_score = outer_half_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(half_start, probe, half_mid))
+        .unwrap_or(0.0);
+    let inner_half_score = inner_half_probe
+        .as_ref()
+        .map(|probe| sampled_edge_interval_refinement_signal_strength(half_mid, probe, half_end))
+        .unwrap_or(0.0);
+
+    let biased_probe = if outer_half_score <= 1.0e-12 && inner_half_score <= 1.0e-12 {
+        half_mid
+    } else if outer_half_score >= inner_half_score {
+        outer_half_probe.as_ref()?
+    } else {
+        inner_half_probe.as_ref()?
     };
 
     Some(sampled_edge_interval_needs_refinement(
