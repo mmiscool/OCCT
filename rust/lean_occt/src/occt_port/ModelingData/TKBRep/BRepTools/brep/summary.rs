@@ -1443,12 +1443,173 @@ fn sampled_edge_interval_needs_asymmetric_probe_refinement(
         sample: context.edge_sample(edge_shape, right_outer_probe_t).ok()?,
     };
 
-    Some(
-        sampled_edge_interval_needs_refinement(start, &left_outer_probe, first_probe)
-            || sampled_edge_interval_needs_refinement(&left_outer_probe, first_probe, midpoint)
-            || sampled_edge_interval_needs_refinement(midpoint, second_probe, &right_outer_probe)
-            || sampled_edge_interval_needs_refinement(second_probe, &right_outer_probe, end),
+    if sampled_edge_interval_needs_refinement(start, &left_outer_probe, first_probe)
+        || sampled_edge_interval_needs_refinement(&left_outer_probe, first_probe, midpoint)
+        || sampled_edge_interval_needs_refinement(midpoint, second_probe, &right_outer_probe)
+        || sampled_edge_interval_needs_refinement(second_probe, &right_outer_probe, end)
+    {
+        return Some(true);
+    }
+
+    sampled_edge_interval_needs_interval_aware_probe_refinement(
+        context,
+        edge_shape,
+        start,
+        first_probe,
+        midpoint,
+        second_probe,
+        end,
     )
+}
+
+fn sampled_edge_interval_needs_interval_aware_probe_refinement(
+    context: &Context,
+    edge_shape: &Shape,
+    start: &NormalizedEdgeSample,
+    first_probe: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    second_probe: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<bool> {
+    let left_score = sampled_edge_interval_refinement_signal_strength(start, first_probe, midpoint);
+    let right_score = sampled_edge_interval_refinement_signal_strength(midpoint, second_probe, end);
+    if left_score <= 1.0e-12 && right_score <= 1.0e-12 {
+        return Some(false);
+    }
+
+    let (probe_start, probe_end) = if left_score >= right_score {
+        (first_probe, midpoint)
+    } else {
+        (midpoint, second_probe)
+    };
+
+    let biased_probe_t = 0.5 * (probe_start.t + probe_end.t);
+    if approx_eq(biased_probe_t, probe_start.t, 1.0e-12, 1.0e-12)
+        || approx_eq(biased_probe_t, probe_end.t, 1.0e-12, 1.0e-12)
+    {
+        return Some(false);
+    }
+
+    let biased_probe = NormalizedEdgeSample {
+        t: biased_probe_t,
+        sample: context.edge_sample(edge_shape, biased_probe_t).ok()?,
+    };
+
+    Some(sampled_edge_interval_needs_refinement(
+        probe_start,
+        &biased_probe,
+        probe_end,
+    ))
+}
+
+fn sampled_edge_interval_refinement_signal_strength(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> f64 {
+    midpoint_edge_interval_bbox_expansion_amount(
+        start.sample.position,
+        midpoint.sample.position,
+        end.sample.position,
+    ) + interval_tangent_turn_strength(
+        start.sample.tangent,
+        midpoint.sample.tangent,
+        end.sample.tangent,
+    ) + interval_midpoint_axis_position_shoulder_strength(start, midpoint, end)
+        + interval_midpoint_chord_bend_strength(
+            start.sample.position,
+            midpoint.sample.position,
+            end.sample.position,
+        )
+}
+
+fn midpoint_edge_interval_bbox_expansion_amount(
+    start: [f64; 3],
+    midpoint: [f64; 3],
+    end: [f64; 3],
+) -> f64 {
+    (0..3)
+        .map(|axis| {
+            let interval_min = start[axis].min(end[axis]);
+            let interval_max = start[axis].max(end[axis]);
+            (interval_min - midpoint[axis])
+                .max(0.0)
+                .max(midpoint[axis] - interval_max)
+        })
+        .fold(0.0, f64::max)
+}
+
+fn interval_tangent_turn_strength(
+    start_tangent: [f64; 3],
+    midpoint_tangent: [f64; 3],
+    end_tangent: [f64; 3],
+) -> f64 {
+    (0..3)
+        .map(|axis| {
+            let axis_values = [
+                start_tangent[axis].abs(),
+                midpoint_tangent[axis].abs(),
+                end_tangent[axis].abs(),
+            ];
+            let scale = axis_values.into_iter().fold(1.0, f64::max);
+            let delta = (start_tangent[axis] - midpoint_tangent[axis])
+                .abs()
+                .max((midpoint_tangent[axis] - end_tangent[axis]).abs())
+                .max((start_tangent[axis] - end_tangent[axis]).abs());
+            let sign_bonus = if tangent_sign_changes(start_tangent[axis], midpoint_tangent[axis])
+                || tangent_sign_changes(midpoint_tangent[axis], end_tangent[axis])
+                || tangent_sign_changes(start_tangent[axis], end_tangent[axis])
+            {
+                1.0
+            } else {
+                0.0
+            };
+            sign_bonus + delta / scale
+        })
+        .fold(0.0, f64::max)
+}
+
+fn interval_midpoint_axis_position_shoulder_strength(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> f64 {
+    let interval_t_span = (end.t - start.t).abs();
+    if interval_t_span <= 1.0e-12 {
+        return 0.0;
+    }
+
+    let interpolation_weight = ((midpoint.t - start.t) / interval_t_span).clamp(0.0, 1.0);
+    let chord_length = norm3(subtract3(end.sample.position, start.sample.position));
+    (0..3)
+        .map(|axis| {
+            let expected_axis_value = start.sample.position[axis]
+                + interpolation_weight * (end.sample.position[axis] - start.sample.position[axis]);
+            let deviation = (midpoint.sample.position[axis] - expected_axis_value).abs();
+            let axis_interval_span =
+                (end.sample.position[axis] - start.sample.position[axis]).abs();
+            let axis_scale = chord_length.max(axis_interval_span).max(1.0);
+            deviation / axis_scale
+        })
+        .fold(0.0, f64::max)
+}
+
+fn interval_midpoint_chord_bend_strength(
+    start: [f64; 3],
+    midpoint: [f64; 3],
+    end: [f64; 3],
+) -> f64 {
+    let chord = subtract3(end, start);
+    let chord_length = norm3(chord);
+    if chord_length <= 1.0e-12 {
+        return norm3(subtract3(midpoint, start));
+    }
+
+    let start_to_midpoint = subtract3(midpoint, start);
+    let projection = dot3(start_to_midpoint, chord) / dot3(chord, chord).max(1.0e-18);
+    let closest_point = add3(start, scale3(chord, projection.clamp(0.0, 1.0)));
+    let deviation = norm3(subtract3(midpoint, closest_point));
+    deviation / chord_length.max(1.0)
 }
 
 fn append_axis_turning_edge_samples(
