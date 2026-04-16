@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The early unsupported-edge probe-refinement entry now carries prepared midpoint and outer probe chains instead of threading long raw sample lists through the asymmetric and interval-aware stages. The next bounded Rust-first cut is to move the remaining interval-aware side selection and side-specific segment preparation onto that prepared outer-probe-chain boundary so the early refinement entry becomes type-owned end to end.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The early unsupported-edge probe-refinement entry is now carrier-owned end to end: `PreparedMidpointProbeChain` decides when to advance into outer probes, and `PreparedOuterProbeChain` now owns the interval-aware local-window check, stronger-segment pick, and handoff into the shared stronger-half chase. The next bounded Rust-first cut is to collapse the remaining interval-aware staging split so `PreparedOuterProbeChain` can hand the winning interval-aware `RefinementSegment` directly to the shared refinement path instead of bouncing through `PreparedIntervalAwareRefinementSide`.
 
 ## Current State
 
@@ -16,12 +16,12 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - The late refinement ladder is structurally tighter now:
   - [`scored_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now builds the reusable scored segment carrier used by both interval-aware and stronger-half refinement
   - [`choose_stronger_refinement_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared score-based segment choice used by the interval-aware `left/right` and `outer/inner` stage as well as the later stronger-half chase
-  - [`choose_interval_aware_refinement_side()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`prepare_interval_aware_refinement_side()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now isolate the last side-specific assembly at the interval-aware entry, including reuse of [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
   - [`midpoint_edge_probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now prepares the earlier midpoint and outer probe pairs once for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the shared sliding 3-sample window checks used by those early entry stages
-  - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/first_probe/midpoint/second_probe/end` early probe carrier passed into the asymmetric stage
-  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier passed into the interval-aware stage
+  - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/first_probe/midpoint/second_probe/end` early probe carrier and decides when midpoint-stage evidence is strong enough to advance into outer probes
+  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier passed into the interval-aware stage, along with the interval-aware `left/right` choice, side-specific `outer`/`inner` segment preparation, local-window check, stronger-segment choice, and handoff into the shared stronger-half chase
   - [`sampled_edge_interval_needs_stronger_half_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still owns the shared stronger-half chase
+  - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now just the last interval-aware staging carrier between `PreparedOuterProbeChain` and the shared stronger-half refinement path
   - [`choose_stronger_refinement_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now serve the later shoulder/endpoint/terminal narrowing path through one helper with staged coarse checks
   - [`half_refinement_should_continue()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now provides the shared signal/span-driven adaptive stop rule, with the max-step limit kept only as a safety ceiling
 - The exercised non-solid offset shell fixture stays green on the Rust-first path.
@@ -31,12 +31,12 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 `offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. The deeper late refinement tail is no longer the structural problem: early probe preparation, local probe-window checks, interval-aware side preparation, and the later stronger-half refinement now share the same midpoint-probe and scored-segment machinery.
 
-The remaining duplication is no longer the raw early probe chain; that handoff is now carried by prepared midpoint and outer probe-chain structs. The remaining structural gap is that the interval-aware stage still treats those carriers as dumb bags of samples. [`sampled_edge_interval_needs_interval_aware_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still relies on free helpers that manually:
+The remaining duplication is no longer the raw early probe chain, and it is no longer the stage wrappers either. The remaining structural gap is the last interval-aware staging split inside the outer carrier. [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still has to:
 
-- choose the suspicious `left` vs `right` interval-aware side outside the prepared carrier
-- rebuild the side-specific `outer` and `inner` segment grouping from the carrier fields outside the prepared carrier before handing off to the shared stronger-half chase
+- prepare both the `outer` and `inner` interval-aware candidates under `PreparedIntervalAwareRefinementSide`
+- bounce back through that extra carrier to choose the stronger prepared segment before it can continue into the shared stronger-half chase
 
-The next blocker is to move that interval-aware side choice and side-specific segment preparation under `PreparedOuterProbeChain`, so the early stages become: prepare midpoint/outer probes once, run the shared local window checks, then hand the prepared chain one responsibility boundary at a time instead of bouncing between free helpers that reopen its fields.
+The next blocker is to collapse that last staging carrier so the outer chain can prepare and return the winning interval-aware `RefinementSegment` directly. That keeps the early shell-edge refinement boundary type-owned without adding another copied probe tier or another isolated chooser.
 
 ## Focus
 
@@ -53,6 +53,6 @@ The next blocker is to move that interval-aware side choice and side-specific se
 
 ## Why This Is Next
 
-This turn finished the intended earlier probe-entry cleanup: midpoint and outer probe construction now feed `PreparedMidpointProbeChain` and `PreparedOuterProbeChain`, and the asymmetric plus interval-aware stages no longer thread long raw sample argument lists.
+This turn carried the early probe-entry cleanup through the remaining wrapper boundary: `PreparedMidpointProbeChain` now owns progression into outer probes, and `PreparedOuterProbeChain` now owns interval-aware execution all the way up to the shared stronger-half chase.
 
-The next bounded step is to carry that consolidation one boundary deeper. If the interval-aware side choice and side preparation move under `PreparedOuterProbeChain`, the unsupported-edge shell-boundary path gets a cleaner Rust-owned early-refinement boundary without adding another fallback tier.
+The next bounded step is to remove the last interval-aware staging split inside that outer carrier. If `PreparedOuterProbeChain` can prepare the winning interval-aware `RefinementSegment` directly, the unsupported-edge shell-boundary path gets a cleaner Rust-owned refinement boundary without adding another fallback tier.

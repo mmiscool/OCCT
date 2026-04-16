@@ -1384,70 +1384,7 @@ fn sampled_edge_interval_needs_probe_refinement(
         return Some(false);
     };
 
-    if sampled_edge_sample_windows_need_refinement(&probe_chain.samples()) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_asymmetric_probe_refinement(context, edge_shape, &probe_chain)
-}
-
-fn sampled_edge_interval_needs_asymmetric_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    probe_chain: &PreparedMidpointProbeChain,
-) -> Option<bool> {
-    let Some(outer_probe_chain) =
-        PreparedOuterProbeChain::prepare(context, edge_shape, probe_chain)?
-    else {
-        return Some(false);
-    };
-
-    if sampled_edge_sample_windows_need_refinement(&outer_probe_chain.samples()) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_interval_aware_probe_refinement(
-        context,
-        edge_shape,
-        &outer_probe_chain,
-    )
-}
-
-fn sampled_edge_interval_needs_interval_aware_probe_refinement(
-    context: &Context,
-    edge_shape: &Shape,
-    probe_chain: &PreparedOuterProbeChain,
-) -> Option<bool> {
-    let Some(side) = choose_interval_aware_refinement_side(probe_chain) else {
-        return Some(false);
-    };
-
-    let prepared_side =
-        prepare_interval_aware_refinement_side(context, edge_shape, side, probe_chain)?;
-
-    let Some((_, probe_segment)) = choose_stronger_refinement_segment(
-        (false, prepared_side.outer_segment),
-        (true, prepared_side.inner_segment),
-    ) else {
-        return Some(false);
-    };
-
-    if sampled_edge_interval_needs_refinement(
-        &probe_segment.start,
-        &probe_segment.midpoint,
-        &probe_segment.end,
-    ) {
-        return Some(true);
-    }
-
-    sampled_edge_interval_needs_stronger_half_refinement(
-        context,
-        edge_shape,
-        &probe_segment.start,
-        &probe_segment.midpoint,
-        &probe_segment.end,
-        3,
-    )
+    probe_chain.needs_refinement(context, edge_shape)
 }
 
 #[derive(Clone, Copy)]
@@ -1490,6 +1427,19 @@ impl PreparedMidpointProbeChain {
             self.second_probe,
             self.end,
         ]
+    }
+
+    fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
+        if sampled_edge_sample_windows_need_refinement(&self.samples()) {
+            return Some(true);
+        }
+
+        let Some(outer_probe_chain) = PreparedOuterProbeChain::prepare(context, edge_shape, self)?
+        else {
+            return Some(false);
+        };
+
+        outer_probe_chain.needs_refinement(context, edge_shape)
     }
 }
 
@@ -1544,6 +1494,91 @@ impl PreparedOuterProbeChain {
             self.end,
         ]
     }
+
+    fn needs_refinement(&self, context: &Context, edge_shape: &Shape) -> Option<bool> {
+        if sampled_edge_sample_windows_need_refinement(&self.samples()) {
+            return Some(true);
+        }
+
+        let Some(prepared_side) = self.prepare_interval_aware_refinement(context, edge_shape)?
+        else {
+            return Some(false);
+        };
+
+        let Some(probe_segment) = prepared_side.stronger_segment() else {
+            return Some(false);
+        };
+
+        if sampled_edge_interval_needs_refinement(
+            &probe_segment.start,
+            &probe_segment.midpoint,
+            &probe_segment.end,
+        ) {
+            return Some(true);
+        }
+
+        sampled_edge_interval_needs_stronger_half_refinement(
+            context,
+            edge_shape,
+            &probe_segment.start,
+            &probe_segment.midpoint,
+            &probe_segment.end,
+            3,
+        )
+    }
+
+    fn prepare_interval_aware_refinement(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<Option<PreparedIntervalAwareRefinementSide>> {
+        let Some(side) = self.interval_aware_refinement_side() else {
+            return Some(None);
+        };
+
+        Some(Some(self.prepare_interval_aware_refinement_side(
+            context, edge_shape, side,
+        )?))
+    }
+
+    fn interval_aware_refinement_side(&self) -> Option<IntervalAwareRefinementSide> {
+        choose_stronger_refinement_segment(
+            (
+                IntervalAwareRefinementSide::Left,
+                scored_refinement_segment(&self.start, &self.first_probe, &self.midpoint),
+            ),
+            (
+                IntervalAwareRefinementSide::Right,
+                scored_refinement_segment(&self.midpoint, &self.second_probe, &self.end),
+            ),
+        )
+        .map(|(side, _)| side)
+    }
+
+    fn prepare_interval_aware_refinement_side(
+        &self,
+        context: &Context,
+        edge_shape: &Shape,
+        side: IntervalAwareRefinementSide,
+    ) -> Option<PreparedIntervalAwareRefinementSide> {
+        let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = match side {
+            IntervalAwareRefinementSide::Left => (
+                (&self.start, &self.left_outer_probe, &self.first_probe),
+                (&self.first_probe, &self.midpoint),
+            ),
+            IntervalAwareRefinementSide::Right => (
+                (&self.second_probe, &self.right_outer_probe, &self.end),
+                (&self.midpoint, &self.second_probe),
+            ),
+        };
+        let inner_probe = midpoint_edge_probe(context, edge_shape, inner_start, inner_end)?;
+        Some(PreparedIntervalAwareRefinementSide {
+            outer_segment: scored_refinement_segment(outer_start, outer_mid, outer_end),
+            inner_segment: inner_probe
+                .as_ref()
+                .and_then(|probe| scored_refinement_segment(inner_start, probe, inner_end)),
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1558,61 +1593,11 @@ struct PreparedIntervalAwareRefinementSide {
     inner_segment: Option<RefinementSegment>,
 }
 
-fn choose_interval_aware_refinement_side(
-    probe_chain: &PreparedOuterProbeChain,
-) -> Option<IntervalAwareRefinementSide> {
-    choose_stronger_refinement_segment(
-        (
-            IntervalAwareRefinementSide::Left,
-            scored_refinement_segment(
-                &probe_chain.start,
-                &probe_chain.first_probe,
-                &probe_chain.midpoint,
-            ),
-        ),
-        (
-            IntervalAwareRefinementSide::Right,
-            scored_refinement_segment(
-                &probe_chain.midpoint,
-                &probe_chain.second_probe,
-                &probe_chain.end,
-            ),
-        ),
-    )
-    .map(|(side, _)| side)
-}
-
-fn prepare_interval_aware_refinement_side(
-    context: &Context,
-    edge_shape: &Shape,
-    side: IntervalAwareRefinementSide,
-    probe_chain: &PreparedOuterProbeChain,
-) -> Option<PreparedIntervalAwareRefinementSide> {
-    let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = match side {
-        IntervalAwareRefinementSide::Left => (
-            (
-                &probe_chain.start,
-                &probe_chain.left_outer_probe,
-                &probe_chain.first_probe,
-            ),
-            (&probe_chain.first_probe, &probe_chain.midpoint),
-        ),
-        IntervalAwareRefinementSide::Right => (
-            (
-                &probe_chain.second_probe,
-                &probe_chain.right_outer_probe,
-                &probe_chain.end,
-            ),
-            (&probe_chain.midpoint, &probe_chain.second_probe),
-        ),
-    };
-    let inner_probe = midpoint_edge_probe(context, edge_shape, inner_start, inner_end)?;
-    Some(PreparedIntervalAwareRefinementSide {
-        outer_segment: scored_refinement_segment(outer_start, outer_mid, outer_end),
-        inner_segment: inner_probe
-            .as_ref()
-            .and_then(|probe| scored_refinement_segment(inner_start, probe, inner_end)),
-    })
+impl PreparedIntervalAwareRefinementSide {
+    fn stronger_segment(&self) -> Option<RefinementSegment> {
+        choose_stronger_refinement_segment((false, self.outer_segment), (true, self.inner_segment))
+            .map(|(_, segment)| segment)
+    }
 }
 
 const HALF_REFINEMENT_MAX_STEPS: usize = 32;
