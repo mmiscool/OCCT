@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the repeated midpoint-stage and outer-stage request ladder inside `sampled_edge_interval_needs_probe_refinement()`, so the request-layout acquisition, typed sample-layout materialization, and local sliding-window check stop being open-coded twice at the entry site and move behind one shared typed early-probe stage boundary.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining stage-pair wiring inside `sampled_edge_interval_needs_probe_refinement()`, so the midpoint-stage and outer-stage request-layout/sample-layout pairing plus the `PreparedEarlyProbeStage` match stop being open-coded twice at the entry site and move behind one typed early-stage layout boundary.
 
 ## Current State
 
@@ -16,14 +16,10 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - The unsupported-edge refinement path is now structurally tighter:
   - [`MidpointEdgeProbePairRequest`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and the stage request layouts now prepare the earlier midpoint and outer probe pairs for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the shared sliding 3-sample window checks used by those early entry stages
-- [`sampled_edge_interval_needs_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps the full early probe entry inline on the Rust side:
-  - midpoint-stage request-layout acquisition
-  - typed five-sample midpoint-chain materialization for `start/first_probe/midpoint/second_probe/end`
-  - midpoint local sliding-window check
-  - outer-stage request-layout acquisition
-  - typed seven-sample outer-probe materialization
-  - outer local sliding-window check
-  - typed interval-aware handoff into the shared `RefinementSegment` path
+- [`sampled_edge_interval_needs_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps the early probe entry on the Rust side through one shared typed stage helper:
+  - [`prepare_early_probe_stage()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns probe request-layout execution, `NoPair` bail, stage-local sample materialization, and the shared local sliding-window check
+  - [`PreparedEarlyProbeStage`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now carries the shared early-stage result boundary for the midpoint and outer stages
+  - the entry still does midpoint-stage handoff, outer-stage handoff, and the typed interval-aware `RefinementSegment` handoff inline
 - the old transient [`PreparedOuterProbeSeed`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) bounce is gone, so the raw `[0] / [1] / [3] / [4]` remap no longer crosses an extra carrier boundary
 - the one-use [`PreparedMidpointProbeChain::new()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) bounce is gone, so the stable five-sample midpoint-chain materialization now stays inline at the entry site
 - the one-use [`PreparedMidpointProbeChain::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) bounce is gone, so midpoint-stage refinement now stays inline at the same entry site too
@@ -82,16 +78,16 @@ The next blocker is now the smaller helper bounce immediately after that shared 
 
 The next blocker is now smaller and stays in the same early probe entry:
 
-- both stage request-layout calls now run on direct Rust-owned request sources
-- both stage sample-order layouts now run through typed sample-layout boundaries
-- both local sliding-window checks now reuse those stage-local arrays
-- but the midpoint stage and outer stage still open-code the same control-flow ladder inside [`sampled_edge_interval_needs_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs):
-  - acquire probes through a request layout
-  - bail out to `Some(false)` if no pair is available
-  - materialize the stage-local sample array through a typed sample layout
-  - run the shared local sliding-window check
+- both early stages now go through the shared [`prepare_early_probe_stage()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) boundary
+- both stage request-layout calls still run on direct Rust-owned request sources
+- both stage sample-order layouts still run through typed sample-layout boundaries
+- both local sliding-window checks still reuse those stage-local arrays
+- but [`sampled_edge_interval_needs_probe_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still open-codes the same stage-pair wiring twice:
+  - choose a stage-specific request layout
+  - choose a stage-specific typed sample layout through a closure
+  - match the shared [`PreparedEarlyProbeStage`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) result into `Some(false)` / `Some(true)` / next-stage samples
 
-The next blocker is to move that repeated request-layout -> sample-layout -> local-window-check ladder behind one shared typed early-probe stage boundary, without reintroducing transient midpoint or outer carriers.
+The next blocker is to move that remaining stage descriptor pairing behind one typed early-stage layout boundary, without reintroducing transient midpoint or outer carriers.
 
 ## Focus
 
@@ -109,6 +105,6 @@ The next blocker is to move that repeated request-layout -> sample-layout -> loc
 
 ## Why This Is Next
 
-This turn finished the last early midpoint-stage and outer-stage helper bounces in the probe entry. `sampled_edge_interval_needs_probe_refinement()` now keeps both stage request-layout calls, both stable sample-array materializations, both local sliding-window checks, and the typed interval-aware handoff inline on the Rust-owned side. The named request layouts still share one generic typed `request(...)` path through `MidpointEdgeProbePairRequestSampleRole`.
+This turn finished the shared early-stage ladder extraction in the probe entry. `sampled_edge_interval_needs_probe_refinement()` now routes both midpoint and outer stages through `prepare_early_probe_stage()`, so probe request execution, `NoPair` handling, stage-local sample materialization, and local sliding-window checks now live on one typed Rust-owned boundary. The named request layouts and sample layouts still stay explicit, and the interval-aware handoff remains unchanged.
 
-What remains is the next smaller structural duplication immediately after that request-layout path: the shared typed request route is now in place for both early probe stages, and both request layouts already run on direct array-backed Rust-owned sample boundaries. The remaining open-coded work is the five-sample midpoint-chain assembly and seven-sample outer-chain assembly inside `sampled_edge_interval_needs_probe_refinement()`. If those two stable sample layouts move behind typed stage sample-layout boundaries too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is the next smaller structural duplication immediately after that shared stage helper: the entry still pairs stage-specific request layouts, stage-specific sample layouts, and the same `PreparedEarlyProbeStage` match twice. If those midpoint-stage and outer-stage pairings move behind one typed early-stage layout boundary too, the early refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.

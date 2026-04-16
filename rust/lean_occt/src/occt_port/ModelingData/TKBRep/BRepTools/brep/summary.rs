@@ -1378,33 +1378,29 @@ fn sampled_edge_interval_needs_probe_refinement(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let Some(probes) = MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT
-        .request(&(start, midpoint, end))
-        .probe_pair(context, edge_shape)?
-    else {
-        return Some(false);
+    let midpoint_probe_samples = match prepare_early_probe_stage(
+        context,
+        edge_shape,
+        &MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT,
+        &(start, midpoint, end),
+        |probes| MIDPOINT_PROBE_SAMPLES_LAYOUT.samples(start, probes, midpoint, end),
+    )? {
+        PreparedEarlyProbeStage::NoPair => return Some(false),
+        PreparedEarlyProbeStage::NeedsRefinement => return Some(true),
+        PreparedEarlyProbeStage::Samples(samples) => samples,
     };
 
-    let midpoint_probe_samples =
-        MIDPOINT_PROBE_SAMPLES_LAYOUT.samples(start, &probes, midpoint, end);
-
-    if sampled_edge_sample_windows_need_refinement(&midpoint_probe_samples) {
-        return Some(true);
-    }
-
-    let Some(outer_probes) = OUTER_STAGE_PROBE_REQUEST_LAYOUT
-        .request(&midpoint_probe_samples)
-        .probe_pair(context, edge_shape)?
-    else {
-        return Some(false);
+    let outer_probe_samples = match prepare_early_probe_stage(
+        context,
+        edge_shape,
+        &OUTER_STAGE_PROBE_REQUEST_LAYOUT,
+        &midpoint_probe_samples,
+        |probes| OUTER_PROBE_SAMPLES_LAYOUT.samples(&midpoint_probe_samples, probes),
+    )? {
+        PreparedEarlyProbeStage::NoPair => return Some(false),
+        PreparedEarlyProbeStage::NeedsRefinement => return Some(true),
+        PreparedEarlyProbeStage::Samples(samples) => samples,
     };
-
-    let outer_probe_samples =
-        OUTER_PROBE_SAMPLES_LAYOUT.samples(&midpoint_probe_samples, &outer_probes);
-
-    if sampled_edge_sample_windows_need_refinement(&outer_probe_samples) {
-        return Some(true);
-    }
 
     let Some(probe_segment) = PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS
         .prepare_refinement_segment(&outer_probe_samples, context, edge_shape)?
@@ -1413,6 +1409,39 @@ fn sampled_edge_interval_needs_probe_refinement(
     };
 
     probe_segment.needs_refinement(context, edge_shape, 3)
+}
+
+enum PreparedEarlyProbeStage<Samples> {
+    NoPair,
+    NeedsRefinement,
+    Samples(Samples),
+}
+
+fn prepare_early_probe_stage<SampleRole, Samples, Materialize>(
+    context: &Context,
+    edge_shape: &Shape,
+    request_layout: &MidpointEdgeProbePairRequestLayout<SampleRole>,
+    source: &<SampleRole as MidpointEdgeProbePairRequestSampleRole>::Source<'_>,
+    materialize_samples: Materialize,
+) -> Option<PreparedEarlyProbeStage<Samples>>
+where
+    SampleRole: MidpointEdgeProbePairRequestSampleRole,
+    Samples: AsRef<[NormalizedEdgeSample]>,
+    Materialize: FnOnce(&MidpointEdgeProbePair) -> Samples,
+{
+    let Some(probes) = request_layout
+        .request(source)
+        .probe_pair(context, edge_shape)?
+    else {
+        return Some(PreparedEarlyProbeStage::NoPair);
+    };
+
+    let samples = materialize_samples(&probes);
+    if sampled_edge_sample_windows_need_refinement(samples.as_ref()) {
+        Some(PreparedEarlyProbeStage::NeedsRefinement)
+    } else {
+        Some(PreparedEarlyProbeStage::Samples(samples))
+    }
 }
 
 #[derive(Clone, Copy)]
