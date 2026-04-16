@@ -1417,8 +1417,9 @@ impl PreparedMidpointProbeChain {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<Option<Self>> {
+        let probe_request_samples = MidpointStageProbeRequestSamples::new(start, midpoint, end);
         let Some(probes) = MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT
-            .request(start, midpoint, end)
+            .request(&probe_request_samples)
             .probe_pair(context, edge_shape)?
         else {
             return Some(None);
@@ -1444,8 +1445,10 @@ impl PreparedMidpointProbeChain {
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<PreparedOuterProbeChain>> {
+        let probe_request_samples =
+            OuterStageProbeRequestSamples::from_midpoint_probe_samples(&self.samples);
         let Some(outer_probes) = OUTER_STAGE_PROBE_REQUEST_LAYOUT
-            .request(&self.samples)
+            .request(&probe_request_samples)
             .probe_pair(context, edge_shape)?
         else {
             return Some(None);
@@ -1888,6 +1891,50 @@ impl<SampleRole> MidpointEdgeProbePairRequestLayout<SampleRole> {
     }
 }
 
+trait MidpointEdgeProbePairRequestSampleRole {
+    type SampleSet;
+
+    fn sample(&self, sample_set: &Self::SampleSet) -> NormalizedEdgeSample;
+}
+
+impl<SampleRole> MidpointEdgeProbePairRequestLayout<SampleRole>
+where
+    SampleRole: MidpointEdgeProbePairRequestSampleRole,
+{
+    fn request(
+        &self,
+        sample_set: &<SampleRole as MidpointEdgeProbePairRequestSampleRole>::SampleSet,
+    ) -> MidpointEdgeProbePairRequest {
+        MidpointEdgeProbePairRequest::new(
+            self.first_start.sample(sample_set),
+            self.first_end.sample(sample_set),
+            self.second_start.sample(sample_set),
+            self.second_end.sample(sample_set),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MidpointStageProbeRequestSamples {
+    start: NormalizedEdgeSample,
+    midpoint: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+}
+
+impl MidpointStageProbeRequestSamples {
+    fn new(
+        start: &NormalizedEdgeSample,
+        midpoint: &NormalizedEdgeSample,
+        end: &NormalizedEdgeSample,
+    ) -> Self {
+        Self {
+            start: *start,
+            midpoint: *midpoint,
+            end: *end,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum MidpointStageProbeRequestSampleRole {
     Start,
@@ -1895,34 +1942,15 @@ enum MidpointStageProbeRequestSampleRole {
     End,
 }
 
-impl MidpointStageProbeRequestSampleRole {
-    fn sample(
-        &self,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-    ) -> NormalizedEdgeSample {
-        match self {
-            Self::Start => *start,
-            Self::Midpoint => *midpoint,
-            Self::End => *end,
-        }
-    }
-}
+impl MidpointEdgeProbePairRequestSampleRole for MidpointStageProbeRequestSampleRole {
+    type SampleSet = MidpointStageProbeRequestSamples;
 
-impl MidpointEdgeProbePairRequestLayout<MidpointStageProbeRequestSampleRole> {
-    fn request(
-        &self,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
-    ) -> MidpointEdgeProbePairRequest {
-        MidpointEdgeProbePairRequest::new(
-            self.first_start.sample(start, midpoint, end),
-            self.first_end.sample(start, midpoint, end),
-            self.second_start.sample(start, midpoint, end),
-            self.second_end.sample(start, midpoint, end),
-        )
+    fn sample(&self, sample_set: &MidpointStageProbeRequestSamples) -> NormalizedEdgeSample {
+        match self {
+            Self::Start => sample_set.start,
+            Self::Midpoint => sample_set.midpoint,
+            Self::End => sample_set.end,
+        }
     }
 }
 
@@ -1936,6 +1964,25 @@ const MIDPOINT_STAGE_PROBE_REQUEST_LAYOUT: MidpointEdgeProbePairRequestLayout<
 );
 
 #[derive(Clone, Copy)]
+struct OuterStageProbeRequestSamples {
+    start: NormalizedEdgeSample,
+    first_probe: NormalizedEdgeSample,
+    second_probe: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+}
+
+impl OuterStageProbeRequestSamples {
+    fn from_midpoint_probe_samples(midpoint_probe_samples: &[NormalizedEdgeSample; 5]) -> Self {
+        Self {
+            start: midpoint_probe_samples[0],
+            first_probe: midpoint_probe_samples[1],
+            second_probe: midpoint_probe_samples[3],
+            end: midpoint_probe_samples[4],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 enum OuterStageProbeRequestSampleRole {
     Start,
     FirstProbe,
@@ -1943,28 +1990,16 @@ enum OuterStageProbeRequestSampleRole {
     End,
 }
 
-impl OuterStageProbeRequestSampleRole {
-    fn sample(&self, midpoint_probe_samples: &[NormalizedEdgeSample; 5]) -> NormalizedEdgeSample {
-        match self {
-            Self::Start => midpoint_probe_samples[0],
-            Self::FirstProbe => midpoint_probe_samples[1],
-            Self::SecondProbe => midpoint_probe_samples[3],
-            Self::End => midpoint_probe_samples[4],
-        }
-    }
-}
+impl MidpointEdgeProbePairRequestSampleRole for OuterStageProbeRequestSampleRole {
+    type SampleSet = OuterStageProbeRequestSamples;
 
-impl MidpointEdgeProbePairRequestLayout<OuterStageProbeRequestSampleRole> {
-    fn request(
-        &self,
-        midpoint_probe_samples: &[NormalizedEdgeSample; 5],
-    ) -> MidpointEdgeProbePairRequest {
-        MidpointEdgeProbePairRequest::new(
-            self.first_start.sample(midpoint_probe_samples),
-            self.first_end.sample(midpoint_probe_samples),
-            self.second_start.sample(midpoint_probe_samples),
-            self.second_end.sample(midpoint_probe_samples),
-        )
+    fn sample(&self, sample_set: &OuterStageProbeRequestSamples) -> NormalizedEdgeSample {
+        match self {
+            Self::Start => sample_set.start,
+            Self::FirstProbe => sample_set.first_probe,
+            Self::SecondProbe => sample_set.second_probe,
+            Self::End => sample_set.end,
+        }
     }
 }
 
