@@ -1446,19 +1446,6 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             None => Err(None),
         }
     }
-
-    fn needs_refinement_or_continue(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-        continue_with_samples: impl FnOnce([NormalizedEdgeSample; STAGE_N]) -> Option<bool>,
-    ) -> Option<bool> {
-        match self.stage_samples_or_refinement(context, edge_shape, source) {
-            Ok(samples) => continue_with_samples(samples),
-            Err(result) => result,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1539,25 +1526,23 @@ impl EarlyProbeStagePair {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        self.midpoint_stage.needs_refinement_or_continue(
+        let midpoint_stage_samples = match self
+            .midpoint_stage
+            .stage_samples_or_refinement(context, edge_shape, source)
+        {
+            Ok(samples) => samples,
+            Err(result) => return result,
+        };
+        let outer_stage_samples = match self.outer_stage.stage_samples_or_refinement(
             context,
             edge_shape,
-            source,
-            |midpoint_stage_samples| {
-                self.outer_stage.needs_refinement_or_continue(
-                    context,
-                    edge_shape,
-                    midpoint_stage_samples,
-                    |outer_stage_samples| {
-                        self.interval_aware_tail.needs_refinement(
-                            outer_stage_samples,
-                            context,
-                            edge_shape,
-                        )
-                    },
-                )
-            },
-        )
+            midpoint_stage_samples,
+        ) {
+            Ok(samples) => samples,
+            Err(result) => return result,
+        };
+        self.interval_aware_tail
+            .needs_refinement(outer_stage_samples, context, edge_shape)
     }
 }
 
