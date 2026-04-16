@@ -1463,6 +1463,36 @@ impl EarlyProbeSampleRole {
 }
 
 #[derive(Clone, Copy)]
+struct EarlyProbeTripletSource<'a> {
+    start: &'a NormalizedEdgeSample,
+    midpoint: &'a NormalizedEdgeSample,
+    end: &'a NormalizedEdgeSample,
+}
+
+impl<'a> EarlyProbeTripletSource<'a> {
+    const fn new(
+        start: &'a NormalizedEdgeSample,
+        midpoint: &'a NormalizedEdgeSample,
+        end: &'a NormalizedEdgeSample,
+    ) -> Self {
+        Self {
+            start,
+            midpoint,
+            end,
+        }
+    }
+
+    fn source_sample(self, index: usize) -> NormalizedEdgeSample {
+        match index {
+            0 => *self.start,
+            1 => *self.midpoint,
+            2 => *self.end,
+            _ => unreachable!("midpoint-stage source index out of bounds"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct EarlyProbeRefinementTerminal {
     interval_aware_side_layouts: PreparedIntervalAwareRefinementSideLayouts,
     coarse_refinement_checks_before_adaptive_chase: usize,
@@ -1521,20 +1551,13 @@ impl EarlyProbeRefinementStages {
         self,
         context: &Context,
         edge_shape: &Shape,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
+        midpoint_source: EarlyProbeTripletSource<'_>,
         terminal: EarlyProbeRefinementTerminal,
     ) -> Option<bool> {
         let midpoint_samples = match self.midpoint_stage.refinement_result_from_source(
             context,
             edge_shape,
-            |index| match index {
-                0 => *start,
-                1 => *midpoint,
-                2 => *end,
-                _ => unreachable!("midpoint-stage source index out of bounds"),
-            },
+            |index| midpoint_source.source_sample(index),
         )? {
             Ok(samples) => samples,
             Err(result) => return Some(result),
@@ -1575,8 +1598,9 @@ impl EarlyProbeRefinementPipeline {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
+        let midpoint_source = EarlyProbeTripletSource::new(start, midpoint, end);
         self.stages
-            .needs_refinement(context, edge_shape, start, midpoint, end, self.terminal)
+            .needs_refinement(context, edge_shape, midpoint_source, self.terminal)
     }
 }
 
