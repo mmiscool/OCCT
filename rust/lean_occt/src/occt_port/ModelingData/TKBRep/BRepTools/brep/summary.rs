@@ -1483,6 +1483,17 @@ enum EarlyProbeSourcePosition {
 }
 
 impl EarlyProbeSourcePosition {
+    fn from_source_ordinal(ordinal: usize) -> Self {
+        match ordinal {
+            0 => Self::First,
+            1 => Self::Second,
+            2 => Self::Third,
+            3 => Self::Fourth,
+            4 => Self::Fifth,
+            _ => unreachable!("early probe source ordinal out of range"),
+        }
+    }
+
     fn index(self) -> usize {
         match self {
             Self::First => 0,
@@ -1494,12 +1505,23 @@ impl EarlyProbeSourcePosition {
     }
 }
 
-trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: Copy {
-    fn source_position(self) -> EarlyProbeSourcePosition;
+trait EarlyProbeSourceSlot: Copy {
+    fn source_ordinal(self) -> usize;
+}
+
+trait EarlyProbeSourceSampleLayout<const SOURCE_N: usize>: EarlyProbeSourceSlot {
+    fn source_position(self) -> EarlyProbeSourcePosition {
+        EarlyProbeSourcePosition::from_source_ordinal(self.source_ordinal())
+    }
 
     fn source_sample(self, source: [NormalizedEdgeSample; SOURCE_N]) -> NormalizedEdgeSample {
         source[self.source_position().index()]
     }
+}
+
+impl<SourceLayout, const SOURCE_N: usize> EarlyProbeSourceSampleLayout<SOURCE_N> for SourceLayout where
+    SourceLayout: EarlyProbeSourceSlot
+{
 }
 
 #[derive(Clone, Copy)]
@@ -1555,19 +1577,16 @@ where
 }
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
 enum MidpointEarlyProbeSourceSampleLayout {
     Start,
     Midpoint,
     End,
 }
 
-impl EarlyProbeSourceSampleLayout<3> for MidpointEarlyProbeSourceSampleLayout {
-    fn source_position(self) -> EarlyProbeSourcePosition {
-        match self {
-            Self::Start => EarlyProbeSourcePosition::First,
-            Self::Midpoint => EarlyProbeSourcePosition::Second,
-            Self::End => EarlyProbeSourcePosition::Third,
-        }
+impl EarlyProbeSourceSlot for MidpointEarlyProbeSourceSampleLayout {
+    fn source_ordinal(self) -> usize {
+        self as usize
     }
 }
 
@@ -1576,6 +1595,7 @@ type MidpointEarlyProbeSampleLayout =
     EarlyProbeSampleLayout<MidpointEarlyProbeSourceSampleLayout, 3, 5>;
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
 enum OuterEarlyProbeSourceSampleLayout {
     Start,
     FirstQuarter,
@@ -1584,15 +1604,9 @@ enum OuterEarlyProbeSourceSampleLayout {
     End,
 }
 
-impl EarlyProbeSourceSampleLayout<5> for OuterEarlyProbeSourceSampleLayout {
-    fn source_position(self) -> EarlyProbeSourcePosition {
-        match self {
-            Self::Start => EarlyProbeSourcePosition::First,
-            Self::FirstQuarter => EarlyProbeSourcePosition::Second,
-            Self::Midpoint => EarlyProbeSourcePosition::Third,
-            Self::SecondQuarter => EarlyProbeSourcePosition::Fourth,
-            Self::End => EarlyProbeSourcePosition::Fifth,
-        }
+impl EarlyProbeSourceSlot for OuterEarlyProbeSourceSampleLayout {
+    fn source_ordinal(self) -> usize {
+        self as usize
     }
 }
 
