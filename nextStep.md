@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining duplicated stage-progress matching inside `EarlyProbeRefinementStages::needs_refinement()`, so the early unsupported-edge probe path stops repeating the same `refinement_progress(...) -> Complete/Continue` handoff logic for midpoint and outer stages now that the top-level midpoint-to-outer ladder is typed.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining `prepare_outer_samples()` bounce inside `EarlyProbeRefinementStages`, so the early unsupported-edge probe path stops splitting midpoint-to-outer stage execution from the final terminal handoff now that each stage already returns a typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` directly.
 
 ## Current State
 
@@ -17,9 +17,10 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now works directly on `[NormalizedEdgeSample; N]` inputs instead of generic source traits
   - the old `EarlyProbeStageRole` trait and `EarlyProbeStageRoleLayout` helper are gone
   - [`EarlyProbeSampleRole`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now only describes stage-local sample ordering over an already-materialized source array
-  - [`EarlyProbeStageProgress`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `Complete(bool)` vs `Continue([NormalizedEdgeSample; N])` stage result
+  - [`EarlyProbeStageLayout::refinement_result()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns the typed Rust-owned `Result<[NormalizedEdgeSample; N], bool>` stage result directly
+  - the temporary `EarlyProbeStageProgress` enum and the one-use `continue_stage()` bounce are gone
   - [`MIDPOINT_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`OUTER_EARLY_PROBE_STAGE_LAYOUT`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now hold direct request-source indices plus sample roles
-  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed midpoint-stage to outer-stage control-flow runner, so the old nested closure chain is gone from [`EarlyProbeRefinementPipeline::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+  - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed midpoint-stage to outer-stage preparation path through `prepare_outer_samples()`, so the old duplicated stage-progress matching is gone
   - [`EarlyProbeRefinementPipeline`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now down to typed source construction plus delegation into `EarlyProbeRefinementStages` and `EarlyProbeRefinementTerminal`
   - [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed `[start, midpoint, end]` boundary
   - [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the typed interval-aware segment handoff plus the `None => Some(false)` terminal behavior
@@ -32,18 +33,19 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 ## Remaining Blocker
 
-`offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. In the early unsupported-edge probe entry, the remaining structural duplication is now narrower again:
+`offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. In the early unsupported-edge probe entry, the remaining structural duplication is narrower again:
 
 - the early stage itself is now array-only
 - the midpoint-stage and outer-stage request/sample mapping now live in the same typed stage layout
+- the stage layout now returns typed `Result<[NormalizedEdgeSample; N], bool>` directly
 - the top-level entry now delegates through [`EARLY_PROBE_REFINEMENT_PIPELINE`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
 - the pipeline input and terminal handoff are now typed through [`EarlyProbeRefinementSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) and [`EarlyProbeRefinementTerminal`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
-- the midpoint-to-outer control-flow ladder now lives in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) instead of in the pipeline body
-- but [`EarlyProbeRefinementStages::needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still repeats the same stage-progress match twice:
-  - once for midpoint-stage `Complete/Continue`
-  - once for outer-stage `Complete/Continue`
+- the midpoint-to-outer control-flow ladder now lives in [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
+- but [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still splits that ladder across two helpers:
+  - [`prepare_outer_samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) prepares midpoint and outer stage results
+  - [`needs_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) immediately matches that same typed `Result` and then calls the terminal
 
-The next blocker is to move that remaining duplicated stage-step handoff behind a typed Rust-side stage runner without reintroducing transient midpoint or outer carriers.
+The next blocker is to collapse that remaining `prepare_outer_samples()` bounce into one typed Rust-side stage runner so midpoint-stage, outer-stage, and terminal dispatch live behind the same `EarlyProbeRefinementStages` boundary.
 
 ## Focus
 
@@ -61,4 +63,4 @@ The next blocker is to move that remaining duplicated stage-step handoff behind 
 
 ## Why This Is Next
 
-This turn finished moving the midpoint-stage to outer-stage control-flow ladder behind a typed Rust-side runner. `EarlyProbeRefinementPipeline` now consumes an `EarlyProbeRefinementSource`, delegates through `EarlyProbeRefinementStages`, and ends at `EarlyProbeRefinementTerminal`, so the old nested closure chain is gone from the pipeline body. That leaves the next real duplication one level lower: `EarlyProbeRefinementStages::needs_refinement()` still open-codes the same `Complete/Continue` stage-step match twice instead of routing both stages through one shared typed step runner.
+This turn finished collapsing the remaining duplicated stage-step handling in the early probe path. `EarlyProbeStageLayout` now returns the typed stage `Result` directly, the temporary `EarlyProbeStageProgress` enum is gone, and `EarlyProbeRefinementStages` now owns midpoint-to-outer preparation through `prepare_outer_samples()`. That leaves the next real duplication one level lower: `EarlyProbeRefinementStages` still prepares `outer_samples` in one helper and then immediately matches that result in another helper before calling the terminal, instead of keeping the full midpoint/outer/terminal handoff inside one typed runner.
