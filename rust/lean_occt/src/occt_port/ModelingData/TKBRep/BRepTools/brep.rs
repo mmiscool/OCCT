@@ -141,6 +141,10 @@ impl Context {
                         .into_iter()
                         .map(|shell_shape| {
                             Ok(PreparedShellShape {
+                                shell_vertex_shapes: self
+                                    .subshapes_occt(&shell_shape, ShapeKind::Vertex)?,
+                                shell_edge_shapes: self
+                                    .subshapes_occt(&shell_shape, ShapeKind::Edge)?,
                                 shell_face_shapes: self
                                     .subshapes_occt(&shell_shape, ShapeKind::Face)?,
                                 shell_shape,

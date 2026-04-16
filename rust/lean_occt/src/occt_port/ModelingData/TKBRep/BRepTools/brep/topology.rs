@@ -7,6 +7,8 @@ use super::*;
 
 pub(super) struct PreparedShellShape {
     pub(super) shell_shape: Shape,
+    pub(super) shell_vertex_shapes: Vec<Shape>,
+    pub(super) shell_edge_shapes: Vec<Shape>,
     pub(super) shell_face_shapes: Vec<Shape>,
 }
 
@@ -85,6 +87,8 @@ fn load_root_topology_snapshot(
         .into_iter()
         .map(|shell_shape| {
             Ok(PreparedShellShape {
+                shell_vertex_shapes: context.subshapes_occt(&shell_shape, ShapeKind::Vertex)?,
+                shell_edge_shapes: context.subshapes_occt(&shell_shape, ShapeKind::Edge)?,
                 shell_face_shapes: context.subshapes_occt(&shell_shape, ShapeKind::Face)?,
                 shell_shape,
             })

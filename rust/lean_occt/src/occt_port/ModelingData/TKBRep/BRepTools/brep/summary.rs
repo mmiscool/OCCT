@@ -126,12 +126,13 @@ pub(super) fn ported_shape_summary(
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
+    let offset_margin = offset_face_margin(faces);
     let (bbox_min, bbox_max) = exact_primitive
         .and_then(|summary| summary.bbox)
         .or_else(|| ported_shape_bbox(vertices, edges, faces))
         .or_else(|| {
             if offset_non_solid {
-                offset_faces_bbox(context, shape, vertices, edges, face_shapes)
+                offset_faces_bbox(context, shape, offset_margin, vertices, edges, face_shapes)
             } else {
                 None
             }
@@ -153,8 +154,7 @@ pub(super) fn ported_shape_summary(
         .or_else(|| {
             if offset_non_solid {
                 let shape_occt_bbox = shape_bbox_occt(context, shape)?;
-                mesh_shape_bbox(context, shape)
-                    .filter(|&ported_bbox| bbox_matches(ported_bbox, shape_occt_bbox))
+                validated_mesh_bbox(context, shape, shape_occt_bbox, offset_margin)
             } else {
                 None
             }
@@ -758,15 +758,15 @@ fn topological_shape_bbox(
 fn offset_faces_bbox(
     context: &Context,
     shape: &Shape,
+    offset_margin: Option<f64>,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
     face_shapes: &[Shape],
 ) -> Option<([f64; 3], [f64; 3])> {
     let shape_occt_bbox = shape_bbox_occt(context, shape);
-    if let (Some(mesh_bbox), Some(shape_occt_bbox)) =
-        (mesh_shape_bbox(context, shape), shape_occt_bbox)
-    {
-        if bbox_matches(mesh_bbox, shape_occt_bbox) {
+    if let Some(shape_occt_bbox) = shape_occt_bbox {
+        if let Some(mesh_bbox) = validated_mesh_bbox(context, shape, shape_occt_bbox, offset_margin)
+        {
             return Some(mesh_bbox);
         }
     }
@@ -825,23 +825,34 @@ fn validated_face_brep_bbox(context: &Context, face_shape: &Shape) -> Option<([f
         }
     }
 
-    mesh_shape_bbox(context, face_shape)
-        .filter(|&mesh_bbox| bbox_matches(mesh_bbox, face_occt_bbox))
+    validated_mesh_bbox(
+        context,
+        face_shape,
+        face_occt_bbox,
+        offset_brep_margin(&brep),
+    )
 }
 
 fn offset_expanded_brep_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> {
-    let offset = brep
-        .faces
+    let offset = offset_brep_margin(brep)?;
+    Some(expand_bbox(
+        (brep.summary.bbox_min, brep.summary.bbox_max),
+        offset,
+    ))
+}
+
+fn offset_face_margin(faces: &[BrepFace]) -> Option<f64> {
+    faces
         .iter()
         .filter_map(|face| match face.ported_face_surface {
             Some(PortedFaceSurface::Offset(surface)) => Some(surface.payload.offset_value.abs()),
             _ => None,
         })
-        .reduce(f64::max)?;
-    Some(expand_bbox(
-        (brep.summary.bbox_min, brep.summary.bbox_max),
-        offset,
-    ))
+        .reduce(f64::max)
+}
+
+fn offset_brep_margin(brep: &BrepShape) -> Option<f64> {
+    offset_face_margin(&brep.faces)
 }
 
 fn face_bboxes_occt(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
@@ -966,10 +977,8 @@ fn offset_shell_bbox(
     let shell_occt_bbox = shape_bbox_occt(context, &prepared_shell_shape.shell_shape)?;
     offset_shell_face_brep_bbox(context, prepared_shell_shape)
         .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
-        .or_else(|| {
-            mesh_shape_bbox(context, &prepared_shell_shape.shell_shape)
-                .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
-        })
+        .or_else(|| validated_shell_boundary_bbox(context, prepared_shell_shape, shell_occt_bbox))
+        .or_else(|| validated_shell_mesh_bbox(context, prepared_shell_shape, shell_occt_bbox))
         .or_else(|| validated_shell_brep_bbox(context, prepared_shell_shape, shell_occt_bbox))
         .or(Some(shell_occt_bbox))
 }
@@ -1014,6 +1023,68 @@ fn validated_shell_brep_bbox(
     }
 
     None
+}
+
+fn validated_shell_boundary_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+    shell_occt_bbox: ([f64; 3], [f64; 3]),
+) -> Option<([f64; 3], [f64; 3])> {
+    let boundary_bbox = shell_boundary_shape_bbox(context, prepared_shell_shape)?;
+    bbox_matches(boundary_bbox, shell_occt_bbox).then_some(boundary_bbox)
+}
+
+fn validated_shell_mesh_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+    shell_occt_bbox: ([f64; 3], [f64; 3]),
+) -> Option<([f64; 3], [f64; 3])> {
+    let offset_margin = context
+        .ported_brep(&prepared_shell_shape.shell_shape)
+        .ok()
+        .and_then(|brep| offset_brep_margin(&brep));
+    validated_mesh_bbox(
+        context,
+        &prepared_shell_shape.shell_shape,
+        shell_occt_bbox,
+        offset_margin,
+    )
+}
+
+fn validated_mesh_bbox(
+    context: &Context,
+    shape: &Shape,
+    expected_bbox: ([f64; 3], [f64; 3]),
+    expand_margin: Option<f64>,
+) -> Option<([f64; 3], [f64; 3])> {
+    let mesh_bbox = mesh_shape_bbox(context, shape)?;
+    if bbox_matches(mesh_bbox, expected_bbox) {
+        return Some(mesh_bbox);
+    }
+
+    let expanded_bbox = expand_margin.map(|margin| expand_bbox(mesh_bbox, margin))?;
+    bbox_matches(expanded_bbox, expected_bbox).then_some(expanded_bbox)
+}
+
+fn shell_boundary_shape_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+) -> Option<([f64; 3], [f64; 3])> {
+    analytic_edge_shapes_bbox(context, &prepared_shell_shape.shell_edge_shapes)
+        .or_else(|| {
+            line_segment_shape_bbox(
+                context,
+                &prepared_shell_shape.shell_vertex_shapes,
+                &prepared_shell_shape.shell_edge_shapes,
+            )
+        })
+        .or_else(|| {
+            if prepared_shell_shape.shell_edge_shapes.is_empty() {
+                vertex_shapes_bbox(context, &prepared_shell_shape.shell_vertex_shapes)
+            } else {
+                None
+            }
+        })
 }
 
 fn shape_bbox_occt(context: &Context, shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
@@ -1103,11 +1174,37 @@ fn analytic_edges_bbox(edges: &[BrepEdge]) -> Option<([f64; 3], [f64; 3])> {
     bbox
 }
 
-fn analytic_edge_bbox(edge: &BrepEdge) -> Option<([f64; 3], [f64; 3])> {
-    let curve = edge.ported_curve?;
-    let start = edge.geometry.start_parameter;
-    let end = edge.geometry.end_parameter;
+fn analytic_edge_shapes_bbox(
+    context: &Context,
+    edge_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for edge_shape in edge_shapes {
+        let edge_bbox = analytic_edge_shape_bbox(context, edge_shape)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, edge_bbox),
+            None => edge_bbox,
+        });
+    }
+    bbox
+}
 
+fn analytic_edge_bbox(edge: &BrepEdge) -> Option<([f64; 3], [f64; 3])> {
+    ported_curve_bbox(
+        edge.ported_curve?,
+        edge.geometry.start_parameter,
+        edge.geometry.end_parameter,
+    )
+}
+
+fn analytic_edge_shape_bbox(context: &Context, edge_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+    let geometry = context.edge_geometry(edge_shape).ok()?;
+    let curve =
+        PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry).ok()??;
+    ported_curve_bbox(curve, geometry.start_parameter, geometry.end_parameter)
+}
+
+fn ported_curve_bbox(curve: PortedCurve, start: f64, end: f64) -> Option<([f64; 3], [f64; 3])> {
     match curve {
         PortedCurve::Line(_) => bbox_from_points(vec![
             curve.evaluate(start).position,
@@ -1140,6 +1237,42 @@ fn analytic_edge_bbox(edge: &BrepEdge) -> Option<([f64; 3], [f64; 3])> {
             |parameter| curve.evaluate(parameter).position,
         ),
     }
+}
+
+fn vertex_shapes_bbox(context: &Context, vertex_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
+    bbox_from_points(
+        vertex_shapes
+            .iter()
+            .map(|vertex_shape| context.vertex_point(vertex_shape).ok())
+            .collect::<Option<Vec<_>>>()?,
+    )
+}
+
+fn line_segment_shape_bbox(
+    context: &Context,
+    vertex_shapes: &[Shape],
+    edge_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    if edge_shapes.is_empty() {
+        return None;
+    }
+
+    let mut points = vertex_shapes
+        .iter()
+        .map(|vertex_shape| context.vertex_point(vertex_shape).ok())
+        .collect::<Option<Vec<_>>>()?;
+    for edge_shape in edge_shapes {
+        let geometry = context.edge_geometry(edge_shape).ok()?;
+        if !matches!(geometry.kind, crate::CurveKind::Line) {
+            return None;
+        }
+
+        let endpoints = context.edge_endpoints(edge_shape).ok()?;
+        points.push(endpoints.start);
+        points.push(endpoints.end);
+    }
+
+    bbox_from_points(points)
 }
 
 fn periodic_curve_bbox(
