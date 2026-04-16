@@ -1574,7 +1574,6 @@ impl PreparedRefinementSpan {
 
 #[derive(Clone, Copy)]
 struct PreparedIntervalAwareRefinementSide {
-    coarse: PreparedRefinementTriplet,
     outer: PreparedRefinementTriplet,
     inner: PreparedRefinementSpan,
 }
@@ -1601,6 +1600,10 @@ impl PreparedRefinementTripletLayout {
             samples[self.midpoint],
             samples[self.end],
         )
+    }
+
+    fn refinement_segment(self, samples: &[NormalizedEdgeSample; 7]) -> Option<RefinementSegment> {
+        self.from_samples(samples).refinement_segment()
     }
 }
 
@@ -1645,10 +1648,13 @@ impl PreparedIntervalAwareRefinementSideLayout {
         samples: &[NormalizedEdgeSample; 7],
     ) -> PreparedIntervalAwareRefinementSide {
         PreparedIntervalAwareRefinementSide {
-            coarse: self.coarse.from_samples(samples),
             outer: self.outer.from_samples(samples),
             inner: self.inner.from_samples(samples),
         }
+    }
+
+    fn coarse_segment(self, samples: &[NormalizedEdgeSample; 7]) -> Option<RefinementSegment> {
+        self.coarse.refinement_segment(samples)
     }
 }
 
@@ -1660,29 +1666,23 @@ impl PreparedIntervalAwareRefinementSideLayouts {
         Self(layouts)
     }
 
-    fn sides(
-        self,
-        samples: &[NormalizedEdgeSample; 7],
-    ) -> [PreparedIntervalAwareRefinementSide; 2] {
-        self.0.map(|layout| layout.from_samples(samples))
-    }
-
     fn prepare_refinement_segment(
         self,
         samples: &[NormalizedEdgeSample; 7],
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<Option<RefinementSegment>> {
-        let sides = self.sides(samples);
-        let Some(side) = RefinementSegment::choose_stronger(
-            (sides[0], sides[0].coarse_segment()),
-            (sides[1], sides[1].coarse_segment()),
+        let Some(side_layout) = RefinementSegment::choose_stronger(
+            (self.0[0], self.0[0].coarse_segment(samples)),
+            (self.0[1], self.0[1].coarse_segment(samples)),
         )
-        .map(|(side, _)| side) else {
+        .map(|(layout, _)| layout) else {
             return Some(None);
         };
 
-        side.prepare_refinement_segment(context, edge_shape)
+        side_layout
+            .from_samples(samples)
+            .prepare_refinement_segment(context, edge_shape)
     }
 }
 
@@ -1712,10 +1712,6 @@ impl PreparedIntervalAwareRefinementSide {
             RefinementSegment::choose_stronger((false, outer_segment), (true, inner_segment))
                 .map(|(_, segment)| segment),
         )
-    }
-
-    fn coarse_segment(self) -> Option<RefinementSegment> {
-        self.coarse.refinement_segment()
     }
 
     fn outer_segment(self) -> Option<RefinementSegment> {
