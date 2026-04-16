@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::EdgeSample;
-use std::ops::ControlFlow;
 
 use super::face_metrics::{
     analytic_face_volume, analytic_offset_face_volume, analytic_ported_swept_face_volume,
@@ -1442,18 +1441,6 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             sample_roles,
         }
     }
-
-    fn refinement_result(
-        &self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
-        let probes = self
-            .probe_request_layout
-            .probe_pair(context, edge_shape, source)?;
-        Some(probes.refinement_result(source, self.sample_roles))
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1563,21 +1550,6 @@ impl EarlyProbeRefinementStages {
         )
     }
 
-    fn stage_progress<const SOURCE_N: usize, const STAGE_N: usize>(
-        self,
-        layout: EarlyProbeStageLayout<SOURCE_N, STAGE_N>,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<ControlFlow<bool, [NormalizedEdgeSample; STAGE_N]>> {
-        Some(
-            match layout.refinement_result(context, edge_shape, source)? {
-                Ok(samples) => ControlFlow::Continue(samples),
-                Err(result) => ControlFlow::Break(result),
-            },
-        )
-    }
-
     fn continue_with_stage<const SOURCE_N: usize, const STAGE_N: usize>(
         self,
         layout: EarlyProbeStageLayout<SOURCE_N, STAGE_N>,
@@ -1586,9 +1558,12 @@ impl EarlyProbeRefinementStages {
         source: [NormalizedEdgeSample; SOURCE_N],
         next: impl FnOnce([NormalizedEdgeSample; STAGE_N]) -> Option<bool>,
     ) -> Option<bool> {
-        match self.stage_progress(layout, context, edge_shape, source)? {
-            ControlFlow::Continue(samples) => next(samples),
-            ControlFlow::Break(result) => Some(result),
+        let probes = layout
+            .probe_request_layout
+            .probe_pair(context, edge_shape, source)?;
+        match probes.refinement_result(source, layout.sample_roles) {
+            Ok(samples) => next(samples),
+            Err(result) => Some(result),
         }
     }
 }
