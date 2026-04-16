@@ -1526,31 +1526,25 @@ impl EarlyProbeRefinementStages {
         source: EarlyProbeRefinementSource,
         terminal: EarlyProbeRefinementTerminal,
     ) -> Option<bool> {
+        let midpoint_samples = match self.midpoint_stage.refinement_result(
+            context,
+            edge_shape,
+            source.stage_source(),
+        )? {
+            Ok(samples) => samples,
+            Err(result) => return Some(result),
+        };
+
         let outer_samples =
-            match self.prepare_outer_samples(context, edge_shape, source.stage_source())? {
+            match self
+                .outer_stage
+                .refinement_result(context, edge_shape, &midpoint_samples)?
+            {
                 Ok(samples) => samples,
                 Err(result) => return Some(result),
             };
 
         terminal.needs_refinement(context, edge_shape, &outer_samples)
-    }
-
-    fn prepare_outer_samples(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: &[NormalizedEdgeSample; 3],
-    ) -> Option<Result<[NormalizedEdgeSample; 7], bool>> {
-        let midpoint_samples = match self
-            .midpoint_stage
-            .refinement_result(context, edge_shape, source)?
-        {
-            Ok(samples) => samples,
-            Err(result) => return Some(Err(result)),
-        };
-
-        self.outer_stage
-            .refinement_result(context, edge_shape, &midpoint_samples)
     }
 }
 
