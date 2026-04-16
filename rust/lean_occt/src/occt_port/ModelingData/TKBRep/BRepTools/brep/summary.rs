@@ -1339,9 +1339,7 @@ fn refine_sampled_edge_interval(
         EARLY_PROBE_REFINEMENT_STAGES.needs_refinement(
             context,
             edge_shape,
-            start,
-            &midpoint_sample,
-            end,
+            [*start, midpoint_sample, *end],
         )?
     };
 
@@ -1461,41 +1459,6 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             Err(result) => result,
         }
     }
-
-    fn needs_refinement_or_continue_with_stage<const NEXT_N: usize>(
-        self,
-        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_N>,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-        continue_with_samples: impl FnOnce([NormalizedEdgeSample; NEXT_N]) -> Option<bool>,
-    ) -> Option<bool> {
-        self.needs_refinement_or_continue(context, edge_shape, source, |samples| {
-            next_stage.needs_refinement_or_continue(
-                context,
-                edge_shape,
-                samples,
-                continue_with_samples,
-            )
-        })
-    }
-
-    fn needs_refinement_or_continue_with_stage_and_tail(
-        self,
-        next_stage: EarlyProbeStageLayout<STAGE_N, 7>,
-        tail: EarlyProbeIntervalAwareTail,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<bool> {
-        self.needs_refinement_or_continue_with_stage(
-            next_stage,
-            context,
-            edge_shape,
-            source,
-            |samples| tail.needs_refinement(samples, context, edge_shape),
-        )
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1574,18 +1537,27 @@ impl EarlyProbeStagePair {
         self,
         context: &Context,
         edge_shape: &Shape,
-        start: &NormalizedEdgeSample,
-        midpoint: &NormalizedEdgeSample,
-        end: &NormalizedEdgeSample,
+        source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        self.midpoint_stage
-            .needs_refinement_or_continue_with_stage_and_tail(
-                self.outer_stage,
-                self.interval_aware_tail,
-                context,
-                edge_shape,
-                [*start, *midpoint, *end],
-            )
+        self.midpoint_stage.needs_refinement_or_continue(
+            context,
+            edge_shape,
+            source,
+            |midpoint_stage_samples| {
+                self.outer_stage.needs_refinement_or_continue(
+                    context,
+                    edge_shape,
+                    midpoint_stage_samples,
+                    |outer_stage_samples| {
+                        self.interval_aware_tail.needs_refinement(
+                            outer_stage_samples,
+                            context,
+                            edge_shape,
+                        )
+                    },
+                )
+            },
+        )
     }
 }
 
