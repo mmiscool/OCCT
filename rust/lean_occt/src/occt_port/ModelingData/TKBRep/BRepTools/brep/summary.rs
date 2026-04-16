@@ -129,7 +129,7 @@ pub(super) fn ported_shape_summary(
         .or_else(|| ported_shape_bbox(vertices, edges, faces))
         .or_else(|| {
             if contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0 {
-                offset_faces_bbox(context, vertices, edges, face_shapes)
+                offset_faces_bbox(context, shape, vertices, edges, face_shapes)
             } else {
                 None
             }
@@ -733,16 +733,54 @@ fn topological_shape_bbox(
 
 fn offset_faces_bbox(
     context: &Context,
+    shape: &Shape,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
     face_shapes: &[Shape],
 ) -> Option<([f64; 3], [f64; 3])> {
+    let shape_occt_bbox = shape_bbox_occt(context, shape);
+    if let (Some(mesh_bbox), Some(shape_occt_bbox)) =
+        (mesh_shape_bbox(context, shape), shape_occt_bbox)
+    {
+        if bbox_matches(mesh_bbox, shape_occt_bbox) {
+            return Some(mesh_bbox);
+        }
+    }
+
     let boundary_bbox = boundary_shape_bbox(vertices, edges);
+    let rust_face_bbox = (face_shapes.len() > 1)
+        .then(|| face_breps_bbox(context, face_shapes))
+        .flatten()
+        .map(|face_bbox| match boundary_bbox {
+            Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
+            None => face_bbox,
+        });
+    if let Some(rust_face_bbox) = rust_face_bbox {
+        if let Some(shape_occt_bbox) = shape_occt_bbox {
+            if bbox_matches(rust_face_bbox, shape_occt_bbox) {
+                return Some(rust_face_bbox);
+            }
+        }
+    }
+
     let face_bbox = face_bboxes_occt(context, face_shapes)?;
     Some(match boundary_bbox {
         Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
         None => face_bbox,
     })
+}
+
+fn face_breps_bbox(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face_shape in face_shapes {
+        let brep = context.ported_brep(face_shape).ok()?;
+        let face_bbox = (brep.summary.bbox_min, brep.summary.bbox_max);
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
 }
 
 fn face_bboxes_occt(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
@@ -849,12 +887,41 @@ fn offset_shell_bbox(
     prepared_shell_shape: &PreparedShellShape,
 ) -> Option<([f64; 3], [f64; 3])> {
     let shell_occt_bbox = shape_bbox_occt(context, &prepared_shell_shape.shell_shape)?;
-    context
-        .ported_brep(&prepared_shell_shape.shell_shape)
-        .ok()
-        .map(|brep| (brep.summary.bbox_min, brep.summary.bbox_max))
+    offset_shell_face_brep_bbox(context, prepared_shell_shape)
         .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
+        .or_else(|| {
+            mesh_shape_bbox(context, &prepared_shell_shape.shell_shape)
+                .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
+        })
+        .or_else(|| {
+            context
+                .ported_brep(&prepared_shell_shape.shell_shape)
+                .ok()
+                .map(|brep| (brep.summary.bbox_min, brep.summary.bbox_max))
+                .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
+        })
         .or(Some(shell_occt_bbox))
+}
+
+fn offset_shell_face_brep_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face_shape in &prepared_shell_shape.shell_face_shapes {
+        let brep = context.ported_brep(face_shape).ok()?;
+        let face_bbox = (brep.summary.bbox_min, brep.summary.bbox_max);
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+
+    context
+        .subshape_count_occt(&prepared_shell_shape.shell_shape, ShapeKind::Face)
+        .ok()
+        .filter(|&count| count == prepared_shell_shape.shell_face_shapes.len())?;
+    bbox
 }
 
 fn shape_bbox_occt(context: &Context, shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
