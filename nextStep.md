@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to replace the remaining nested `Option<Option<RefinementSegment>>` boundary in `RefinementSegment::stronger_half()` with an explicit typed outcome, so the adaptive stronger-half chase no longer has to thread ambiguous “midpoint sampling failed” vs “no stronger half” state through the shell-edge refinement path.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to remove the remaining `MidpointRefinementSegmentOutcome::segment()` bounce from the shell-edge refinement path, so the explicit midpoint-segment outcome can stay typed through `PreparedIntervalAwareRefinementSideLayouts::needs_refinement()` and `RefinementSegment::stronger_half()` instead of dropping back to `Option<RefinementSegment>` for stronger-segment choice.
 
 ## Current State
 
@@ -36,6 +36,8 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, and the terminal `needs_refinement(...)` dispatch from the outer-stage closure in one typed helper boundary
   - [`PreparedRefinementSpanLayout::midpoint_segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `MidpointRefinementSegmentOutcome` instead of nested `Option<Option<RefinementSegment>>`
   - [`MidpointEdgeProbePairRequest::probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `MidpointEdgeProbePairOutcome` instead of nested `Option<Option<MidpointEdgeProbePair>>`
+  - [`RefinementSegment::stronger_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now returns an explicit `StrongerHalfOutcome` instead of nested `Option<Option<RefinementSegment>>`
+  - the four unsupported-edge extremum solvers now return an explicit `EdgeSampleExtremumOutcome` instead of nested `Option<Option<EdgeSample>>`
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still owns score-based creation, stronger-segment choice, local-window checks, and the adaptive stronger-half chase
 - The exercised non-solid offset shell fixture stays green on the Rust-first path.
 - The exercised closed offset solid fixture stays green, including the direct shell-local parity assertion in [`ported_brep_uses_rust_owned_volume_for_offset_solids()`](rust/lean_occt/tests/brep_workflows.rs).
@@ -53,10 +55,10 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns both midpoint-stage and outer-stage source materialization, plus the typed interval-aware tail dispatch
 - the stage runner now shares the stage-step `refinement_result(...)? -> ControlFlow` boundary across midpoint-stage and outer-stage
 - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
-- the interval-aware inner-segment path no longer carries ambiguous nested `Option` state: it now uses explicit midpoint probe and midpoint segment outcomes, and the early stage pair request also uses an explicit probe-pair outcome
-- but the adaptive stronger-half chase still comes through [`RefinementSegment::stronger_half()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) as a nested `Option<Option<RefinementSegment>>`, so “midpoint sampling failed” and “no usable stronger half” are still expressed through ambiguous nesting
+- the interval-aware inner-segment path no longer carries ambiguous nested `Option` state: it now uses explicit midpoint probe and midpoint segment outcomes, the early stage pair request also uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers now use an explicit edge-sample outcome too
+- but the midpoint-segment path still drops back to `Option<RefinementSegment>` through [`MidpointRefinementSegmentOutcome::segment()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), so the explicit midpoint outcome is not yet preserved all the way through stronger-segment choice
 
-The next blocker is to flatten that nested stronger-half carrier so the adaptive refinement chase can stay on explicit typed Rust-side state instead of threading the last ambiguous nested `Option` through shell-edge refinement.
+The next blocker is to keep midpoint-segment outcomes explicit through stronger-segment selection, so the shell-edge refinement path stops reintroducing an `Option<RefinementSegment>` bounce after already landing typed midpoint probe, probe-pair, stronger-half, and edge-extremum outcomes.
 
 ## Focus
 
@@ -74,4 +76,4 @@ The next blocker is to flatten that nested stronger-half carrier so the adaptive
 
 ## Why This Is Next
 
-This turn finished flattening the interval-aware midpoint and early-stage pair seams too: `PreparedRefinementSpanLayout::midpoint_segment()` now returns an explicit midpoint-segment outcome, and `MidpointEdgeProbePairRequest::probe_pair()` now returns an explicit midpoint-probe-pair outcome. That leaves the next real seam one level smaller again: `RefinementSegment::stronger_half()` still returns a nested `Option<Option<RefinementSegment>>` instead of an explicit typed outcome.
+This turn finished flattening two more ambiguous sampler seams: `RefinementSegment::stronger_half()` now returns an explicit `StrongerHalfOutcome`, and the four unsupported-edge extremum solvers now return an explicit `EdgeSampleExtremumOutcome` instead of nested `Option<Option<EdgeSample>>`. That leaves the next real seam one level smaller again: midpoint-segment selection is typed at the edge of the sampler, but it still gets collapsed back to `Option<RefinementSegment>` through `MidpointRefinementSegmentOutcome::segment()` before stronger-segment choice.

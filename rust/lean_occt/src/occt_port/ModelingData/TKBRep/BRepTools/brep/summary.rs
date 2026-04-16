@@ -1574,6 +1574,18 @@ impl MidpointRefinementSegmentOutcome {
 }
 
 #[derive(Clone, Copy)]
+enum StrongerHalfOutcome {
+    NoHalf,
+    Half(RefinementSegment),
+}
+
+#[derive(Clone, Copy)]
+enum EdgeSampleExtremumOutcome {
+    NoSample,
+    Sample(EdgeSample),
+}
+
+#[derive(Clone, Copy)]
 enum MidpointEdgeProbeOutcome {
     NoProbe,
     Probe(NormalizedEdgeSample),
@@ -1783,7 +1795,9 @@ impl RefinementSegment {
         let mut adaptive_probe = *self;
 
         for _ in 0..coarse_refinement_checks_before_adaptive_chase {
-            let Some(probe) = adaptive_probe.stronger_half(context, edge_shape)? else {
+            let StrongerHalfOutcome::Half(probe) =
+                adaptive_probe.stronger_half(context, edge_shape)?
+            else {
                 return Some(false);
             };
 
@@ -1794,7 +1808,9 @@ impl RefinementSegment {
             adaptive_probe = probe;
         }
 
-        let Some(mut probe) = adaptive_probe.stronger_half(context, edge_shape)? else {
+        let StrongerHalfOutcome::Half(mut probe) =
+            adaptive_probe.stronger_half(context, edge_shape)?
+        else {
             return Some(false);
         };
 
@@ -1813,7 +1829,8 @@ impl RefinementSegment {
             initial_chord_length,
             refinement_steps,
         ) {
-            let Some(next_probe) = probe.stronger_half(context, edge_shape)? else {
+            let StrongerHalfOutcome::Half(next_probe) = probe.stronger_half(context, edge_shape)?
+            else {
                 break;
             };
             probe = next_probe;
@@ -1823,7 +1840,7 @@ impl RefinementSegment {
         Some(probe.needs_local_refinement())
     }
 
-    fn stronger_half(&self, context: &Context, edge_shape: &Shape) -> Option<Option<Self>> {
+    fn stronger_half(&self, context: &Context, edge_shape: &Shape) -> Option<StrongerHalfOutcome> {
         let outer_probe = midpoint_edge_probe(context, edge_shape, &self.start, &self.midpoint)?;
         let inner_probe = midpoint_edge_probe(context, edge_shape, &self.midpoint, &self.end)?;
 
@@ -1843,7 +1860,10 @@ impl RefinementSegment {
         )
         .map(|(_, segment)| segment);
 
-        Some(stronger_half)
+        Some(match stronger_half {
+            Some(segment) => StrongerHalfOutcome::Half(segment),
+            None => StrongerHalfOutcome::NoHalf,
+        })
     }
 }
 
@@ -2107,7 +2127,7 @@ fn append_axis_turning_edge_samples(
 ) -> Option<()> {
     for window in samples.windows(2) {
         for axis in 0..3 {
-            let Some(extremum_sample) =
+            let EdgeSampleExtremumOutcome::Sample(extremum_sample) =
                 axis_turning_edge_sample(context, edge_shape, &window[0], &window[1], axis)?
             else {
                 continue;
@@ -2126,7 +2146,7 @@ fn append_near_flat_axis_edge_samples(
 ) -> Option<()> {
     for window in samples.windows(2) {
         for axis in 0..3 {
-            let Some(extremum_sample) =
+            let EdgeSampleExtremumOutcome::Sample(extremum_sample) =
                 near_flat_axis_edge_sample(context, edge_shape, &window[0], &window[1], axis)?
             else {
                 continue;
@@ -2145,9 +2165,10 @@ fn append_axis_position_extremum_samples(
 ) -> Option<()> {
     for window in samples.windows(3) {
         for axis in 0..3 {
-            let Some(extremum_sample) = axis_position_extremum_edge_sample(
-                context, edge_shape, &window[0], &window[1], &window[2], axis,
-            )?
+            let EdgeSampleExtremumOutcome::Sample(extremum_sample) =
+                axis_position_extremum_edge_sample(
+                    context, edge_shape, &window[0], &window[1], &window[2], axis,
+                )?
             else {
                 continue;
             };
@@ -2179,15 +2200,16 @@ fn append_seeded_axis_position_extremum_samples(
                 continue;
             };
 
-            let Some(extremum_sample) = seeded_axis_position_extremum_edge_sample(
-                context,
-                edge_shape,
-                &samples[low_index],
-                &samples[seed_index],
-                &samples[high_index],
-                axis,
-                extremum_kind,
-            )?
+            let EdgeSampleExtremumOutcome::Sample(extremum_sample) =
+                seeded_axis_position_extremum_edge_sample(
+                    context,
+                    edge_shape,
+                    &samples[low_index],
+                    &samples[seed_index],
+                    &samples[high_index],
+                    axis,
+                    extremum_kind,
+                )?
             else {
                 continue;
             };
@@ -2203,9 +2225,9 @@ fn axis_turning_edge_sample(
     start: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
     axis: usize,
-) -> Option<Option<EdgeSample>> {
+) -> Option<EdgeSampleExtremumOutcome> {
     if !tangent_sign_changes(start.sample.tangent[axis], end.sample.tangent[axis]) {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
     let mut low = *start;
@@ -2224,7 +2246,7 @@ fn axis_turning_edge_sample(
         };
         let midpoint_tangent = midpoint.sample.tangent[axis];
         if midpoint_tangent.abs() <= 1.0e-9 {
-            return Some(Some(midpoint.sample));
+            return Some(EdgeSampleExtremumOutcome::Sample(midpoint.sample));
         }
 
         if tangent_sign_changes(low.sample.tangent[axis], midpoint_tangent) {
@@ -2236,17 +2258,19 @@ fn axis_turning_edge_sample(
             continue;
         }
 
-        return Some(Some(midpoint.sample));
+        return Some(EdgeSampleExtremumOutcome::Sample(midpoint.sample));
     }
 
     let midpoint_t = 0.5 * (low.t + high.t);
     if approx_eq(midpoint_t, low.t, 1.0e-12, 1.0e-12)
         || approx_eq(midpoint_t, high.t, 1.0e-12, 1.0e-12)
     {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
-    Some(Some(context.edge_sample(edge_shape, midpoint_t).ok()?))
+    Some(EdgeSampleExtremumOutcome::Sample(
+        context.edge_sample(edge_shape, midpoint_t).ok()?,
+    ))
 }
 
 fn near_flat_axis_edge_sample(
@@ -2255,9 +2279,9 @@ fn near_flat_axis_edge_sample(
     start: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
     axis: usize,
-) -> Option<Option<EdgeSample>> {
+) -> Option<EdgeSampleExtremumOutcome> {
     if tangent_sign_changes(start.sample.tangent[axis], end.sample.tangent[axis]) {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
     let probe_fractions = [0.25, 0.5, 0.75];
@@ -2280,11 +2304,11 @@ fn near_flat_axis_edge_sample(
             .abs()
             .total_cmp(&rhs.sample.tangent[axis].abs())
     }) else {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     };
 
     if !near_flat_axis_probe_is_promising(start, best_probe, end, axis) {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
     let mut low = *start;
@@ -2333,7 +2357,7 @@ fn near_flat_axis_edge_sample(
         high = right_probe;
     }
 
-    Some(Some(best_probe.sample))
+    Some(EdgeSampleExtremumOutcome::Sample(best_probe.sample))
 }
 
 fn seeded_axis_position_extremum_edge_sample(
@@ -2344,7 +2368,7 @@ fn seeded_axis_position_extremum_edge_sample(
     end: &NormalizedEdgeSample,
     axis: usize,
     extremum_kind: AxisExtremumKind,
-) -> Option<Option<EdgeSample>> {
+) -> Option<EdgeSampleExtremumOutcome> {
     let mut low = *start;
     let mut high = *end;
     let mut best_probe = *seed;
@@ -2394,10 +2418,10 @@ fn seeded_axis_position_extremum_edge_sample(
     if !axis_position_probe_is_promising(seed, best_probe, axis, extremum_kind)
         || approx_eq(best_probe.t, seed.t, 1.0e-12, 1.0e-12)
     {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
-    Some(Some(best_probe.sample))
+    Some(EdgeSampleExtremumOutcome::Sample(best_probe.sample))
 }
 
 fn axis_position_extremum_edge_sample(
@@ -2407,13 +2431,13 @@ fn axis_position_extremum_edge_sample(
     midpoint: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
     axis: usize,
-) -> Option<Option<EdgeSample>> {
+) -> Option<EdgeSampleExtremumOutcome> {
     let Some(extremum_kind) = sampled_axis_extremum_kind(
         start.sample.position[axis],
         midpoint.sample.position[axis],
         end.sample.position[axis],
     ) else {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     };
 
     let mut low = *start;
@@ -2441,7 +2465,7 @@ fn axis_position_extremum_edge_sample(
     }
 
     if !axis_position_probe_is_promising(midpoint, best_probe, axis, extremum_kind) {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
     for _ in 0..12 {
@@ -2488,10 +2512,10 @@ fn axis_position_extremum_edge_sample(
     }
 
     if approx_eq(best_probe.t, midpoint.t, 1.0e-12, 1.0e-12) {
-        return Some(None);
+        return Some(EdgeSampleExtremumOutcome::NoSample);
     }
 
-    Some(Some(best_probe.sample))
+    Some(EdgeSampleExtremumOutcome::Sample(best_probe.sample))
 }
 
 fn near_flat_axis_probe_is_promising(
