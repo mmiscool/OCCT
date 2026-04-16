@@ -1934,11 +1934,12 @@ fn sampled_edge_interval_needs_refinement(
         start.sample.tangent,
         midpoint.sample.tangent,
         end.sample.tangent,
-    ) || interval_midpoint_bends_from_chord(
-        start.sample.position,
-        midpoint.sample.position,
-        end.sample.position,
-    )
+    ) || interval_midpoint_shows_axis_position_shoulder(start, midpoint, end)
+        || interval_midpoint_bends_from_chord(
+            start.sample.position,
+            midpoint.sample.position,
+            end.sample.position,
+        )
 }
 
 fn midpoint_expands_edge_interval_bbox(start: [f64; 3], midpoint: [f64; 3], end: [f64; 3]) -> bool {
@@ -1963,6 +1964,28 @@ fn interval_tangent_indicates_axis_turn(
 
 fn tangent_sign_changes(lhs: f64, rhs: f64) -> bool {
     lhs.abs() > 1.0e-9 && rhs.abs() > 1.0e-9 && lhs.signum() != rhs.signum()
+}
+
+fn interval_midpoint_shows_axis_position_shoulder(
+    start: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> bool {
+    let interval_t_span = (end.t - start.t).abs();
+    if interval_t_span <= 1.0e-12 {
+        return false;
+    }
+
+    let interpolation_weight = ((midpoint.t - start.t) / interval_t_span).clamp(0.0, 1.0);
+    let chord_length = norm3(subtract3(end.sample.position, start.sample.position));
+    (0..3).any(|axis| {
+        let expected_axis_value = start.sample.position[axis]
+            + interpolation_weight * (end.sample.position[axis] - start.sample.position[axis]);
+        let deviation = (midpoint.sample.position[axis] - expected_axis_value).abs();
+        let axis_interval_span = (end.sample.position[axis] - start.sample.position[axis]).abs();
+        let axis_scale = chord_length.max(axis_interval_span).max(1.0);
+        deviation > 5.0e-4 * axis_scale
+    })
 }
 
 fn interval_midpoint_bends_from_chord(start: [f64; 3], midpoint: [f64; 3], end: [f64; 3]) -> bool {
