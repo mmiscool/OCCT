@@ -1481,6 +1481,19 @@ impl EarlyProbeStageResult<7> {
     }
 }
 
+impl EarlyProbeStageResult<5> {
+    fn continue_with_interval_aware_tail(
+        self,
+        next_stage: EarlyProbeStageLayout<5, 7>,
+        interval_aware_tail: EarlyProbeIntervalAwareTail,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        self.continue_with(next_stage, context, edge_shape)
+            .needs_refinement(interval_aware_tail, context, edge_shape)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct EarlyProbeStageResultTail {
     midpoint_stage: EarlyProbeStageLayout<3, 5>,
@@ -1509,8 +1522,12 @@ impl EarlyProbeStageResultTail {
     ) -> Option<bool> {
         self.midpoint_stage
             .stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with(self.next_stage, context, edge_shape)
-            .needs_refinement(self.interval_aware_tail, context, edge_shape)
+            .continue_with_interval_aware_tail(
+                self.next_stage,
+                self.interval_aware_tail,
+                context,
+                edge_shape,
+            )
     }
 }
 
