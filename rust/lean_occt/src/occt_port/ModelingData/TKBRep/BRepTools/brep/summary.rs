@@ -1627,6 +1627,26 @@ struct PreparedIntervalAwareRefinementSideLayout {
 }
 
 impl PreparedIntervalAwareRefinementSideLayout {
+    fn from_side_chain(chain: PreparedIntervalAwareRefinementSideChain) -> Self {
+        let coarse = if chain.outer_probe_first {
+            PreparedRefinementTriplet::new(chain.start, chain.second, chain.end)
+        } else {
+            PreparedRefinementTriplet::new(chain.start, chain.first, chain.end)
+        };
+        let outer = if chain.outer_probe_first {
+            PreparedRefinementTriplet::new(chain.start, chain.first, chain.second)
+        } else {
+            PreparedRefinementTriplet::new(chain.first, chain.second, chain.end)
+        };
+        let inner = if chain.outer_probe_first {
+            PreparedRefinementSpan::new(chain.second, chain.end)
+        } else {
+            PreparedRefinementSpan::new(chain.start, chain.first)
+        };
+
+        Self::new(coarse, outer, inner)
+    }
+
     fn new(
         coarse: PreparedRefinementTriplet,
         outer: PreparedRefinementTriplet,
@@ -1645,32 +1665,82 @@ impl PreparedIntervalAwareRefinementSideLayout {
 }
 
 #[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSideChain {
+    start: NormalizedEdgeSample,
+    first: NormalizedEdgeSample,
+    second: NormalizedEdgeSample,
+    end: NormalizedEdgeSample,
+    outer_probe_first: bool,
+}
+
+impl PreparedIntervalAwareRefinementSideChain {
+    fn outer_probe_first(
+        start: NormalizedEdgeSample,
+        outer_probe: NormalizedEdgeSample,
+        pivot: NormalizedEdgeSample,
+        end: NormalizedEdgeSample,
+    ) -> Self {
+        Self {
+            start,
+            first: outer_probe,
+            second: pivot,
+            end,
+            outer_probe_first: true,
+        }
+    }
+
+    fn outer_probe_second(
+        start: NormalizedEdgeSample,
+        pivot: NormalizedEdgeSample,
+        outer_probe: NormalizedEdgeSample,
+        end: NormalizedEdgeSample,
+    ) -> Self {
+        Self {
+            start,
+            first: pivot,
+            second: outer_probe,
+            end,
+            outer_probe_first: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSideChains {
+    left: PreparedIntervalAwareRefinementSideChain,
+    right: PreparedIntervalAwareRefinementSideChain,
+}
+
+impl PreparedIntervalAwareRefinementSideChains {
+    fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
+        Self {
+            left: PreparedIntervalAwareRefinementSideChain::outer_probe_first(
+                chain.start,
+                chain.left_outer_probe,
+                chain.first_probe,
+                chain.midpoint,
+            ),
+            right: PreparedIntervalAwareRefinementSideChain::outer_probe_second(
+                chain.midpoint,
+                chain.second_probe,
+                chain.right_outer_probe,
+                chain.end,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct PreparedIntervalAwareRefinementSideLayouts {
     left: PreparedIntervalAwareRefinementSideLayout,
     right: PreparedIntervalAwareRefinementSideLayout,
 }
 
 impl PreparedIntervalAwareRefinementSideLayouts {
-    fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
+    fn from_side_chains(chains: PreparedIntervalAwareRefinementSideChains) -> Self {
         Self {
-            left: PreparedIntervalAwareRefinementSideLayout::new(
-                PreparedRefinementTriplet::new(chain.start, chain.first_probe, chain.midpoint),
-                PreparedRefinementTriplet::new(
-                    chain.start,
-                    chain.left_outer_probe,
-                    chain.first_probe,
-                ),
-                PreparedRefinementSpan::new(chain.first_probe, chain.midpoint),
-            ),
-            right: PreparedIntervalAwareRefinementSideLayout::new(
-                PreparedRefinementTriplet::new(chain.midpoint, chain.second_probe, chain.end),
-                PreparedRefinementTriplet::new(
-                    chain.second_probe,
-                    chain.right_outer_probe,
-                    chain.end,
-                ),
-                PreparedRefinementSpan::new(chain.midpoint, chain.second_probe),
-            ),
+            left: PreparedIntervalAwareRefinementSideLayout::from_side_chain(chains.left),
+            right: PreparedIntervalAwareRefinementSideLayout::from_side_chain(chains.right),
         }
     }
 
@@ -1690,7 +1760,10 @@ struct PreparedIntervalAwareRefinementSides {
 
 impl PreparedIntervalAwareRefinementSides {
     fn from_outer_probe_chain(chain: &PreparedOuterProbeChain) -> Self {
-        PreparedIntervalAwareRefinementSideLayouts::from_outer_probe_chain(chain).into_sides()
+        PreparedIntervalAwareRefinementSideLayouts::from_side_chains(
+            PreparedIntervalAwareRefinementSideChains::from_outer_probe_chain(chain),
+        )
+        .into_sides()
     }
 
     fn prepare_refinement_segment(

@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining inline left/right descriptor assembly in `PreparedIntervalAwareRefinementSideLayouts::from_outer_probe_chain()`, so the interval-aware layout-pair builder stops spelling out both side-local coarse/outer/inner layouts directly.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining mirrored left/right side-chain extraction in `PreparedIntervalAwareRefinementSideChains::from_outer_probe_chain()`, so the interval-aware side-chain pair stops spelling out both side-local outer-probe orderings directly.
 
 ## Current State
 
@@ -19,6 +19,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/first_probe/midpoint/second_probe/end` early probe carrier and decides when midpoint-stage evidence is strong enough to advance into outer probes
   - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier and now delegates interval-aware side pair preparation to [`PreparedIntervalAwareRefinementSides`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs)
   - [`PreparedIntervalAwareRefinementSides`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns left/right side-pair construction and stronger-side choice before handing the winning segment to the shared refinement path
+  - [`PreparedIntervalAwareRefinementSideChains`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the smaller prepared side-chain boundary between the outer probe chain and the typed interval-aware side layouts
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns the dedicated typed layout-pair boundary between the outer probe chain and the final interval-aware side pair
   - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now carries typed [`PreparedRefinementTriplet`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) coarse/outer descriptors and a typed [`PreparedRefinementSpan`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) inner descriptor, so the old eight-field positional constructor is gone
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns score-based creation, stronger-segment choice, the local-window test, and the stronger-half chase
@@ -31,14 +32,13 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 `offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. The deeper late refinement tail is no longer the structural problem: early probe preparation, local probe-window checks, interval-aware side-pair preparation, and the later stronger-half refinement now share the same midpoint-probe and scored-segment machinery.
 
-The remaining duplication is no longer the raw early probe chain, the stage wrappers, the interval-aware staging carrier, the open-coded execution step on the prepared segment, the old side enum, the pair construction in `PreparedOuterProbeChain`, the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap, or the old eight-field `PreparedIntervalAwareRefinementSide::new(...)` call site. The remaining structural gap is the mirrored side-local descriptor assembly in [`PreparedIntervalAwareRefinementSideLayouts::from_outer_probe_chain()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs). That layout-pair builder still has to:
+The remaining duplication is no longer the raw early probe chain, the stage wrappers, the interval-aware staging carrier, the open-coded execution step on the prepared segment, the old side enum, the pair construction in `PreparedOuterProbeChain`, the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap, the inline triplet/span assembly in `PreparedIntervalAwareRefinementSideLayouts::from_outer_probe_chain()`, or the old eight-field `PreparedIntervalAwareRefinementSide::new(...)` call site. The remaining structural gap is the mirrored side-local chain extraction in [`PreparedIntervalAwareRefinementSideChains::from_outer_probe_chain()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs). That side-chain builder still has to:
 
-- build a typed coarse triplet from side-specific outer-probe-chain samples
-- build a typed outer triplet from side-specific outer-probe-chain samples
-- build a typed inner span from side-specific outer-probe-chain samples
-- repeat that same mirrored mapping once for the left layout and again for the right layout before side choice even starts
+- choose whether the side-local outer probe comes before or after the pivot for the left side
+- choose the opposite ordering for the right side
+- repeat that same mirrored side-local extraction once for the left chain and again for the right chain before layout choice even starts
 
-The next blocker is to move that remaining mirrored side-local descriptor wiring behind a smaller prepared side-chain boundary, so the interval-aware layout pair can be built from one typed side-layout path instead of two inline left/right layout assemblies.
+The next blocker is to move that remaining mirrored side-local chain wiring behind a smaller prepared side-window boundary, so the interval-aware side-chain pair can be built from one typed outer-probe-chain path instead of two inline left/right extractions.
 
 ## Focus
 
@@ -55,6 +55,6 @@ The next blocker is to move that remaining mirrored side-local descriptor wiring
 
 ## Why This Is Next
 
-This turn carried the interval-aware cleanup one step deeper: the side-local remap is no longer attached to `PreparedIntervalAwareRefinementSide` itself, and the new `PreparedIntervalAwareRefinementSideLayouts` boundary now owns the typed handoff from the outer probe chain into the final interval-aware side pair.
+This turn carried the interval-aware cleanup one step deeper: the side-local triplet/span assembly is no longer attached to the layout-pair builder itself, and the new `PreparedIntervalAwareRefinementSideChains` boundary now owns the typed handoff from the outer probe chain into the final interval-aware side layouts.
 
-The next bounded step is to remove the remaining mirrored chain remap in `PreparedIntervalAwareRefinementSideLayouts::from_outer_probe_chain()`. If that last inline left/right layout assembly is collapsed behind a smaller prepared side-chain boundary, the unsupported-edge shell-boundary path gets a cleaner Rust-owned interval-aware refinement entry without adding another fallback tier.
+The next bounded step is to remove the remaining mirrored chain remap in `PreparedIntervalAwareRefinementSideChains::from_outer_probe_chain()`. If that last inline left/right side extraction is collapsed behind a smaller prepared side-window boundary, the unsupported-edge shell-boundary path gets a cleaner Rust-owned interval-aware refinement entry without adding another fallback tier.
