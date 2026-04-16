@@ -1540,23 +1540,23 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let midpoint_samples = match self.midpoint_stage.stage_outcome(
-            context,
-            edge_shape,
-            [*start, *midpoint, *end],
-        )? {
-            EarlyProbeStageOutcome::Complete(result) => return Some(result),
-            EarlyProbeStageOutcome::Samples(samples) => samples,
+        let midpoint_samples = match self
+            .midpoint_stage
+            .stage_outcome(context, edge_shape, [*start, *midpoint, *end])?
+            .refinement_result()
+        {
+            Ok(samples) => samples,
+            Err(result) => return Some(result),
         };
 
-        let outer_samples =
-            match self
-                .outer_stage
-                .stage_outcome(context, edge_shape, midpoint_samples)?
-            {
-                EarlyProbeStageOutcome::Complete(result) => return Some(result),
-                EarlyProbeStageOutcome::Samples(samples) => samples,
-            };
+        let outer_samples = match self
+            .outer_stage
+            .stage_outcome(context, edge_shape, midpoint_samples)?
+            .refinement_result()
+        {
+            Ok(samples) => samples,
+            Err(result) => return Some(result),
+        };
 
         self.interval_aware_side_layouts.needs_refinement(
             &outer_samples,
@@ -1577,6 +1577,13 @@ impl<const STAGE_N: usize> EarlyProbeStageOutcome<STAGE_N> {
         match result {
             Ok(samples) => Self::Samples(samples),
             Err(result) => Self::Complete(result),
+        }
+    }
+
+    fn refinement_result(self) -> Result<[NormalizedEdgeSample; STAGE_N], bool> {
+        match self {
+            Self::Complete(result) => Err(result),
+            Self::Samples(samples) => Ok(samples),
         }
     }
 }
