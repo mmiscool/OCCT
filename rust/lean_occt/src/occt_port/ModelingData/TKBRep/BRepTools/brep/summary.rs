@@ -1433,11 +1433,11 @@ fn append_seeded_axis_position_extremum_samples(
             else {
                 continue;
             };
-            let low_index = seed_index.saturating_sub(2);
-            let high_index = (seed_index + 2).min(samples.len() - 1);
-            if low_index == seed_index || high_index == seed_index {
+            let Some((low_index, high_index)) =
+                seeded_axis_extremum_sample_range(samples, seed_index, axis, extremum_kind)
+            else {
                 continue;
-            }
+            };
 
             let Some(extremum_sample) = seeded_axis_position_extremum_edge_sample(
                 context,
@@ -1854,6 +1854,71 @@ fn seeded_axis_extremum_sample_index(
         }
     }
     Some(best_index)
+}
+
+fn seeded_axis_extremum_sample_range(
+    samples: &[NormalizedEdgeSample],
+    seed_index: usize,
+    axis: usize,
+    extremum_kind: AxisExtremumKind,
+) -> Option<(usize, usize)> {
+    if samples.len() < 3 || seed_index == 0 || seed_index + 1 >= samples.len() {
+        return None;
+    }
+
+    let tolerance = sampled_axis_run_tolerance(samples, axis);
+    let mut low_index = seed_index;
+    while low_index > 0
+        && sampled_axis_value_stays_on_seed_run(
+            samples[low_index - 1].sample.position[axis],
+            samples[low_index].sample.position[axis],
+            extremum_kind,
+            tolerance,
+        )
+    {
+        low_index -= 1;
+    }
+
+    let mut high_index = seed_index;
+    while high_index + 1 < samples.len()
+        && sampled_axis_value_stays_on_seed_run(
+            samples[high_index + 1].sample.position[axis],
+            samples[high_index].sample.position[axis],
+            extremum_kind,
+            tolerance,
+        )
+    {
+        high_index += 1;
+    }
+
+    if low_index == seed_index || high_index == seed_index {
+        return None;
+    }
+
+    Some((low_index, high_index))
+}
+
+fn sampled_axis_run_tolerance(samples: &[NormalizedEdgeSample], axis: usize) -> f64 {
+    let mut min_value = f64::INFINITY;
+    let mut max_value = f64::NEG_INFINITY;
+    for sample in samples {
+        let value = sample.sample.position[axis];
+        min_value = min_value.min(value);
+        max_value = max_value.max(value);
+    }
+    1.0e-6 * (max_value - min_value).abs().max(1.0)
+}
+
+fn sampled_axis_value_stays_on_seed_run(
+    candidate: f64,
+    current: f64,
+    extremum_kind: AxisExtremumKind,
+    tolerance: f64,
+) -> bool {
+    match extremum_kind {
+        AxisExtremumKind::Minimum => candidate >= current - tolerance,
+        AxisExtremumKind::Maximum => candidate <= current + tolerance,
+    }
 }
 
 fn sampled_edge_interval_needs_refinement(
