@@ -1458,6 +1458,18 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             Err(result) => ControlFlow::Break(result),
         })
     }
+
+    fn stage_samples_or_result(
+        self,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; SOURCE_N],
+    ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
+        Some(match self.stage_progress(context, edge_shape, source)? {
+            ControlFlow::Continue(samples) => Ok(samples),
+            ControlFlow::Break(result) => Err(result),
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1543,26 +1555,30 @@ impl EarlyProbeRefinementStages {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let outer_stage_progress = match self.midpoint_stage.stage_progress(
+        let midpoint_samples = match self.midpoint_stage.stage_samples_or_result(
             context,
             edge_shape,
             [*start, *midpoint, *end],
         )? {
-            ControlFlow::Continue(samples) => self
-                .outer_stage
-                .stage_progress(context, edge_shape, samples)?,
-            ControlFlow::Break(result) => return Some(result),
+            Ok(samples) => samples,
+            Err(result) => return Some(result),
         };
 
-        match outer_stage_progress {
-            ControlFlow::Continue(samples) => self.interval_aware_side_layouts.needs_refinement(
-                &samples,
-                context,
-                edge_shape,
-                self.coarse_refinement_checks_before_adaptive_chase,
-            ),
-            ControlFlow::Break(result) => Some(result),
-        }
+        let outer_samples =
+            match self
+                .outer_stage
+                .stage_samples_or_result(context, edge_shape, midpoint_samples)?
+            {
+                Ok(samples) => samples,
+                Err(result) => return Some(result),
+            };
+
+        self.interval_aware_side_layouts.needs_refinement(
+            &outer_samples,
+            context,
+            edge_shape,
+            self.coarse_refinement_checks_before_adaptive_chase,
+        )
     }
 }
 
