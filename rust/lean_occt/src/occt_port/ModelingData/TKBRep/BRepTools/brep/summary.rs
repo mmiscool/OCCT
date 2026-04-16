@@ -1468,15 +1468,14 @@ impl<const STAGE_N: usize> EarlyProbeStageResult<STAGE_N> {
 }
 
 impl EarlyProbeStageResult<5> {
-    fn continue_with_tail(
+    fn continue_with_stage_result_tail(
         self,
-        next_stage: EarlyProbeStageLayout<5, 7>,
-        tail: EarlyProbeIntervalAwareTail,
+        tail: EarlyProbeStageResultTail,
         context: &Context,
         edge_shape: &Shape,
     ) -> Option<bool> {
-        self.continue_with(next_stage, context, edge_shape)
-            .needs_refinement(tail, context, edge_shape)
+        self.continue_with(tail.next_stage, context, edge_shape)
+            .needs_refinement(tail.interval_aware_tail, context, edge_shape)
     }
 }
 
@@ -1510,20 +1509,6 @@ impl EarlyProbeStageResultTail {
             interval_aware_tail,
         }
     }
-
-    fn needs_refinement(
-        self,
-        stage_result: EarlyProbeStageResult<5>,
-        context: &Context,
-        edge_shape: &Shape,
-    ) -> Option<bool> {
-        stage_result.continue_with_tail(
-            self.next_stage,
-            self.interval_aware_tail,
-            context,
-            edge_shape,
-        )
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1549,12 +1534,9 @@ impl EarlyProbeKickoff {
         edge_shape: &Shape,
         source: [NormalizedEdgeSample; 3],
     ) -> Option<bool> {
-        self.stage_result_tail.needs_refinement(
-            self.kickoff_stage
-                .stage_samples_or_refinement(context, edge_shape, source),
-            context,
-            edge_shape,
-        )
+        self.kickoff_stage
+            .stage_samples_or_refinement(context, edge_shape, source)
+            .continue_with_stage_result_tail(self.stage_result_tail, context, edge_shape)
     }
 }
 
