@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the duplicated `ControlFlow::Continue/Break` stage-progress match inside `EarlyProbeRefinementStages::needs_refinement()`, so midpoint-stage -> outer-stage -> interval-aware progression stays on one explicit Rust-owned runner path without repeating the same typed stage unwrap twice.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining final `ControlFlow::Continue/Break` stage-progress match inside `EarlyProbeRefinementStages::needs_refinement()`, so the typed early-stage runner can hand successful outer-stage samples straight into interval-aware refinement without one last manual stage-progress unwrap.
 
 ## Current State
 
@@ -36,6 +36,7 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - the old midpoint-only `EarlyProbeStageSource::Triplet { start, midpoint, end }` variant is gone
   - the old [`EarlyProbeStageSource`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper is gone, and both early stages now pass raw `[NormalizedEdgeSample; N]` arrays straight into the shared typed stage runner
   - [`EarlyProbeRefinementStages`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now keeps midpoint-stage -> outer-stage -> interval-aware progression on explicit `ControlFlow<bool, [NormalizedEdgeSample; N]>` stage-progress values from [`EarlyProbeStageLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), so the old duplicated `refinement_result(...)? -> match Ok/Err` stage-step execution, the one-use local `stage_samples!` macro, the old `EarlyProbeStageOutcome` layer, the nested `and_then(...)` / `finish(...)` closure chain, and the duplicated handwritten `Ok(samples) => samples` / `Err(result) => return Some(result)` split are gone too
+  - midpoint-stage -> outer-stage chaining now lives on [`EarlyProbeStageLayout::continue_stage_progress()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), so the one-use `outer_stage_progress()` bounce is gone and only the final stage-progress unwrap remains in `needs_refinement()`
 - The interval-aware refinement handoff remains typed and Rust-owned:
   - [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) carries coarse/outer/inner segment layouts
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns stronger coarse-side choice, winning outer-vs-inner segment selection, and the terminal `needs_refinement(...)` dispatch from the outer-stage closure in one typed helper boundary, with coarse/outer/midpoint candidates all staying on explicit segment outcomes during stronger-segment choice
@@ -66,9 +67,9 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now already owns the outer-stage closure’s `None => false`, winning-segment selection, and terminal `segment.needs_refinement(...)` dispatch together
   - the interval-aware segment path no longer carries ambiguous nested `Option` state: midpoint, coarse, and outer candidates now all use explicit `RefinementSegmentOutcome`, the early stage pair request uses an explicit probe-pair outcome, and the unsupported-edge extremum solvers use an explicit edge-sample outcome too
   - midpoint segment selection is now shared through `midpoint_refinement_segment(...)`, and the adaptive stronger-half chase now stays on `RefinementSegmentOutcome` instead of a separate half-only enum
-  - but `EarlyProbeRefinementStages::needs_refinement()` still matches `ControlFlow::Continue(samples)` vs `ControlFlow::Break(result)` twice by hand, once for midpoint-stage and once for outer-stage, even though per-stage execution already lives on `EarlyProbeStageLayout` and the runner already owns the typed interval-aware tail
+  - but `EarlyProbeRefinementStages::needs_refinement()` still matches the final `ControlFlow::Continue(samples)` vs `ControlFlow::Break(result)` by hand after staged midpoint -> outer progression, even though the typed stage boundary now already owns the midpoint-stage -> outer-stage carry path and the runner already owns the typed interval-aware tail
 
-The next blocker is to keep that typed `ControlFlow` progress path but stop spelling the same direct `Continue/Break` stage unwrap twice in `EarlyProbeRefinementStages::needs_refinement()`, so the early stage runner stays on one Rust-owned midpoint-stage -> outer-stage -> interval-aware execution path under a smaller shared stage-progress boundary.
+The next blocker is to keep that typed `ControlFlow` progress path but stop spelling that last direct `Continue/Break` stage unwrap in `EarlyProbeRefinementStages::needs_refinement()`, so midpoint-stage -> outer-stage progression and interval-aware dispatch both live under one smaller Rust-owned runner boundary.
 
 ## Focus
 
@@ -86,4 +87,4 @@ The next blocker is to keep that typed `ControlFlow` progress path but stop spel
 
 ## Why This Is Next
 
-This turn moved the shared early-stage unwrap onto the typed stage boundary: midpoint-stage and outer-stage now progress through explicit `ControlFlow<bool, [NormalizedEdgeSample; N]>` values from `EarlyProbeStageLayout`, and the one-use local `stage_samples!` macro plus the old `EarlyProbeStageOutcome` layer are gone. That leaves the next real seam smaller again: `EarlyProbeRefinementStages::needs_refinement()` still spells out the same direct `ControlFlow::Continue/Break` match twice, even though the stage execution boundary and the typed interval-aware tail are already in place.
+This turn moved midpoint-stage -> outer-stage carry onto the typed stage boundary: [`EarlyProbeStageLayout::continue_stage_progress()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now propagates staged `ControlFlow<bool, [NormalizedEdgeSample; N]>` directly, and the one-use `outer_stage_progress()` bounce is gone. That leaves the next real seam smaller again: `EarlyProbeRefinementStages::needs_refinement()` still spells out the final `ControlFlow::Continue/Break` unwrap even though staged progression and the typed interval-aware tail are already in place.
