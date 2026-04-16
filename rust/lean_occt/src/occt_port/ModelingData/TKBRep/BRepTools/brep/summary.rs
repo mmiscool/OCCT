@@ -1543,51 +1543,32 @@ impl EarlyProbeStagePair {
         midpoint: &NormalizedEdgeSample,
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
-        let samples_or_result = self
-            .midpoint_stage
-            .stage_samples_or_result(context, edge_shape, [*start, *midpoint, *end])
-            .and_then(|midpoint_samples| {
-                midpoint_samples
-                    .map(|midpoint_samples| {
-                        self.outer_stage.stage_samples_or_result(
-                            context,
-                            edge_shape,
-                            midpoint_samples,
-                        )
-                    })
-                    .transpose()
-                    .map(Option::flatten)
-            });
-        self.interval_aware_side_layouts
-            .needs_refinement_from_stage_samples_or_result(
-                samples_or_result,
-                context,
-                edge_shape,
-                self.coarse_refinement_checks_before_adaptive_chase,
-            )
-    }
-}
-
-impl PreparedIntervalAwareRefinementSideLayouts {
-    fn needs_refinement_from_stage_samples_or_result(
-        self,
-        samples_or_result: Result<Option<[NormalizedEdgeSample; 7]>, bool>,
-        context: &Context,
-        edge_shape: &Shape,
-        coarse_refinement_checks_before_adaptive_chase: usize,
-    ) -> Option<bool> {
-        match samples_or_result {
-            Ok(Some(samples)) => self.needs_refinement(
+        let midpoint_samples = match self.midpoint_stage.stage_samples_or_result(
+            context,
+            edge_shape,
+            [*start, *midpoint, *end],
+        ) {
+            Ok(Some(samples)) => samples,
+            Ok(None) => return None,
+            Err(result) => return Some(result),
+        };
+        match self
+            .outer_stage
+            .stage_samples_or_result(context, edge_shape, midpoint_samples)
+        {
+            Ok(Some(samples)) => self.interval_aware_side_layouts.needs_refinement(
                 samples,
                 context,
                 edge_shape,
-                coarse_refinement_checks_before_adaptive_chase,
+                self.coarse_refinement_checks_before_adaptive_chase,
             ),
             Ok(None) => None,
             Err(result) => Some(result),
         }
     }
+}
 
+impl PreparedIntervalAwareRefinementSideLayouts {
     fn needs_refinement(
         self,
         samples: [NormalizedEdgeSample; 7],
