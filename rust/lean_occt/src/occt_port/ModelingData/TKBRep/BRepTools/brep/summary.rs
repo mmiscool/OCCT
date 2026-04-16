@@ -1458,31 +1458,6 @@ impl<const SOURCE_N: usize, const STAGE_N: usize> EarlyProbeStageLayout<SOURCE_N
             Err(result) => ControlFlow::Break(result),
         })
     }
-
-    fn stage_samples_or_result(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<Result<[NormalizedEdgeSample; STAGE_N], bool>> {
-        Some(match self.stage_progress(context, edge_shape, source)? {
-            ControlFlow::Continue(samples) => Ok(samples),
-            ControlFlow::Break(result) => Err(result),
-        })
-    }
-
-    fn continue_stage_samples_or_result<const NEXT_N: usize>(
-        self,
-        next_stage: EarlyProbeStageLayout<STAGE_N, NEXT_N>,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; SOURCE_N],
-    ) -> Option<Result<[NormalizedEdgeSample; NEXT_N], bool>> {
-        match self.stage_samples_or_result(context, edge_shape, source)? {
-            Ok(samples) => next_stage.stage_samples_or_result(context, edge_shape, samples),
-            Err(result) => Some(Err(result)),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1569,37 +1544,43 @@ impl EarlyProbeRefinementStages {
         end: &NormalizedEdgeSample,
     ) -> Option<bool> {
         self.interval_aware_side_layouts
-            .needs_refinement_from_stage_samples_or_result(
-                self.midpoint_stage.continue_stage_samples_or_result(
-                    self.outer_stage,
-                    context,
-                    edge_shape,
-                    [*start, *midpoint, *end],
-                )?,
+            .needs_refinement_from_stages(
+                self.midpoint_stage,
+                self.outer_stage,
                 context,
                 edge_shape,
+                [*start, *midpoint, *end],
                 self.coarse_refinement_checks_before_adaptive_chase,
             )
     }
 }
 
 impl PreparedIntervalAwareRefinementSideLayouts {
-    fn needs_refinement_from_stage_samples_or_result(
+    fn needs_refinement_from_stages(
         self,
-        stage_samples_or_result: Result<[NormalizedEdgeSample; 7], bool>,
+        midpoint_stage: EarlyProbeStageLayout<3, 5>,
+        outer_stage: EarlyProbeStageLayout<5, 7>,
         context: &Context,
         edge_shape: &Shape,
+        source: [NormalizedEdgeSample; 3],
         coarse_refinement_checks_before_adaptive_chase: usize,
     ) -> Option<bool> {
-        match stage_samples_or_result {
-            Ok(samples) => self.needs_refinement(
-                &samples,
-                context,
-                edge_shape,
-                coarse_refinement_checks_before_adaptive_chase,
-            ),
-            Err(result) => Some(result),
-        }
+        let samples = match midpoint_stage.stage_progress(context, edge_shape, source)? {
+            ControlFlow::Continue(samples) => {
+                match outer_stage.stage_progress(context, edge_shape, samples)? {
+                    ControlFlow::Continue(samples) => samples,
+                    ControlFlow::Break(result) => return Some(result),
+                }
+            }
+            ControlFlow::Break(result) => return Some(result),
+        };
+
+        self.needs_refinement(
+            &samples,
+            context,
+            edge_shape,
+            coarse_refinement_checks_before_adaptive_chase,
+        )
     }
 
     fn needs_refinement(
