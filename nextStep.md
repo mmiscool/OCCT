@@ -1,6 +1,6 @@
 # Next Task
 
-Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to collapse the remaining explicit `left` / `right` pair handling inside the new interval-aware side-descriptor pair helper, so that side-pair construction becomes one generic fixed-pair pass before stronger-side choice instead of spelling out dual fields and dual side builds.
+Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbox()`, but stay on the shell-boundary Rust path. The next bounded Rust-first cut is to stop eagerly materializing both interval-aware sides before stronger-side choice, so the layout pair can choose the stronger coarse segment first and only then build the winning typed side.
 
 ## Current State
 
@@ -17,11 +17,12 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
   - [`midpoint_edge_probe_pair()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) prepares the earlier midpoint and outer probe pairs once for the probe-refinement entry stages
   - [`sampled_edge_sample_windows_need_refinement()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the shared sliding 3-sample window checks used by those early entry stages
   - [`PreparedMidpointProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/first_probe/midpoint/second_probe/end` early probe carrier and decides when midpoint-stage evidence is strong enough to advance into outer probes
-  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier and now hands its sample array directly to the typed interval-aware side-descriptor pair
+  - [`PreparedOuterProbeChain`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns the `start/left_outer_probe/first_probe/midpoint/second_probe/right_outer_probe/end` carrier and now hands its sample array directly to the typed interval-aware side-layout pair
   - [`PreparedIntervalAwareRefinementSideWindow`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is gone
   - the mirrored `PreparedIntervalAwareRefinementSide::left()` / `right()` remap is gone
-  - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now builds either side through one generic [`PreparedIntervalAwareRefinementSideDescriptor`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) path
-  - [`PreparedIntervalAwareRefinementSideDescriptors`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns interval-aware side-pair construction and stronger-side choice before handing the winning segment to the shared refinement path
+  - [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now builds either side through one generic typed layout path instead of manual sample extraction plus `outer_probe_first` branching
+  - [`PreparedRefinementTripletLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), [`PreparedRefinementSpanLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs), and [`PreparedIntervalAwareRefinementSideLayout`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now carry the typed coarse/outer/inner side-layout boundary
+  - [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now owns interval-aware side-pair construction through one fixed two-layout array and stronger-side choice before handing the winning segment to the shared refinement path
   - [`RefinementSegment`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) owns score-based creation, stronger-segment choice, the local-window test, and the stronger-half chase
   - [`midpoint_edge_probe()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) serves both the interval-aware inner probe path and the later stronger-half narrowing path
   - [`half_refinement_should_continue()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) provides the shared signal/span-driven adaptive stop rule, with the max-step limit kept only as a safety ceiling
@@ -30,13 +31,13 @@ Keep narrowing the remaining shell-local OCCT bbox fallback in `offset_shell_bbo
 
 ## Remaining Blocker
 
-`offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. The remaining structural duplication is now inside the interval-aware side-descriptor pair helper:
+`offset_shell_bbox()` still ends at shell-local OCCT bbox for shells that fail all current validated Rust candidates. The remaining structural duplication is now inside interval-aware side-pair materialization:
 
-- [`PreparedIntervalAwareRefinementSideDescriptor`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) is now the generic side constructor input
-- the old dual constants and the thin [`PreparedIntervalAwareRefinementSides::from_samples()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) wrapper are gone
-- [`PreparedIntervalAwareRefinementSideDescriptors`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) still stores the pair as explicit `left` / `right` fields and still constructs `left` and `right` sides separately before stronger-side choice
+- the old single-side descriptor and the thin `PreparedIntervalAwareRefinementSide::from_samples()` branchy assembly are gone
+- [`PreparedIntervalAwareRefinementSideLayouts`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) now builds its pair through one fixed two-element typed layout array
+- that pair helper still eagerly materializes both full [`PreparedIntervalAwareRefinementSide`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) values before it asks [`RefinementSegment::choose_stronger()`](rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs) to pick the stronger coarse segment
 
-The next blocker is to collapse that remaining pair handling behind one smaller generic fixed-pair boundary, so the interval-aware side pair stops spelling out dual fields and dual builds inside the helper and stays more Rust-owned before it hands off to the shared refinement machinery.
+The next blocker is to move that stronger-side choice earlier onto the coarse layout path, so the interval-aware entry can choose the winning side first and only then build the winning typed side before it hands off to the shared refinement machinery.
 
 ## Focus
 
@@ -54,6 +55,6 @@ The next blocker is to collapse that remaining pair handling behind one smaller 
 
 ## Why This Is Next
 
-This turn moved the old dual descriptor constants and the thin `PreparedIntervalAwareRefinementSides::from_samples()` bounce behind one typed `PreparedIntervalAwareRefinementSideDescriptors` boundary. That means the outer-probe path now hands off directly to a descriptor-pair helper instead of spelling out side-pair construction through a separate wrapper.
+This turn finished the single-side cleanup by replacing the old descriptor-plus-branch assembly with explicit typed triplet, span, and side layouts. That means the interval-aware entry no longer interprets `outer_probe_first` at runtime and no longer open-codes sample extraction while building each side.
 
-What remains is the explicit pair handling inside that helper itself: it still stores `left` and `right` separately and still builds both sides through duplicated field access before stronger-side choice. If that final pair logic moves behind one generic fixed-pair boundary, the interval-aware refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
+What remains is the side-pair execution shape: the helper still prepares both full sides just to compare their coarse segments and throw one away. If stronger-side choice moves up onto the coarse-layout boundary, the interval-aware refinement entry will stay cleaner on the Rust-owned side without adding any new fallback tier.
