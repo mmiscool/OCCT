@@ -997,7 +997,6 @@ fn ported_brep_uses_exact_primitive_bounding_boxes() -> Result<(), Box<dyn std::
         x_direction: [1.0, 0.0, 0.0],
         radius: 7.0,
     })?;
-
     for (label, shape, artifact_name) in [
         ("cylinder", &cylinder, "bbox_rotated_cylinder"),
         ("cone", &cone, "bbox_rotated_cone"),

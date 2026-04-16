@@ -133,7 +133,7 @@ pub(super) fn mesh_bbox(mesh: &Mesh) -> Option<([f64; 3], [f64; 3])> {
         points.push(segment[0]);
         points.push(segment[1]);
     }
-    bbox_from_points(points)
+    bbox_from_points(points).or(Some((mesh.bbox_min, mesh.bbox_max)))
 }
 
 pub(super) fn bbox_from_points(points: Vec<[f64; 3]>) -> Option<([f64; 3], [f64; 3])> {
