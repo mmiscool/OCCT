@@ -1475,46 +1475,28 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
     right_outer_probe: &NormalizedEdgeSample,
     end: &NormalizedEdgeSample,
 ) -> Option<bool> {
-    let Some((chose_left_side, _)) = choose_stronger_refinement_segment(
-        (
-            true,
-            scored_refinement_segment(start, first_probe, midpoint),
-        ),
-        (
-            false,
-            scored_refinement_segment(midpoint, second_probe, end),
-        ),
-    ) else {
+    let Some(side) =
+        choose_interval_aware_refinement_side(start, first_probe, midpoint, second_probe, end)
+    else {
         return Some(false);
     };
 
-    let (outer_start, outer_mid, outer_end, inner_start, inner_end) = if chose_left_side {
-        (start, left_outer_probe, first_probe, first_probe, midpoint)
-    } else {
-        (second_probe, right_outer_probe, end, midpoint, second_probe)
-    };
-
-    let inner_probe_t = 0.5 * (inner_start.t + inner_end.t);
-    if approx_eq(inner_probe_t, inner_start.t, 1.0e-12, 1.0e-12)
-        || approx_eq(inner_probe_t, inner_end.t, 1.0e-12, 1.0e-12)
-    {
-        return Some(false);
-    }
-
-    let inner_probe = NormalizedEdgeSample {
-        t: inner_probe_t,
-        sample: context.edge_sample(edge_shape, inner_probe_t).ok()?,
-    };
+    let prepared_side = prepare_interval_aware_refinement_side(
+        context,
+        edge_shape,
+        side,
+        start,
+        left_outer_probe,
+        first_probe,
+        midpoint,
+        second_probe,
+        right_outer_probe,
+        end,
+    )?;
 
     let Some((_, probe_segment)) = choose_stronger_refinement_segment(
-        (
-            false,
-            scored_refinement_segment(outer_start, outer_mid, outer_end),
-        ),
-        (
-            true,
-            scored_refinement_segment(inner_start, &inner_probe, inner_end),
-        ),
+        (false, prepared_side.outer_segment),
+        (true, prepared_side.inner_segment),
     ) else {
         return Some(false);
     };
@@ -1535,6 +1517,69 @@ fn sampled_edge_interval_needs_interval_aware_probe_refinement(
         &probe_segment.end,
         3,
     )
+}
+
+#[derive(Clone, Copy)]
+enum IntervalAwareRefinementSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy)]
+struct PreparedIntervalAwareRefinementSide {
+    outer_segment: Option<RefinementSegment>,
+    inner_segment: Option<RefinementSegment>,
+}
+
+fn choose_interval_aware_refinement_side(
+    start: &NormalizedEdgeSample,
+    first_probe: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    second_probe: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<IntervalAwareRefinementSide> {
+    choose_stronger_refinement_segment(
+        (
+            IntervalAwareRefinementSide::Left,
+            scored_refinement_segment(start, first_probe, midpoint),
+        ),
+        (
+            IntervalAwareRefinementSide::Right,
+            scored_refinement_segment(midpoint, second_probe, end),
+        ),
+    )
+    .map(|(side, _)| side)
+}
+
+fn prepare_interval_aware_refinement_side(
+    context: &Context,
+    edge_shape: &Shape,
+    side: IntervalAwareRefinementSide,
+    start: &NormalizedEdgeSample,
+    left_outer_probe: &NormalizedEdgeSample,
+    first_probe: &NormalizedEdgeSample,
+    midpoint: &NormalizedEdgeSample,
+    second_probe: &NormalizedEdgeSample,
+    right_outer_probe: &NormalizedEdgeSample,
+    end: &NormalizedEdgeSample,
+) -> Option<PreparedIntervalAwareRefinementSide> {
+    let ((outer_start, outer_mid, outer_end), (inner_start, inner_end)) = match side {
+        IntervalAwareRefinementSide::Left => (
+            (start, left_outer_probe, first_probe),
+            (first_probe, midpoint),
+        ),
+        IntervalAwareRefinementSide::Right => (
+            (second_probe, right_outer_probe, end),
+            (midpoint, second_probe),
+        ),
+    };
+    let inner_probe = midpoint_edge_probe(context, edge_shape, inner_start, inner_end)?;
+    Some(PreparedIntervalAwareRefinementSide {
+        outer_segment: scored_refinement_segment(outer_start, outer_mid, outer_end),
+        inner_segment: inner_probe
+            .as_ref()
+            .and_then(|probe| scored_refinement_segment(inner_start, probe, inner_end)),
+    })
 }
 
 const HALF_REFINEMENT_MAX_STEPS: usize = 32;
