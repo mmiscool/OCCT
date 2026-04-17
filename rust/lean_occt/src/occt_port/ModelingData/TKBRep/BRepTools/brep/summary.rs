@@ -1336,12 +1336,9 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT.needs_refinement_with_stage_result_tail(
-            EARLY_PROBE_STAGE_RESULT_TAIL,
-            context,
-            edge_shape,
-            [*start, midpoint_sample, *end],
-        )?
+        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT
+            .stage_samples_or_refinement(context, edge_shape, [*start, midpoint_sample, *end])
+            .needs_refinement(EARLY_PROBE_STAGE_RESULT_TAIL, context, edge_shape)?
     };
 
     if !needs_refinement {
@@ -1483,6 +1480,20 @@ impl EarlyProbeStageResult<7> {
 }
 
 impl EarlyProbeStageResult<5> {
+    fn needs_refinement(
+        self,
+        tail: EarlyProbeStageResultTail,
+        context: &Context,
+        edge_shape: &Shape,
+    ) -> Option<bool> {
+        self.continue_with_interval_aware_tail(
+            tail.next_stage,
+            tail.interval_aware_tail,
+            context,
+            edge_shape,
+        )
+    }
+
     fn continue_with_interval_aware_tail(
         self,
         next_stage: EarlyProbeStageLayout<5, 7>,
@@ -1492,24 +1503,6 @@ impl EarlyProbeStageResult<5> {
     ) -> Option<bool> {
         self.continue_with(next_stage, context, edge_shape)
             .needs_refinement(interval_aware_tail, context, edge_shape)
-    }
-}
-
-impl EarlyProbeStageLayout<3, 5> {
-    fn needs_refinement_with_stage_result_tail(
-        self,
-        tail: EarlyProbeStageResultTail,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; 3],
-    ) -> Option<bool> {
-        self.stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with_interval_aware_tail(
-                tail.next_stage,
-                tail.interval_aware_tail,
-                context,
-                edge_shape,
-            )
     }
 }
 
