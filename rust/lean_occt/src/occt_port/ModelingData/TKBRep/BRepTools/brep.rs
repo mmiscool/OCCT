@@ -30,7 +30,7 @@ use self::mesh::{
 use self::shape_queries::{
     ported_edge_endpoints, ported_subshape, ported_subshapes, ported_vertex_point,
 };
-use self::summary::ported_shape_summary;
+use self::summary::{ported_offset_shell_bbox_sources, ported_shape_summary};
 use self::topology::{load_ported_topology, ported_topology_snapshot, PreparedShellShape};
 
 use crate::ported_geometry::{
@@ -109,6 +109,15 @@ pub struct BrepFace {
     pub adjacent_face_indices: Vec<usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OffsetShellBboxSource {
+    FaceBrep,
+    Boundary,
+    Mesh,
+    Brep,
+    OcctFallback,
+}
+
 #[derive(Debug)]
 pub struct BrepShape {
     pub summary: ShapeSummary,
@@ -117,6 +126,13 @@ pub struct BrepShape {
     pub wires: Vec<BrepWire>,
     pub edges: Vec<BrepEdge>,
     pub faces: Vec<BrepFace>,
+    offset_shell_bbox_sources: Vec<OffsetShellBboxSource>,
+}
+
+impl BrepShape {
+    pub fn offset_shell_bbox_sources(&self) -> &[OffsetShellBboxSource] {
+        &self.offset_shell_bbox_sources
+    }
 }
 
 impl Context {
@@ -186,6 +202,11 @@ impl Context {
             &face_shapes,
             &edge_shapes,
         )?;
+        let offset_shell_bbox_sources = if summary.solid_count > 0 || summary.compsolid_count > 0 {
+            ported_offset_shell_bbox_sources(self, &faces, &prepared_shell_shapes)
+        } else {
+            Vec::new()
+        };
 
         Ok(BrepShape {
             summary,
@@ -194,6 +215,7 @@ impl Context {
             wires,
             edges,
             faces,
+            offset_shell_bbox_sources,
         })
     }
 

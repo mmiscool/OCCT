@@ -963,7 +963,7 @@ fn offset_solid_shell_bbox(
         .iter()
         .filter(|prepared_shell_shape| !prepared_shell_shape.shell_face_shapes.is_empty())
     {
-        let shell_bbox = offset_shell_bbox(context, prepared_shell_shape)?;
+        let shell_bbox = offset_shell_bbox_resolution(context, prepared_shell_shape)?.bbox;
         bbox = Some(match bbox {
             Some(accumulated) => union_bbox(accumulated, shell_bbox),
             None => shell_bbox,
@@ -972,17 +972,101 @@ fn offset_solid_shell_bbox(
     bbox
 }
 
-fn offset_shell_bbox(
+#[derive(Clone, Copy, Debug)]
+struct OffsetShellBboxResolution {
+    bbox: ([f64; 3], [f64; 3]),
+    source: OffsetShellBboxSource,
+}
+
+impl OffsetShellBboxResolution {
+    fn new(bbox: ([f64; 3], [f64; 3]), source: OffsetShellBboxSource) -> Self {
+        Self { bbox, source }
+    }
+}
+
+pub(super) fn ported_offset_shell_bbox_sources(
+    context: &Context,
+    faces: &[BrepFace],
+    prepared_shell_shapes: &[PreparedShellShape],
+) -> Vec<OffsetShellBboxSource> {
+    if prepared_shell_shapes.is_empty()
+        || !faces
+            .iter()
+            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
+    {
+        return Vec::new();
+    }
+
+    prepared_shell_shapes
+        .iter()
+        .filter(|prepared_shell_shape| !prepared_shell_shape.shell_face_shapes.is_empty())
+        .filter_map(|prepared_shell_shape| {
+            offset_shell_bbox_resolution(context, prepared_shell_shape)
+                .map(|resolution| resolution.source)
+        })
+        .collect()
+}
+
+fn offset_shell_bbox_resolution(
     context: &Context,
     prepared_shell_shape: &PreparedShellShape,
-) -> Option<([f64; 3], [f64; 3])> {
+) -> Option<OffsetShellBboxResolution> {
     let shell_occt_bbox = shape_bbox_occt(context, &prepared_shell_shape.shell_shape)?;
-    offset_shell_face_brep_bbox(context, prepared_shell_shape)
+    if let Some(ported_bbox) = offset_shell_face_brep_bbox(context, prepared_shell_shape)
         .filter(|&ported_bbox| bbox_matches(ported_bbox, shell_occt_bbox))
-        .or_else(|| validated_shell_boundary_bbox(context, prepared_shell_shape, shell_occt_bbox))
-        .or_else(|| validated_shell_mesh_bbox(context, prepared_shell_shape, shell_occt_bbox))
-        .or_else(|| validated_shell_brep_bbox(context, prepared_shell_shape, shell_occt_bbox))
-        .or(Some(shell_occt_bbox))
+    {
+        return Some(OffsetShellBboxResolution::new(
+            ported_bbox,
+            OffsetShellBboxSource::FaceBrep,
+        ));
+    }
+
+    if let Some(boundary_bbox) =
+        validated_shell_boundary_bbox(context, prepared_shell_shape, shell_occt_bbox)
+    {
+        return Some(OffsetShellBboxResolution::new(
+            boundary_bbox,
+            OffsetShellBboxSource::Boundary,
+        ));
+    }
+
+    if let Some(mesh_bbox) =
+        validated_shell_mesh_bbox(context, prepared_shell_shape, shell_occt_bbox)
+    {
+        return Some(OffsetShellBboxResolution::new(
+            mesh_bbox,
+            OffsetShellBboxSource::Mesh,
+        ));
+    }
+
+    if let Some(brep_bbox) =
+        validated_shell_brep_bbox(context, prepared_shell_shape, shell_occt_bbox)
+    {
+        return Some(OffsetShellBboxResolution::new(
+            brep_bbox,
+            OffsetShellBboxSource::Brep,
+        ));
+    }
+
+    // Keep the raw shell bbox only for shells that never exposed any prepared topology data.
+    // Supported offset shells should resolve through a validated Rust-owned candidate or bubble
+    // out so the caller can take a higher-level fallback instead.
+    offset_shell_occt_fallback_resolution(prepared_shell_shape, shell_occt_bbox)
+}
+
+fn offset_shell_occt_fallback_resolution(
+    prepared_shell_shape: &PreparedShellShape,
+    shell_occt_bbox: ([f64; 3], [f64; 3]),
+) -> Option<OffsetShellBboxResolution> {
+    offset_shell_requires_occt_fallback(prepared_shell_shape).then_some(
+        OffsetShellBboxResolution::new(shell_occt_bbox, OffsetShellBboxSource::OcctFallback),
+    )
+}
+
+fn offset_shell_requires_occt_fallback(prepared_shell_shape: &PreparedShellShape) -> bool {
+    prepared_shell_shape.shell_face_shapes.is_empty()
+        && prepared_shell_shape.shell_edge_shapes.is_empty()
+        && prepared_shell_shape.shell_vertex_shapes.is_empty()
 }
 
 fn offset_shell_face_brep_bbox(

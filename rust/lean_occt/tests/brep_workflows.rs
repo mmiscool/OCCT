@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
-    ModelDocument, ModelKernel, OffsetParams, PortedFaceSurface, PortedOffsetBasisSurface,
-    PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind,
-    ThroughHoleCut, TorusParams,
+    ModelDocument, ModelKernel, OffsetParams, OffsetShellBboxSource, PortedFaceSurface,
+    PortedOffsetBasisSurface, PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind,
+    SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -1548,6 +1548,7 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         .iter()
         .filter(|face| face.geometry.kind == SurfaceKind::Offset)
         .collect::<Vec<_>>();
+    let shell_shapes = kernel.context().subshapes(&offset, ShapeKind::Shell)?;
 
     assert_eq!(summary.primary_kind, ShapeKind::Solid);
     assert!(
@@ -1561,6 +1562,19 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
                 if matches!(surface.basis, PortedOffsetBasisSurface::Swept(_))
         )),
         "expected at least one Rust-owned swept offset face descriptor in offset solid"
+    );
+    assert_eq!(
+        brep.offset_shell_bbox_sources().len(),
+        shell_shapes.len(),
+        "expected one shell bbox winner per offset shell: {:?}",
+        brep.offset_shell_bbox_sources()
+    );
+    assert!(
+        brep.offset_shell_bbox_sources()
+            .iter()
+            .all(|&source| source == OffsetShellBboxSource::Brep),
+        "offset solid shell bbox should resolve through the validated shell brep path: {:?}",
+        brep.offset_shell_bbox_sources()
     );
     assert!(
         (summary.volume - occt_summary.volume).abs() <= 3.0e2,
@@ -1590,12 +1604,7 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         occt_summary.bbox_max,
         5.0e-2,
     )?;
-    for (shell_index, shell_shape) in kernel
-        .context()
-        .subshapes(&offset, ShapeKind::Shell)?
-        .into_iter()
-        .enumerate()
-    {
+    for (shell_index, shell_shape) in shell_shapes.into_iter().enumerate() {
         let shell_brep = kernel.context().ported_brep(&shell_shape)?;
         let shell_occt = kernel.context().describe_shape_occt(&shell_shape)?;
         let label = format!("offset solid shell {shell_index} brep summary");

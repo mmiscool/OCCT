@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -23,12 +24,15 @@ const validReasoningLevels = new Set(["none", "minimal", "low", "medium", "high"
 const eventDivider = "-".repeat(100);
 const subagentPermissionSuffix =
   " You may use subagents, delegation, and parallel agent work when useful. Prefer bounded, non-overlapping subtasks.";
+const defaultLoopPrompt =
+  "Drive the Rust port forward in milestone-sized steps. Read `portingMilestones.md` and `nextStep.md` at the start of every turn. Work on the highest-priority incomplete milestone. Prefer deleting OCCT fallbacks, moving a user-visible capability to Rust, and adding regression coverage over reshuffling a single seam. Do not spend two consecutive turns on a refactor unless that turn removes a fallback or lands new tested Rust-owned behavior. Update both files every turn with completed evidence, the active milestone, the next bounded cut, and exact verification commands.";
 const defaultConfig = {
   projectPath: packageRoot,
   model: "gpt-5.4",
   reasoningLevel: "xhigh",
-  loopPrompt: `Keep going porting from C++ to rust.${subagentPermissionSuffix}`,
+  loopPrompt: `${defaultLoopPrompt}${subagentPermissionSuffix}`,
   delayBetweenLoopsSeconds: 1,
+  maxSessionTurns: 30,
 };
 
 let stopRequested = false;
@@ -61,10 +65,7 @@ async function main() {
   const config = await loadConfig();
   let state = await loadState();
 
-  if (state.projectPath && state.projectPath !== config.projectPath) {
-    console.log(`Project path changed from ${state.projectPath} to ${config.projectPath}. Starting a new Codex session.`);
-    state = {};
-  }
+  state = alignStateWithConfig(state, config);
 
   console.log(`Config file: ${configFile}`);
   console.log(`Project path: ${config.projectPath}`);
@@ -72,6 +73,7 @@ async function main() {
   console.log(`Model: ${config.model}`);
   console.log(`Reasoning: ${config.reasoningLevel}`);
   console.log(`Delay between loops: ${config.delayBetweenLoopsSeconds} seconds`);
+  console.log(`Max turns per session: ${config.maxSessionTurns}`);
   console.log("Sandbox: danger-full-access");
   console.log("Approval policy: never");
   console.log(`Auto compaction threshold: ${autoCompactTokenLimit} tokens`);
@@ -85,24 +87,40 @@ async function main() {
   }
 
   if (state.sessionId) {
-    console.log(`Resuming saved session: ${state.sessionId}`);
+    console.log(
+      `Resuming saved session: ${state.sessionId} (${state.sessionTurnCount ?? 0}/${config.maxSessionTurns} turns in current session)`
+    );
   }
 
   while (!stopRequested) {
+    if (state.sessionId && (state.sessionTurnCount ?? 0) >= config.maxSessionTurns) {
+      console.log(
+        `Current session reached ${config.maxSessionTurns} turn(s). Starting a new Codex session for the next loop.`
+      );
+      state = resetSessionState(state, config);
+      await saveState(state);
+    }
+
     const turnNumber = (state.turnCount ?? 0) + 1;
     const resumeSessionId = state.sessionId ?? null;
+    const sessionTurnNumber = resumeSessionId ? (state.sessionTurnCount ?? 0) + 1 : 1;
 
     console.log("");
-    console.log(`=== Turn ${turnNumber}${resumeSessionId ? ` | ${resumeSessionId}` : " | new session"} ===`);
+    console.log(
+      `=== Turn ${turnNumber} | session turn ${sessionTurnNumber}${resumeSessionId ? ` | ${resumeSessionId}` : " | new session"} ===`
+    );
 
     try {
       const result = await runTurn(config, resumeSessionId);
+      const nextSessionTurnCount = resumeSessionId ? (state.sessionTurnCount ?? 0) + 1 : 1;
       state = {
         createdAt: state.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         projectPath: config.projectPath,
+        configSignature: buildConfigSignature(config),
         sessionId: result.sessionId,
         turnCount: turnNumber,
+        sessionTurnCount: nextSessionTurnCount,
         lastUsage: result.usage,
       };
       await saveState(state);
@@ -114,6 +132,10 @@ async function main() {
         );
       }
 
+      if (nextSessionTurnCount >= config.maxSessionTurns) {
+        console.log("Session turn cap reached. The next loop will start a fresh Codex session.");
+      }
+
       commitAndPush(config, state);
     } catch (error) {
       const message = errorMessage(error);
@@ -123,7 +145,7 @@ async function main() {
 
       if (resumeSessionId && looksLikeMissingSession(message)) {
         console.error("Saved session could not be resumed. Clearing local state and starting a new session.");
-        state = {};
+        state = resetSessionState(state, config);
         await saveState(state);
       } else if (!stopRequested) {
         console.error(`Turn failed. Retrying in ${retryDelaySeconds} seconds.`);
@@ -348,6 +370,7 @@ function normalizeConfig(config) {
   const reasoningLevel = String(merged.reasoningLevel ?? "").trim();
   const loopPrompt = String(merged.loopPrompt ?? "").trim();
   const delayBetweenLoopsSeconds = parseDelayBetweenLoopsSeconds(merged);
+  const maxSessionTurns = parseMaxSessionTurns(merged);
 
   if (!model) {
     throw new Error(`Invalid config in ${configFile}: "model" must be a non-empty string.`);
@@ -373,6 +396,7 @@ function normalizeConfig(config) {
     reasoningLevel,
     loopPrompt: normalizedLoopPrompt,
     delayBetweenLoopsSeconds,
+    maxSessionTurns,
   };
 }
 
@@ -390,6 +414,78 @@ async function loadState() {
 
 async function saveState(state) {
   await fs.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+function buildConfigSignature(config) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        projectPath: config.projectPath,
+        model: config.model,
+        reasoningLevel: config.reasoningLevel,
+        loopPrompt: config.loopPrompt,
+        maxSessionTurns: config.maxSessionTurns,
+      })
+    )
+    .digest("hex");
+}
+
+function resetSessionState(state, config) {
+  return {
+    createdAt: state.createdAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    projectPath: config.projectPath,
+    configSignature: buildConfigSignature(config),
+    turnCount: state.turnCount ?? 0,
+    sessionTurnCount: 0,
+    lastUsage: state.lastUsage ?? null,
+  };
+}
+
+function alignStateWithConfig(state, config) {
+  const nextState = state ?? {};
+  const configSignature = buildConfigSignature(config);
+  const hadPersistedState = Object.keys(nextState).length > 0;
+
+  if (!hadPersistedState) {
+    return {
+      projectPath: config.projectPath,
+      configSignature,
+      turnCount: 0,
+      sessionTurnCount: 0,
+    };
+  }
+
+  if (nextState.projectPath && nextState.projectPath !== config.projectPath) {
+    console.log(
+      `Project path changed from ${nextState.projectPath} to ${config.projectPath}. Starting a new Codex session.`
+    );
+    return resetSessionState(nextState, config);
+  }
+
+  if (nextState.configSignature !== configSignature) {
+    console.log(
+      nextState.configSignature
+        ? "Loop config changed. Starting a new Codex session."
+        : "Saved session predates the current loop strategy. Starting a new Codex session."
+    );
+    return resetSessionState(nextState, config);
+  }
+
+  if (nextState.sessionId && (nextState.sessionTurnCount ?? 0) >= config.maxSessionTurns) {
+    console.log(
+      `Saved session already reached ${config.maxSessionTurns} turn(s). Starting a new Codex session.`
+    );
+    return resetSessionState(nextState, config);
+  }
+
+  return {
+    ...nextState,
+    projectPath: config.projectPath,
+    configSignature,
+    turnCount: nextState.turnCount ?? 0,
+    sessionTurnCount: nextState.sessionTurnCount ?? 0,
+  };
 }
 
 function looksLikeMissingSession(message) {
@@ -677,4 +773,12 @@ function parseDelayBetweenLoopsSeconds(config) {
     return Number(secondsValue);
   }
   throw new Error(`Invalid config in ${configFile}: "delayBetweenLoopsSeconds" must be set to a non-negative integer.`);
+}
+
+function parseMaxSessionTurns(config) {
+  const turnsValue = String(config.maxSessionTurns ?? "").trim();
+  if (/^[1-9]\d*$/.test(turnsValue)) {
+    return Number(turnsValue);
+  }
+  throw new Error(`Invalid config in ${configFile}: "maxSessionTurns" must be set to a positive integer.`);
 }
