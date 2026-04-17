@@ -1008,6 +1008,11 @@ fn ported_brep_uses_exact_primitive_bounding_boxes() -> Result<(), Box<dyn std::
         let brep = kernel.brep(shape)?;
         let occt_summary = kernel.context().describe_shape_occt(shape)?;
 
+        assert_eq!(
+            brep.summary_bbox_source(),
+            SummaryBboxSource::ExactPrimitive,
+            "{label} root summary bbox should resolve through the exact primitive path"
+        );
         assert_bbox_close(
             label,
             summary.bbox_min,
@@ -1066,6 +1071,11 @@ fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::erro
         let brep = kernel.brep(shape)?;
         let occt_summary = kernel.context().describe_shape_occt(shape)?;
 
+        assert_eq!(
+            brep.summary_bbox_source(),
+            SummaryBboxSource::PortedBrep,
+            "{label} root summary bbox should resolve through the Rust-owned brep path"
+        );
         assert_bbox_close(
             label,
             summary.bbox_min,
@@ -1458,6 +1468,11 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
 
     assert_eq!(brep.summary.primary_kind, ShapeKind::Shell);
     assert_eq!(brep.summary.face_count, 1);
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::OffsetFaceUnion,
+        "offset shell root summary bbox should resolve through the dedicated offset-face union path"
+    );
     assert_bbox_close(
         "offset shell kernel summary",
         summary.bbox_min,

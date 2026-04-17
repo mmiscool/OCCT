@@ -123,6 +123,8 @@ pub(super) fn ported_shape_summary(
         exact_primitive_shape_summary(primary_kind, counts.solid_count, vertices, edges, faces);
     let closed_volume_topology = has_closed_volume_topology(faces, edges);
     let fallback_summary = || context.describe_shape_occt(shape).ok();
+    let exact_primitive_bbox = exact_primitive.and_then(|summary| summary.bbox);
+    let ported_topological_bbox = ported_shape_bbox(vertices, edges, faces);
     let contains_offset_faces = faces
         .iter()
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
@@ -134,14 +136,15 @@ pub(super) fn ported_shape_summary(
         supports_rust_owned_offset_solid_volume || supports_rust_owned_swept_solid_volume;
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
+    let supports_rust_owned_offset_root_bbox = contains_offset_faces
+        && ((counts.solid_count > 0 || counts.compsolid_count > 0) || face_shapes.len() == 1);
+    let requires_rust_owned_bbox = exact_primitive_bbox.is_some()
+        || ported_topological_bbox.is_some()
+        || supports_rust_owned_offset_root_bbox;
     let offset_margin = offset_face_margin(faces);
-    let ((bbox_min, bbox_max), bbox_source) = exact_primitive
-        .and_then(|summary| summary.bbox)
+    let bbox_resolution = exact_primitive_bbox
         .map(|bbox| (bbox, SummaryBboxSource::ExactPrimitive))
-        .or_else(|| {
-            ported_shape_bbox(vertices, edges, faces)
-                .map(|bbox| (bbox, SummaryBboxSource::PortedBrep))
-        })
+        .or_else(|| ported_topological_bbox.map(|bbox| (bbox, SummaryBboxSource::PortedBrep)))
         .or_else(|| {
             if offset_non_solid {
                 offset_faces_bbox(context, shape, offset_margin, vertices, edges, face_shapes)
@@ -190,14 +193,26 @@ pub(super) fn ported_shape_summary(
             }
         })
         .or_else(|| {
-            fallback_summary().map(|summary| {
-                (
-                    (summary.bbox_min, summary.bbox_max),
-                    SummaryBboxSource::OcctFallback,
-                )
-            })
-        })
-        .unwrap_or((([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero));
+            if requires_rust_owned_bbox {
+                None
+            } else {
+                fallback_summary().map(|summary| {
+                    (
+                        (summary.bbox_min, summary.bbox_max),
+                        SummaryBboxSource::OcctFallback,
+                    )
+                })
+            }
+        });
+    let ((bbox_min, bbox_max), bbox_source) = match bbox_resolution {
+        Some(resolution) => resolution,
+        None if requires_rust_owned_bbox => {
+            return Err(Error::new(
+                "failed to derive a Rust-owned bbox for a supported shape summary",
+            ));
+        }
+        None => (([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero),
+    };
     let face_contributions_volume = if supports_rust_owned_offset_solid_volume {
         supported_offset_solid_volume(context, wires, edges, faces, face_shapes, edge_shapes)
     } else if closed_volume_topology || supports_rust_owned_swept_solid_volume {
