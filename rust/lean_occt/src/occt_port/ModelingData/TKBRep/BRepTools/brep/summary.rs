@@ -942,6 +942,10 @@ fn offset_faces_bbox(
         }
     }
 
+    if face_shapes.len() > 1 && !offset_faces_require_occt_face_union(context, face_shapes) {
+        return None;
+    }
+
     let face_bbox = face_bboxes_occt(context, face_shapes)?;
     let face_bbox = match boundary_bbox {
         Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
@@ -973,23 +977,47 @@ fn face_breps_bbox(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3]
 fn validated_face_brep_bbox(context: &Context, face_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
     let face_occt_bbox = shape_bbox_occt(context, face_shape)?;
     let brep = context.ported_brep(face_shape).ok()?;
-    let summary_bbox = (brep.summary.bbox_min, brep.summary.bbox_max);
+    let boundary_bbox = boundary_shape_bbox(&brep.vertices, &brep.edges);
+    let offset_margin = offset_brep_margin(&brep);
+    let summary_bbox = merge_optional_bbox(
+        (brep.summary.bbox_min, brep.summary.bbox_max),
+        boundary_bbox,
+    );
     if bbox_matches(summary_bbox, face_occt_bbox) {
         return Some(summary_bbox);
     }
 
-    if let Some(expanded_bbox) = offset_expanded_brep_bbox(&brep) {
+    if let Some(offset_margin) = offset_margin {
+        let expanded_bbox =
+            expand_offset_bbox_toward_expected(summary_bbox, face_occt_bbox, offset_margin);
         if bbox_matches(expanded_bbox, face_occt_bbox) {
             return Some(expanded_bbox);
         }
     }
 
-    validated_mesh_bbox(
-        context,
-        face_shape,
-        face_occt_bbox,
-        offset_brep_margin(&brep),
-    )
+    let mesh_bbox = mesh_shape_bbox(context, face_shape)
+        .map(|mesh_bbox| merge_optional_bbox(mesh_bbox, boundary_bbox));
+    if let Some(mesh_bbox) = mesh_bbox {
+        if bbox_matches(mesh_bbox, face_occt_bbox) {
+            return Some(mesh_bbox);
+        }
+
+        if let Some(offset_margin) = offset_margin {
+            let expanded_bbox =
+                expand_offset_bbox_toward_expected(mesh_bbox, face_occt_bbox, offset_margin);
+            if bbox_matches(expanded_bbox, face_occt_bbox) {
+                return Some(expanded_bbox);
+            }
+        }
+    }
+
+    None
+}
+
+fn offset_faces_require_occt_face_union(context: &Context, face_shapes: &[Shape]) -> bool {
+    face_shapes
+        .iter()
+        .any(|face_shape| validated_face_brep_bbox(context, face_shape).is_none())
 }
 
 fn offset_expanded_brep_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> {
@@ -1014,6 +1042,16 @@ fn offset_brep_margin(brep: &BrepShape) -> Option<f64> {
     offset_face_margin(&brep.faces)
 }
 
+fn expand_bbox(bbox: ([f64; 3], [f64; 3]), margin: f64) -> ([f64; 3], [f64; 3]) {
+    let mut min = bbox.0;
+    let mut max = bbox.1;
+    for axis in 0..3 {
+        min[axis] -= margin;
+        max[axis] += margin;
+    }
+    (min, max)
+}
+
 fn face_bboxes_occt(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3], [f64; 3])> {
     let mut bbox = None;
     for face_shape in face_shapes {
@@ -1027,14 +1065,14 @@ fn face_bboxes_occt(context: &Context, face_shapes: &[Shape]) -> Option<([f64; 3
     bbox
 }
 
-fn expand_bbox(bbox: ([f64; 3], [f64; 3]), margin: f64) -> ([f64; 3], [f64; 3]) {
-    let mut min = bbox.0;
-    let mut max = bbox.1;
-    for axis in 0..3 {
-        min[axis] -= margin;
-        max[axis] += margin;
+fn merge_optional_bbox(
+    bbox: ([f64; 3], [f64; 3]),
+    extra_bbox: Option<([f64; 3], [f64; 3])>,
+) -> ([f64; 3], [f64; 3]) {
+    match extra_bbox {
+        Some(extra_bbox) => union_bbox(bbox, extra_bbox),
+        None => bbox,
     }
-    (min, max)
 }
 
 fn expand_offset_bbox_toward_expected(
