@@ -1,11 +1,10 @@
-use super::*;
-
-use crate::EdgeSample;
-
 use super::face_metrics::{
     analytic_face_volume, analytic_offset_face_volume, analytic_ported_swept_face_volume,
 };
 use super::topology::PreparedShellShape;
+use super::*;
+
+use crate::EdgeSample;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeshFaceProperties {
@@ -598,10 +597,20 @@ fn exact_torus_summary(faces: &[BrepFace]) -> Option<ExactPrimitiveSummary> {
     let (payload, _) = single_torus_face(faces)?;
     let major_radius = payload.major_radius.abs();
     let minor_radius = payload.minor_radius.abs();
+    let mut min = [0.0; 3];
+    let mut max = [0.0; 3];
+    for axis in 0..3 {
+        let radial_component = payload.x_direction[axis].hypot(payload.y_direction[axis]);
+        let axial_component = payload.axis[axis].abs();
+        let half_extent = major_radius * radial_component
+            + minor_radius * radial_component.hypot(axial_component);
+        min[axis] = payload.center[axis] - half_extent;
+        max[axis] = payload.center[axis] + half_extent;
+    }
     Some(ExactPrimitiveSummary {
         surface_area: 4.0 * PI * PI * major_radius * minor_radius,
         volume: 2.0 * PI * PI * major_radius * minor_radius * minor_radius,
-        bbox: None,
+        bbox: Some((min, max)),
     })
 }
 

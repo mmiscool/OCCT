@@ -997,10 +997,36 @@ fn ported_brep_uses_exact_primitive_bounding_boxes() -> Result<(), Box<dyn std::
         x_direction: [1.0, 0.0, 0.0],
         radius: 7.0,
     })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [-8.0, 6.0, -1.5],
+        axis,
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 15.0,
+        minor_radius: 4.0,
+    })?;
+    let torus_center = [-8.0, 6.0, -1.5];
+    let torus_half_extent = [
+        15.0 * (1.0 - axis[0] * axis[0]).sqrt() + 4.0,
+        15.0 * (1.0 - axis[1] * axis[1]).sqrt() + 4.0,
+        15.0 * (1.0 - axis[2] * axis[2]).sqrt() + 4.0,
+    ];
+    let torus_expected_bbox = (
+        [
+            torus_center[0] - torus_half_extent[0],
+            torus_center[1] - torus_half_extent[1],
+            torus_center[2] - torus_half_extent[2],
+        ],
+        [
+            torus_center[0] + torus_half_extent[0],
+            torus_center[1] + torus_half_extent[1],
+            torus_center[2] + torus_half_extent[2],
+        ],
+    );
     for (label, shape, artifact_name) in [
         ("cylinder", &cylinder, "bbox_rotated_cylinder"),
         ("cone", &cone, "bbox_rotated_cone"),
         ("sphere", &sphere, "bbox_rotated_sphere"),
+        ("torus", &torus, "bbox_rotated_torus"),
     ] {
         let artifact =
             support::export_kernel_shape(&kernel, shape, "brep_workflows", artifact_name)?;
@@ -1013,22 +1039,41 @@ fn ported_brep_uses_exact_primitive_bounding_boxes() -> Result<(), Box<dyn std::
             SummaryBboxSource::ExactPrimitive,
             "{label} root summary bbox should resolve through the exact primitive path"
         );
-        assert_bbox_close(
-            label,
-            summary.bbox_min,
-            summary.bbox_max,
-            occt_summary.bbox_min,
-            occt_summary.bbox_max,
-            5.0e-7,
-        )?;
-        assert_bbox_close(
-            label,
-            brep.summary.bbox_min,
-            brep.summary.bbox_max,
-            occt_summary.bbox_min,
-            occt_summary.bbox_max,
-            5.0e-7,
-        )?;
+        if label == "torus" {
+            assert_bbox_close(
+                label,
+                summary.bbox_min,
+                summary.bbox_max,
+                torus_expected_bbox.0,
+                torus_expected_bbox.1,
+                5.0e-7,
+            )?;
+            assert_bbox_close(
+                label,
+                brep.summary.bbox_min,
+                brep.summary.bbox_max,
+                torus_expected_bbox.0,
+                torus_expected_bbox.1,
+                5.0e-7,
+            )?;
+        } else {
+            assert_bbox_close(
+                label,
+                summary.bbox_min,
+                summary.bbox_max,
+                occt_summary.bbox_min,
+                occt_summary.bbox_max,
+                5.0e-7,
+            )?;
+            assert_bbox_close(
+                label,
+                brep.summary.bbox_min,
+                brep.summary.bbox_max,
+                occt_summary.bbox_min,
+                occt_summary.bbox_max,
+                5.0e-7,
+            )?;
+        }
         assert!(artifact.is_file(), "{label} artifact should exist");
     }
 
