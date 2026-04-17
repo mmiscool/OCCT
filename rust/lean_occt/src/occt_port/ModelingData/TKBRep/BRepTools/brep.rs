@@ -131,6 +131,15 @@ pub enum SummaryBboxSource {
     Zero,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryVolumeSource {
+    ExactPrimitive,
+    FaceContributions,
+    WholeShapeMesh,
+    OcctFallback,
+    Zero,
+}
+
 #[derive(Debug)]
 pub struct BrepShape {
     pub summary: ShapeSummary,
@@ -140,12 +149,17 @@ pub struct BrepShape {
     pub edges: Vec<BrepEdge>,
     pub faces: Vec<BrepFace>,
     summary_bbox_source: SummaryBboxSource,
+    summary_volume_source: SummaryVolumeSource,
     offset_shell_bbox_sources: Vec<OffsetShellBboxSource>,
 }
 
 impl BrepShape {
     pub fn summary_bbox_source(&self) -> SummaryBboxSource {
         self.summary_bbox_source
+    }
+
+    pub fn summary_volume_source(&self) -> SummaryVolumeSource {
+        self.summary_volume_source
     }
 
     pub fn offset_shell_bbox_sources(&self) -> &[OffsetShellBboxSource] {
@@ -207,7 +221,7 @@ impl Context {
             &edge_shapes,
             face_route,
         )?;
-        let (summary, summary_bbox_source) = ported_shape_summary(
+        let (summary, summary_bbox_source, summary_volume_source) = ported_shape_summary(
             self,
             shape,
             &vertices,
@@ -234,6 +248,7 @@ impl Context {
             edges,
             faces,
             summary_bbox_source,
+            summary_volume_source,
             offset_shell_bbox_sources,
         })
     }

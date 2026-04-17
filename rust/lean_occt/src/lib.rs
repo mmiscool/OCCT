@@ -16,7 +16,7 @@ mod recipes;
 mod schema;
 pub use brep::{
     BrepEdge, BrepFace, BrepFaceLoop, BrepShape, BrepVertex, BrepWire, OffsetShellBboxSource,
-    SummaryBboxSource,
+    SummaryBboxSource, SummaryVolumeSource,
 };
 pub use document::{
     EdgeDescriptor, EdgeSelector, FaceDescriptor, FaceSelector, ModelDocument, OperationRecord,

@@ -115,7 +115,7 @@ pub(super) fn ported_shape_summary(
     prepared_shell_shapes: &[PreparedShellShape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
-) -> Result<(ShapeSummary, SummaryBboxSource), Error> {
+) -> Result<(ShapeSummary, SummaryBboxSource, SummaryVolumeSource), Error> {
     let counts = shape_counts(context, shape, topology)?;
     let root_kind = classify_root_kind(counts);
     let primary_kind = classify_primary_kind(counts);
@@ -126,6 +126,8 @@ pub(super) fn ported_shape_summary(
     let contains_offset_faces = faces
         .iter()
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
+    let supports_rust_owned_offset_solid_volume =
+        supports_rust_owned_offset_solid_volume(faces, face_shapes, counts);
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
     let offset_margin = offset_face_margin(faces);
@@ -192,6 +194,43 @@ pub(super) fn ported_shape_summary(
             })
         })
         .unwrap_or((([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero));
+    let face_contributions_volume = if supports_rust_owned_offset_solid_volume {
+        supported_offset_solid_volume(context, wires, edges, faces, face_shapes, edge_shapes)
+    } else if closed_volume_topology {
+        analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
+    } else {
+        None
+    };
+    let whole_shape_mesh_volume = if closed_volume_topology {
+        mesh_shape_volume(context, shape, counts)
+    } else {
+        None
+    };
+    let volume_resolution = exact_primitive
+        .map(|summary| (summary.volume, SummaryVolumeSource::ExactPrimitive))
+        .or_else(|| {
+            face_contributions_volume.map(|volume| (volume, SummaryVolumeSource::FaceContributions))
+        })
+        .or_else(|| {
+            whole_shape_mesh_volume.map(|volume| (volume, SummaryVolumeSource::WholeShapeMesh))
+        })
+        .or_else(|| {
+            if supports_rust_owned_offset_solid_volume {
+                None
+            } else {
+                fallback_summary()
+                    .map(|summary| (summary.volume, SummaryVolumeSource::OcctFallback))
+            }
+        });
+    let (volume, volume_source) = match volume_resolution {
+        Some(resolution) => resolution,
+        None if supports_rust_owned_offset_solid_volume => {
+            return Err(Error::new(
+                "failed to derive a Rust-owned volume for supported offset solid",
+            ));
+        }
+        None => (0.0, SummaryVolumeSource::Zero),
+    };
 
     Ok((
         ShapeSummary {
@@ -220,35 +259,12 @@ pub(super) fn ported_shape_summary(
             surface_area: exact_primitive
                 .map(|summary| summary.surface_area)
                 .unwrap_or_else(|| faces.iter().map(|face| face.area).sum()),
-            volume: exact_primitive
-                .map(|summary| summary.volume)
-                .or_else(|| {
-                    if closed_volume_topology {
-                        analytic_shape_volume(
-                            context,
-                            wires,
-                            edges,
-                            faces,
-                            face_shapes,
-                            edge_shapes,
-                        )
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    if closed_volume_topology {
-                        mesh_shape_volume(context, shape, counts)
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| fallback_summary().map(|summary| summary.volume))
-                .unwrap_or(0.0),
+            volume,
             bbox_min,
             bbox_max,
         },
         bbox_source,
+        volume_source,
     ))
 }
 
@@ -267,10 +283,6 @@ fn analytic_shape_volume(
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
 ) -> Option<f64> {
-    if !has_closed_volume_topology(faces, edges) {
-        return None;
-    }
-
     if faces.is_empty() {
         return Some(0.0);
     }
@@ -278,37 +290,111 @@ fn analytic_shape_volume(
     let mut volume = 0.0;
     for face in faces {
         let face_shape = face_shapes.get(face.index)?;
-        let analytic_contribution = match face.ported_face_surface {
-            Some(PortedFaceSurface::Analytic(surface)) => analytic_face_volume(
-                context,
-                face,
-                surface,
-                face.geometry,
-                &face.loops,
-                wires,
-                edges,
-                edge_shapes,
-            ),
-            Some(PortedFaceSurface::Swept(surface)) => {
-                analytic_ported_swept_face_volume(face, face.geometry, surface)
-            }
-            Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_volume(
-                context,
-                face,
-                surface,
-                face.geometry,
-                &face.loops,
-                wires,
-                edges,
-                edge_shapes,
-            ),
-            None => None,
-        };
+        let analytic_contribution =
+            analytic_face_volume_contribution(context, face, wires, edges, edge_shapes);
         let contribution =
             analytic_contribution.or_else(|| mesh_face_volume(context, face_shape, face))?;
         volume += contribution;
     }
     Some(volume.abs())
+}
+
+fn supported_offset_solid_volume(
+    context: &Context,
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    if faces.is_empty() {
+        return Some(0.0);
+    }
+
+    let mut total = 0.0;
+    for face in faces {
+        let face_shape = face_shapes.get(face.index)?;
+        let analytic = analytic_face_volume_contribution(context, face, wires, edges, edge_shapes);
+        let mesh = mesh_face_volume(context, face_shape, face);
+        total += resolved_offset_solid_face_volume(face, analytic, mesh)?;
+    }
+    Some(total.abs())
+}
+
+fn analytic_face_volume_contribution(
+    context: &Context,
+    face: &BrepFace,
+    wires: &[BrepWire],
+    edges: &[BrepEdge],
+    edge_shapes: &[Shape],
+) -> Option<f64> {
+    match face.ported_face_surface {
+        Some(PortedFaceSurface::Analytic(surface)) => analytic_face_volume(
+            context,
+            face,
+            surface,
+            face.geometry,
+            &face.loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        Some(PortedFaceSurface::Swept(surface)) => {
+            analytic_ported_swept_face_volume(face, face.geometry, surface)
+        }
+        Some(PortedFaceSurface::Offset(surface)) => analytic_offset_face_volume(
+            context,
+            face,
+            surface,
+            face.geometry,
+            &face.loops,
+            wires,
+            edges,
+            edge_shapes,
+        ),
+        None => None,
+    }
+}
+
+fn resolved_offset_solid_face_volume(
+    face: &BrepFace,
+    analytic_contribution: Option<f64>,
+    mesh_contribution: Option<f64>,
+) -> Option<f64> {
+    match (analytic_contribution, mesh_contribution) {
+        // Some offset-solid cap faces currently arrive with a numerically collapsed planar
+        // integral even though their meshed face contribution is stable and non-trivial.
+        (Some(analytic), Some(mesh))
+            if matches!(
+                face.ported_face_surface,
+                Some(PortedFaceSurface::Analytic(PortedSurface::Plane(_)))
+            ) && analytic.abs() <= 1.0e-6 * mesh.abs().max(1.0) =>
+        {
+            Some(mesh)
+        }
+        (Some(analytic), _) => Some(analytic),
+        (None, Some(mesh)) => Some(mesh),
+        (None, None) => None,
+    }
+}
+
+fn supports_rust_owned_offset_solid_volume(
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+    counts: ShapeCounts,
+) -> bool {
+    if face_shapes.len() != faces.len() || (counts.solid_count == 0 && counts.compsolid_count == 0)
+    {
+        return false;
+    }
+
+    faces.iter().any(|face| {
+        matches!(
+            face.ported_face_surface,
+            Some(PortedFaceSurface::Offset(surface))
+                if matches!(surface.basis, PortedOffsetBasisSurface::Swept(_))
+        )
+    })
 }
 
 fn exact_primitive_shape_summary(
