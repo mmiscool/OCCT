@@ -119,6 +119,14 @@ pub enum OffsetShellBboxSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OffsetFaceBboxSource {
+    ValidatedMesh,
+    ValidatedFaceBrep,
+    SummaryFaceBrep,
+    OcctFaceUnion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SummaryBboxSource {
     ExactPrimitive,
     PortedBrep,
@@ -151,6 +159,7 @@ pub struct BrepShape {
     summary_bbox_source: SummaryBboxSource,
     summary_volume_source: SummaryVolumeSource,
     offset_shell_bbox_sources: Vec<OffsetShellBboxSource>,
+    offset_face_bbox_source: Option<OffsetFaceBboxSource>,
 }
 
 impl BrepShape {
@@ -164,6 +173,10 @@ impl BrepShape {
 
     pub fn offset_shell_bbox_sources(&self) -> &[OffsetShellBboxSource] {
         &self.offset_shell_bbox_sources
+    }
+
+    pub fn offset_face_bbox_source(&self) -> Option<OffsetFaceBboxSource> {
+        self.offset_face_bbox_source
     }
 }
 
@@ -221,19 +234,20 @@ impl Context {
             &edge_shapes,
             face_route,
         )?;
-        let (summary, summary_bbox_source, summary_volume_source) = ported_shape_summary(
-            self,
-            shape,
-            &vertices,
-            &topology,
-            &wires,
-            &edges,
-            &faces,
-            &vertex_shapes,
-            &prepared_shell_shapes,
-            &face_shapes,
-            &edge_shapes,
-        )?;
+        let (summary, summary_bbox_source, summary_volume_source, offset_face_bbox_source) =
+            ported_shape_summary(
+                self,
+                shape,
+                &vertices,
+                &topology,
+                &wires,
+                &edges,
+                &faces,
+                &vertex_shapes,
+                &prepared_shell_shapes,
+                &face_shapes,
+                &edge_shapes,
+            )?;
         let offset_shell_bbox_sources = if summary.solid_count > 0 || summary.compsolid_count > 0 {
             ported_offset_shell_bbox_sources(self, &faces, &prepared_shell_shapes)
         } else {
@@ -250,6 +264,7 @@ impl Context {
             summary_bbox_source,
             summary_volume_source,
             offset_shell_bbox_sources,
+            offset_face_bbox_source,
         })
     }
 

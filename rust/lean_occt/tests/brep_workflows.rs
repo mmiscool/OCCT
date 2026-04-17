@@ -4,9 +4,10 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
-    ModelDocument, ModelKernel, OffsetParams, OffsetShellBboxSource, PortedFaceSurface,
-    PortedOffsetBasisSurface, PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind,
-    SphereParams, SummaryBboxSource, SummaryVolumeSource, SurfaceKind, ThroughHoleCut, TorusParams,
+    ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams, OffsetShellBboxSource,
+    PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams, RevolutionParams,
+    Shape, ShapeKind, SphereParams, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
+    ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -1517,6 +1518,12 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
         brep.summary_bbox_source(),
         SummaryBboxSource::OffsetFaceUnion,
         "offset shell root summary bbox should resolve through the dedicated offset-face union path"
+    );
+    assert_eq!(
+        brep.offset_face_bbox_source(),
+        Some(OffsetFaceBboxSource::ValidatedMesh),
+        "single-face offset shell root summary bbox should resolve through the validated Rust mesh path, not {:?}",
+        brep.offset_face_bbox_source()
     );
     assert_bbox_close(
         "offset shell kernel summary",

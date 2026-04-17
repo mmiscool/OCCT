@@ -15,8 +15,8 @@ mod ported_geometry;
 mod recipes;
 mod schema;
 pub use brep::{
-    BrepEdge, BrepFace, BrepFaceLoop, BrepShape, BrepVertex, BrepWire, OffsetShellBboxSource,
-    SummaryBboxSource, SummaryVolumeSource,
+    BrepEdge, BrepFace, BrepFaceLoop, BrepShape, BrepVertex, BrepWire, OffsetFaceBboxSource,
+    OffsetShellBboxSource, SummaryBboxSource, SummaryVolumeSource,
 };
 pub use document::{
     EdgeDescriptor, EdgeSelector, FaceDescriptor, FaceSelector, ModelDocument, OperationRecord,
