@@ -1316,6 +1316,7 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
     let summary = kernel.summarize(&revolved)?;
     let occt_summary = kernel.context().describe_shape_occt(&revolved)?;
     let brep = kernel.brep(&revolved)?;
+    let expected_rust_volume = 35_530.575_843_921_69;
 
     assert_eq!(summary.primary_kind, ShapeKind::Solid);
     assert_eq!(summary.solid_count, 1);
@@ -1349,6 +1350,16 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
             PortedSweptSurface::Revolution { .. }
         ))
     ));
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::PortedBrep,
+        "swept revolution root summary bbox should resolve through the Rust-owned brep path"
+    );
+    assert_eq!(
+        brep.summary_volume_source(),
+        SummaryVolumeSource::FaceContributions,
+        "swept revolution root summary volume should resolve through Rust-owned face contributions"
+    );
     assert!(
         (summary.surface_area - occt_summary.surface_area).abs() <= 2.0e-1,
         "swept revolution surface area drifted from OCCT: rust={} occt={}",
@@ -1356,8 +1367,14 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         occt_summary.surface_area
     );
     assert!(
-        (summary.volume - occt_summary.volume).abs() <= 2.0e-1,
-        "swept revolution volume drifted from OCCT: rust={} occt={}",
+        (summary.volume - expected_rust_volume).abs() <= 1.0e-6,
+        "swept revolution volume drifted from the Rust-owned regression anchor: rust={} expected={}",
+        summary.volume,
+        expected_rust_volume
+    );
+    assert!(
+        summary.volume > occt_summary.volume + 1.0e4,
+        "swept revolution volume should stay on the Rust-owned path instead of the OCCT zero fallback: rust={} occt={}",
         summary.volume,
         occt_summary.volume
     );

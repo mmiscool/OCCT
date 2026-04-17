@@ -128,6 +128,10 @@ pub(super) fn ported_shape_summary(
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
     let supports_rust_owned_offset_solid_volume =
         supports_rust_owned_offset_solid_volume(faces, face_shapes, counts);
+    let supports_rust_owned_swept_solid_volume =
+        supports_rust_owned_swept_solid_volume(faces, face_shapes, counts);
+    let requires_rust_owned_volume =
+        supports_rust_owned_offset_solid_volume || supports_rust_owned_swept_solid_volume;
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
     let offset_margin = offset_face_margin(faces);
@@ -196,7 +200,7 @@ pub(super) fn ported_shape_summary(
         .unwrap_or((([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero));
     let face_contributions_volume = if supports_rust_owned_offset_solid_volume {
         supported_offset_solid_volume(context, wires, edges, faces, face_shapes, edge_shapes)
-    } else if closed_volume_topology {
+    } else if closed_volume_topology || supports_rust_owned_swept_solid_volume {
         analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
     } else {
         None
@@ -215,7 +219,7 @@ pub(super) fn ported_shape_summary(
             whole_shape_mesh_volume.map(|volume| (volume, SummaryVolumeSource::WholeShapeMesh))
         })
         .or_else(|| {
-            if supports_rust_owned_offset_solid_volume {
+            if requires_rust_owned_volume {
                 None
             } else {
                 fallback_summary()
@@ -224,9 +228,9 @@ pub(super) fn ported_shape_summary(
         });
     let (volume, volume_source) = match volume_resolution {
         Some(resolution) => resolution,
-        None if supports_rust_owned_offset_solid_volume => {
+        None if requires_rust_owned_volume => {
             return Err(Error::new(
-                "failed to derive a Rust-owned volume for supported offset solid",
+                "failed to derive a Rust-owned volume for a supported solid summary",
             ));
         }
         None => (0.0, SummaryVolumeSource::Zero),
@@ -395,6 +399,21 @@ fn supports_rust_owned_offset_solid_volume(
                 if matches!(surface.basis, PortedOffsetBasisSurface::Swept(_))
         )
     })
+}
+
+fn supports_rust_owned_swept_solid_volume(
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+    counts: ShapeCounts,
+) -> bool {
+    if face_shapes.len() != faces.len() || (counts.solid_count == 0 && counts.compsolid_count == 0)
+    {
+        return false;
+    }
+
+    faces
+        .iter()
+        .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Swept(_))))
 }
 
 fn exact_primitive_shape_summary(
