@@ -1653,6 +1653,11 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         let shell_brep = kernel.context().ported_brep(&shell_shape)?;
         let shell_occt = kernel.context().describe_shape_occt(&shell_shape)?;
         let label = format!("offset solid shell {shell_index} brep summary");
+        assert_eq!(
+            shell_brep.summary_bbox_source(),
+            SummaryBboxSource::OffsetFaceUnion,
+            "offset solid shell {shell_index} root summary bbox should resolve through the expanded offset-face union path"
+        );
         assert_bbox_close(
             &label,
             shell_brep.summary.bbox_min,

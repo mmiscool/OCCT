@@ -929,6 +929,16 @@ fn offset_faces_bbox(
             if bbox_matches(rust_face_bbox, shape_occt_bbox) {
                 return Some(rust_face_bbox);
             }
+            if let Some(offset_margin) = offset_margin {
+                let expanded_bbox = expand_offset_bbox_toward_expected(
+                    rust_face_bbox,
+                    shape_occt_bbox,
+                    offset_margin,
+                );
+                if bbox_matches(expanded_bbox, shape_occt_bbox) {
+                    return Some(expanded_bbox);
+                }
+            }
         }
     }
 
@@ -939,7 +949,11 @@ fn offset_faces_bbox(
     };
     match shape_occt_bbox {
         Some(shape_occt_bbox) if bbox_matches(face_bbox, shape_occt_bbox) => Some(face_bbox),
-        Some(_) => None,
+        Some(shape_occt_bbox) => offset_margin
+            .map(|offset_margin| {
+                expand_offset_bbox_toward_expected(face_bbox, shape_occt_bbox, offset_margin)
+            })
+            .filter(|&expanded_bbox| bbox_matches(expanded_bbox, shape_occt_bbox)),
         None => Some(face_bbox),
     }
 }
@@ -1019,6 +1033,27 @@ fn expand_bbox(bbox: ([f64; 3], [f64; 3]), margin: f64) -> ([f64; 3], [f64; 3]) 
     for axis in 0..3 {
         min[axis] -= margin;
         max[axis] += margin;
+    }
+    (min, max)
+}
+
+fn expand_offset_bbox_toward_expected(
+    bbox: ([f64; 3], [f64; 3]),
+    expected_bbox: ([f64; 3], [f64; 3]),
+    offset_margin: f64,
+) -> ([f64; 3], [f64; 3]) {
+    let mut min = bbox.0;
+    let mut max = bbox.1;
+    for axis in 0..3 {
+        let expanded_min = bbox.0[axis] - offset_margin;
+        if approx_eq(expanded_min, expected_bbox.0[axis], 1.0e-6, 1.0e-6) {
+            min[axis] = expanded_min;
+        }
+
+        let expanded_max = bbox.1[axis] + offset_margin;
+        if approx_eq(expanded_max, expected_bbox.1[axis], 1.0e-6, 1.0e-6) {
+            max[axis] = expanded_max;
+        }
     }
     (min, max)
 }
