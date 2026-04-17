@@ -1336,7 +1336,8 @@ fn refine_sampled_edge_interval(
     let needs_refinement = if sampled_edge_interval_needs_refinement(start, &midpoint_sample, end) {
         true
     } else {
-        EARLY_PROBE_STAGE_RESULT_TAIL.needs_refinement(
+        MIDPOINT_EARLY_PROBE_STAGE_LAYOUT.needs_refinement_with_stage_result_tail(
+            EARLY_PROBE_STAGE_RESULT_TAIL,
             context,
             edge_shape,
             [*start, midpoint_sample, *end],
@@ -1494,40 +1495,39 @@ impl EarlyProbeStageResult<5> {
     }
 }
 
+impl EarlyProbeStageLayout<3, 5> {
+    fn needs_refinement_with_stage_result_tail(
+        self,
+        tail: EarlyProbeStageResultTail,
+        context: &Context,
+        edge_shape: &Shape,
+        source: [NormalizedEdgeSample; 3],
+    ) -> Option<bool> {
+        self.stage_samples_or_refinement(context, edge_shape, source)
+            .continue_with_interval_aware_tail(
+                tail.next_stage,
+                tail.interval_aware_tail,
+                context,
+                edge_shape,
+            )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct EarlyProbeStageResultTail {
-    midpoint_stage: EarlyProbeStageLayout<3, 5>,
     next_stage: EarlyProbeStageLayout<5, 7>,
     interval_aware_tail: EarlyProbeIntervalAwareTail,
 }
 
 impl EarlyProbeStageResultTail {
     const fn new(
-        midpoint_stage: EarlyProbeStageLayout<3, 5>,
         next_stage: EarlyProbeStageLayout<5, 7>,
         interval_aware_tail: EarlyProbeIntervalAwareTail,
     ) -> Self {
         Self {
-            midpoint_stage,
             next_stage,
             interval_aware_tail,
         }
-    }
-
-    fn needs_refinement(
-        self,
-        context: &Context,
-        edge_shape: &Shape,
-        source: [NormalizedEdgeSample; 3],
-    ) -> Option<bool> {
-        self.midpoint_stage
-            .stage_samples_or_refinement(context, edge_shape, source)
-            .continue_with_interval_aware_tail(
-                self.next_stage,
-                self.interval_aware_tail,
-                context,
-                edge_shape,
-            )
     }
 }
 
@@ -2084,7 +2084,6 @@ const EARLY_PROBE_INTERVAL_AWARE_TAIL: EarlyProbeIntervalAwareTail =
     EarlyProbeIntervalAwareTail::new(PREPARED_INTERVAL_AWARE_REFINEMENT_SIDE_LAYOUTS, 3);
 
 const EARLY_PROBE_STAGE_RESULT_TAIL: EarlyProbeStageResultTail = EarlyProbeStageResultTail::new(
-    MIDPOINT_EARLY_PROBE_STAGE_LAYOUT,
     OUTER_EARLY_PROBE_STAGE_LAYOUT,
     EARLY_PROBE_INTERVAL_AWARE_TAIL,
 );
