@@ -11,9 +11,9 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs` now resolves offset-shell bbox winners through a shared source-tagged helper and only keeps `OffsetShellBboxSource::OcctFallback` for shells with no prepared topology inventory. `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs` exposes the winning sources on `BrepShape`, and `rust/lean_occt/tests/brep_workflows.rs` now proves the exercised offset-solid shell path resolves through `OffsetShellBboxSource::Brep` instead of the removed unconditional shell-local OCCT fallback.
+- Completed evidence: `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs` no longer wraps the supported offset-solid bbox branch in `fallback_summary()`, and it now tags the winning root bbox path with `SummaryBboxSource`. `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs` exposes that root bbox source on `BrepShape`, and `rust/lean_occt/tests/brep_workflows.rs` now proves the exercised offset-solid summary resolves through `SummaryBboxSource::OffsetSolidShellUnion` while the per-shell winners stay `OffsetShellBboxSource::Brep`.
 - Active milestone: `M2. Whole-Shape Summary Fallback Reduction`.
-- Next bounded cut: remove the `fallback_summary()` bbox escape hatch that still wraps the supported offset-solid branch in `ported_shape_summary()`, then add a regression that proves the root offset-solid summary stays off that whole-shape OCCT fallback.
+- Next bounded cut: make the remaining `fallback_summary().map(|summary| summary.volume)` path observable for supported offset solids, then remove that OCCT summary fallback from the exercised offset-solid volume branch and extend the regression to prove the root volume stays Rust-owned.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
@@ -37,7 +37,7 @@ Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo chec
 
 Outcome: `ported_shape_summary()` stops using `fallback_summary()` for bbox and volume on the supported analytic, swept, and offset families already exercised in `brep_workflows`.
 
-Status: active. M1 proved the supported offset-solid shell path already resolves through Rust-owned shell BRep bbox validation, so the next cut is to delete the root offset-solid bbox `fallback_summary()` branch and keep any remaining OCCT summary use behind explicit unsupported-shape guards.
+Status: active. The exercised offset-solid bbox path now resolves through Rust-owned shell-union data tagged as `SummaryBboxSource::OffsetSolidShellUnion`, and the branch-local OCCT bbox escape hatch has been removed. The remaining `fallback_summary()` use in `ported_shape_summary()` is the final whole-shape bbox fallback plus the shared volume fallback, so the next cut is to make the offset-solid volume winner observable and delete that OCCT summary path for the exercised fixture.
 
 Definition of done: supported solids and shells under current tests resolve bbox and volume through Rust-owned paths plus validation, and any remaining `fallback_summary()` calls are behind explicit unsupported-shape guards instead of being the normal path.
 

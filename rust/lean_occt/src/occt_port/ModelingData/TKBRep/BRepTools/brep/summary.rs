@@ -115,7 +115,7 @@ pub(super) fn ported_shape_summary(
     prepared_shell_shapes: &[PreparedShellShape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
-) -> Result<ShapeSummary, Error> {
+) -> Result<(ShapeSummary, SummaryBboxSource), Error> {
     let counts = shape_counts(context, shape, topology)?;
     let root_kind = classify_root_kind(counts);
     let primary_kind = classify_primary_kind(counts);
@@ -129,12 +129,17 @@ pub(super) fn ported_shape_summary(
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
     let offset_margin = offset_face_margin(faces);
-    let (bbox_min, bbox_max) = exact_primitive
+    let ((bbox_min, bbox_max), bbox_source) = exact_primitive
         .and_then(|summary| summary.bbox)
-        .or_else(|| ported_shape_bbox(vertices, edges, faces))
+        .map(|bbox| (bbox, SummaryBboxSource::ExactPrimitive))
+        .or_else(|| {
+            ported_shape_bbox(vertices, edges, faces)
+                .map(|bbox| (bbox, SummaryBboxSource::PortedBrep))
+        })
         .or_else(|| {
             if offset_non_solid {
                 offset_faces_bbox(context, shape, offset_margin, vertices, edges, face_shapes)
+                    .map(|bbox| (bbox, SummaryBboxSource::OffsetFaceUnion))
             } else {
                 None
             }
@@ -149,6 +154,7 @@ pub(super) fn ported_shape_summary(
                     face_shapes,
                     edge_shapes,
                 )
+                .map(|bbox| (bbox, SummaryBboxSource::OffsetOcctSubshapeUnion))
             } else {
                 None
             }
@@ -157,15 +163,15 @@ pub(super) fn ported_shape_summary(
             if offset_non_solid {
                 let shape_occt_bbox = shape_bbox_occt(context, shape)?;
                 validated_mesh_bbox(context, shape, shape_occt_bbox, offset_margin)
+                    .map(|bbox| (bbox, SummaryBboxSource::OffsetValidatedMesh))
             } else {
                 None
             }
         })
         .or_else(|| {
             if contains_offset_faces && (counts.solid_count > 0 || counts.compsolid_count > 0) {
-                offset_solid_shell_bbox(context, faces, prepared_shell_shapes).or_else(|| {
-                    fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max))
-                })
+                offset_solid_shell_bbox(context, faces, prepared_shell_shapes)
+                    .map(|bbox| (bbox, SummaryBboxSource::OffsetSolidShellUnion))
             } else {
                 None
             }
@@ -174,59 +180,76 @@ pub(super) fn ported_shape_summary(
             if offset_non_solid {
                 None
             } else {
-                mesh_shape_bbox(context, shape)
+                mesh_shape_bbox(context, shape).map(|bbox| (bbox, SummaryBboxSource::Mesh))
             }
         })
-        .or_else(|| fallback_summary().map(|summary| (summary.bbox_min, summary.bbox_max)))
-        .unwrap_or(([0.0; 3], [0.0; 3]));
+        .or_else(|| {
+            fallback_summary().map(|summary| {
+                (
+                    (summary.bbox_min, summary.bbox_max),
+                    SummaryBboxSource::OcctFallback,
+                )
+            })
+        })
+        .unwrap_or((([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero));
 
-    Ok(ShapeSummary {
-        root_kind,
-        primary_kind,
-        compound_count: counts.compound_count,
-        compsolid_count: counts.compsolid_count,
-        solid_count: counts.solid_count,
-        shell_count: counts.shell_count,
-        face_count: counts.face_count,
-        wire_count: counts.wire_count,
-        edge_count: counts.edge_count,
-        vertex_count: counts.vertex_count,
-        // Match OCCT's whole-shape linear properties semantics: when wires are present,
-        // length is accumulated over wire-edge occurrences rather than unique topological edges.
-        linear_length: if topology.wire_edge_indices.is_empty() {
-            edges.iter().map(|edge| edge.length).sum()
-        } else {
-            topology
-                .wire_edge_indices
-                .iter()
-                .filter_map(|&edge_index| edges.get(edge_index))
-                .map(|edge| edge.length)
-                .sum()
+    Ok((
+        ShapeSummary {
+            root_kind,
+            primary_kind,
+            compound_count: counts.compound_count,
+            compsolid_count: counts.compsolid_count,
+            solid_count: counts.solid_count,
+            shell_count: counts.shell_count,
+            face_count: counts.face_count,
+            wire_count: counts.wire_count,
+            edge_count: counts.edge_count,
+            vertex_count: counts.vertex_count,
+            // Match OCCT's whole-shape linear properties semantics: when wires are present,
+            // length is accumulated over wire-edge occurrences rather than unique topological edges.
+            linear_length: if topology.wire_edge_indices.is_empty() {
+                edges.iter().map(|edge| edge.length).sum()
+            } else {
+                topology
+                    .wire_edge_indices
+                    .iter()
+                    .filter_map(|&edge_index| edges.get(edge_index))
+                    .map(|edge| edge.length)
+                    .sum()
+            },
+            surface_area: exact_primitive
+                .map(|summary| summary.surface_area)
+                .unwrap_or_else(|| faces.iter().map(|face| face.area).sum()),
+            volume: exact_primitive
+                .map(|summary| summary.volume)
+                .or_else(|| {
+                    if closed_volume_topology {
+                        analytic_shape_volume(
+                            context,
+                            wires,
+                            edges,
+                            faces,
+                            face_shapes,
+                            edge_shapes,
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    if closed_volume_topology {
+                        mesh_shape_volume(context, shape, counts)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| fallback_summary().map(|summary| summary.volume))
+                .unwrap_or(0.0),
+            bbox_min,
+            bbox_max,
         },
-        surface_area: exact_primitive
-            .map(|summary| summary.surface_area)
-            .unwrap_or_else(|| faces.iter().map(|face| face.area).sum()),
-        volume: exact_primitive
-            .map(|summary| summary.volume)
-            .or_else(|| {
-                if closed_volume_topology {
-                    analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                if closed_volume_topology {
-                    mesh_shape_volume(context, shape, counts)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| fallback_summary().map(|summary| summary.volume))
-            .unwrap_or(0.0),
-        bbox_min,
-        bbox_max,
-    })
+        bbox_source,
+    ))
 }
 
 fn has_closed_volume_topology(faces: &[BrepFace], edges: &[BrepEdge]) -> bool {

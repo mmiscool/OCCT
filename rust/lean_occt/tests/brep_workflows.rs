@@ -6,7 +6,7 @@ use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
     ModelDocument, ModelKernel, OffsetParams, OffsetShellBboxSource, PortedFaceSurface,
     PortedOffsetBasisSurface, PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind,
-    SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
+    SphereParams, SummaryBboxSource, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -1568,6 +1568,11 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         shell_shapes.len(),
         "expected one shell bbox winner per offset shell: {:?}",
         brep.offset_shell_bbox_sources()
+    );
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::OffsetSolidShellUnion,
+        "offset solid root summary bbox should resolve through the shell-union path"
     );
     assert!(
         brep.offset_shell_bbox_sources()
