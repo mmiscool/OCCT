@@ -515,6 +515,11 @@ mod ffi {
             shape: *const LeanOcctShape,
             params: *const LeanOcctOffsetParams,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_make_offset_surface_face(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            params: *const LeanOcctOffsetParams,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_make_cylindrical_hole(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -1448,6 +1453,26 @@ impl Context {
 
         let raw = unsafe {
             ffi::lean_occt_shape_make_offset(self.raw.as_ptr(), shape.raw.as_ptr(), &raw_params)
+        };
+        self.wrap_shape(raw)
+    }
+
+    pub fn make_offset_surface_face(
+        &self,
+        basis_face: &Shape,
+        params: OffsetParams,
+    ) -> Result<Shape, Error> {
+        let raw_params = ffi::LeanOcctOffsetParams {
+            offset: params.offset,
+            tolerance: params.tolerance,
+        };
+
+        let raw = unsafe {
+            ffi::lean_occt_shape_make_offset_surface_face(
+                self.raw.as_ptr(),
+                basis_face.raw.as_ptr(),
+                &raw_params,
+            )
         };
         self.wrap_shape(raw)
     }

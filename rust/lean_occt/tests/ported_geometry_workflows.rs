@@ -1044,6 +1044,37 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
     let kernel = ModelKernel::new()?;
 
     let cut = kernel.box_with_through_hole(default_cut())?;
+    let plane_source = kernel.make_box(BoxParams {
+        origin: [-8.0, -6.0, -4.0],
+        size: [16.0, 12.0, 8.0],
+    })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [4.0, -3.0, 1.5],
+        axis: [0.0, 0.0, 1.0],
+        radius: 6.0,
+        height: 18.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [-6.0, 5.0, 2.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 15.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [5.0, -4.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [-8.0, 6.0, -1.5],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 15.0,
+        minor_radius: 4.0,
+    })?;
     let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
         origin: [30.0, 0.0, 0.0],
         axis: [0.0, 1.0, 0.0],
@@ -1073,6 +1104,46 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             tolerance: 1.0e-4,
         },
     )?;
+    let plane_face = find_first_face_by_kind(&kernel, &plane_source, SurfaceKind::Plane)?;
+    let cylinder_face = find_first_face_by_kind(&kernel, &cylinder, SurfaceKind::Cylinder)?;
+    let cone_face = find_first_face_by_kind(&kernel, &cone, SurfaceKind::Cone)?;
+    let sphere_face = find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?;
+    let torus_face = find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?;
+    let plane_offset_face = kernel.context().make_offset_surface_face(
+        &plane_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let cylinder_offset_face = kernel.context().make_offset_surface_face(
+        &cylinder_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let cone_offset_face = kernel.context().make_offset_surface_face(
+        &cone_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let sphere_offset_face = kernel.context().make_offset_surface_face(
+        &sphere_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let torus_offset_face = kernel.context().make_offset_surface_face(
+        &torus_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
 
     for (label, face, uv_t) in [
         (
@@ -1087,10 +1158,15 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
         ),
         ("revolution", revolution_face, [0.2, 0.7]),
         (
-            "offset",
+            "offset-revolution",
             find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?,
             [0.5, 0.5],
         ),
+        ("offset-plane", plane_offset_face, [0.5, 0.5]),
+        ("offset-cylinder", cylinder_offset_face, [0.2, 0.7]),
+        ("offset-cone", cone_offset_face, [0.2, 0.7]),
+        ("offset-sphere", sphere_offset_face, [0.2, 0.7]),
+        ("offset-torus", torus_offset_face, [0.2, 0.7]),
     ] {
         let geometry = kernel.context().face_geometry(&face)?;
         let orientation = kernel.context().shape_orientation(&face)?;
@@ -1124,11 +1200,46 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
                 assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
                 assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
             }
-            ("offset", PortedFaceSurface::Offset(surface)) => {
+            ("offset-revolution", PortedFaceSurface::Offset(surface)) => {
                 assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Revolution);
                 assert!(matches!(
                     surface.basis,
                     PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. })
+                ));
+            }
+            ("offset-plane", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Plane);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(_))
+                ));
+            }
+            ("offset-cylinder", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Cylinder);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(_))
+                ));
+            }
+            ("offset-cone", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Cone);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(_))
+                ));
+            }
+            ("offset-sphere", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Sphere);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(_))
+                ));
+            }
+            ("offset-torus", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Torus);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(_))
                 ));
             }
             _ => {
@@ -1184,6 +1295,19 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             1.0e-12,
             &format!("{label} context UV sample normal"),
         )?;
+        if label.starts_with("offset") {
+            let rust_area = kernel
+                .context()
+                .ported_face_area(&face)?
+                .ok_or_else(|| std::io::Error::other(format!("expected ported {label} area")))?;
+            let occt_area = kernel.context().describe_shape_occt(&face)?.surface_area;
+            assert_scalar_close(
+                rust_area,
+                occt_area,
+                5.0e-1,
+                &format!("{label} ported area"),
+            )?;
+        }
     }
 
     Ok(())
@@ -1641,10 +1765,41 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
 }
 
 #[test]
-fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
+fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
 
+    let plane_source = kernel.make_box(BoxParams {
+        origin: [-8.0, -6.0, -4.0],
+        size: [16.0, 12.0, 8.0],
+    })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [4.0, -3.0, 1.5],
+        axis: [0.0, 0.0, 1.0],
+        radius: 6.0,
+        height: 18.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [-6.0, 5.0, 2.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 15.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [5.0, -4.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [-8.0, 6.0, -1.5],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 15.0,
+        minor_radius: 4.0,
+    })?;
     let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
         origin: [30.0, 0.0, 0.0],
         axis: [0.0, 1.0, 0.0],
@@ -1668,6 +1823,46 @@ fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::err
     )?;
 
     let context = kernel.context();
+    let plane_face = find_first_face_by_kind(&kernel, &plane_source, SurfaceKind::Plane)?;
+    let plane_offset_face = context.make_offset_surface_face(
+        &plane_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let cylinder_face = find_first_face_by_kind(&kernel, &cylinder, SurfaceKind::Cylinder)?;
+    let cylinder_offset_face = context.make_offset_surface_face(
+        &cylinder_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let cone_face = find_first_face_by_kind(&kernel, &cone, SurfaceKind::Cone)?;
+    let cone_offset_face = context.make_offset_surface_face(
+        &cone_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let sphere_face = find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?;
+    let sphere_offset_face = context.make_offset_surface_face(
+        &sphere_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let torus_face = find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?;
+    let torus_offset_face = context.make_offset_surface_face(
+        &torus_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
     let extrusion_source_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
     let extrusion_offset_shape = kernel.make_offset(
         &extrusion_source_face,
@@ -1687,6 +1882,11 @@ fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::err
     )?;
 
     for (label, basis_kind, offset_face) in [
+        ("plane", SurfaceKind::Plane, plane_offset_face),
+        ("cylinder", SurfaceKind::Cylinder, cylinder_offset_face),
+        ("cone", SurfaceKind::Cone, cone_offset_face),
+        ("sphere", SurfaceKind::Sphere, sphere_offset_face),
+        ("torus", SurfaceKind::Torus, torus_offset_face),
         (
             "extrusion",
             SurfaceKind::Extrusion,
@@ -1960,6 +2160,24 @@ fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::err
                 .into())
             }
         }
+        let geometry = context.face_geometry(&offset_face)?;
+        let orientation = context.shape_orientation(&offset_face)?;
+        let uv_t = [0.37, 0.61];
+        let rust_sample =
+            descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+        let occt_sample = context.face_sample_normalized_occt(&offset_face, uv_t)?;
+        assert_vec3_close(
+            rust_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{label} offset descriptor sample position"),
+        )?;
+        assert_vec3_close(
+            rust_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{label} offset descriptor sample normal"),
+        )?;
     }
 
     Ok(())

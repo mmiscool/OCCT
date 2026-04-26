@@ -28,6 +28,7 @@
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <BndLib_Add3dCurve.hxx>
 #include <BndLib_AddSurface.hxx>
@@ -36,6 +37,9 @@
 #include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_BezierCurve.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
+#include <Geom_OffsetSurface.hxx>
+#include <Geom_RectangularTrimmedSurface.hxx>
+#include <Geom_Surface.hxx>
 #include <GeomAbs_Shape.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
@@ -2060,6 +2064,47 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_offset(
       throw std::runtime_error("Offset operation produced a null shape.");
     }
     return a_result;
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_offset_surface_face(
+  LeanOcctContext*               the_context,
+  const LeanOcctShape*           the_shape,
+  const LeanOcctOffsetParams*    the_params)
+{
+  return createShapeFromInputShape(the_context,
+                                   the_shape,
+                                   the_params,
+                                   "LeanOcctOffsetParams was null.",
+                                   [&](const TopoDS_Shape& a_shape,
+                                       const LeanOcctOffsetParams& the_offset_params) -> TopoDS_Shape {
+    if (a_shape.ShapeType() != TopAbs_FACE)
+    {
+      throw std::invalid_argument("LeanOcctShape was not a face.");
+    }
+
+    const TopoDS_Face a_face = TopoDS::Face(a_shape);
+    const occ::handle<Geom_Surface> a_basis_surface = BRep_Tool::Surface(a_face);
+    if (a_basis_surface.IsNull())
+    {
+      throw std::runtime_error("Offset basis face did not expose a surface.");
+    }
+
+    double a_u_min = 0.0;
+    double a_u_max = 0.0;
+    double a_v_min = 0.0;
+    double a_v_max = 0.0;
+    BRepTools::UVBounds(a_face, a_u_min, a_u_max, a_v_min, a_v_max);
+    occ::handle<Geom_OffsetSurface> an_offset_surface =
+      new Geom_OffsetSurface(a_basis_surface, the_offset_params.offset);
+    occ::handle<Geom_RectangularTrimmedSurface> a_trimmed_offset_surface =
+      new Geom_RectangularTrimmedSurface(an_offset_surface, a_u_min, a_u_max, a_v_min, a_v_max);
+
+    TopoDS_Face  an_offset_face;
+    BRep_Builder a_builder;
+    a_builder.MakeFace(an_offset_face, a_trimmed_offset_surface, the_offset_params.tolerance);
+    a_builder.NaturalRestriction(an_offset_face, true);
+    return an_offset_face;
   });
 }
 

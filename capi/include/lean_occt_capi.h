@@ -425,6 +425,10 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_offset(
   LeanOcctContext* the_context,
   const LeanOcctShape* the_shape,
   const LeanOcctOffsetParams* the_params);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_offset_surface_face(
+  LeanOcctContext* the_context,
+  const LeanOcctShape* the_shape,
+  const LeanOcctOffsetParams* the_params);
 LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_cylindrical_hole(
   LeanOcctContext* the_context,
   const LeanOcctShape* the_shape,

@@ -719,6 +719,10 @@ impl Context {
     }
 
     pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
+        if self.face_geometry_occt(shape)?.kind == SurfaceKind::Offset {
+            return Ok(None);
+        }
+
         let bounds = self.face_uv_bounds_occt(shape)?;
         let plane_geometry = ported_analytic_face_geometry(SurfaceKind::Plane, bounds);
         let cylinder_geometry = ported_analytic_face_geometry(SurfaceKind::Cylinder, bounds);
@@ -854,21 +858,19 @@ impl Context {
         let payload = self.face_offset_payload_occt(shape)?;
         let basis_geometry = self.face_offset_basis_geometry_occt(shape)?;
         let basis = match payload.basis_surface_kind {
-            SurfaceKind::Plane => PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(
-                self.face_offset_basis_plane_payload_occt(shape)?,
-            )),
-            SurfaceKind::Cylinder => PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(
-                self.face_offset_basis_cylinder_payload_occt(shape)?,
-            )),
-            SurfaceKind::Cone => PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(
-                self.face_offset_basis_cone_payload_occt(shape)?,
-            )),
-            SurfaceKind::Sphere => PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(
-                self.face_offset_basis_sphere_payload_occt(shape)?,
-            )),
-            SurfaceKind::Torus => PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(
-                self.face_offset_basis_torus_payload_occt(shape)?,
-            )),
+            SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus => match ported_offset_basis_surface_payload(
+                self,
+                shape,
+                payload.offset_value,
+                basis_geometry,
+            )? {
+                Some(surface) => PortedOffsetBasisSurface::Analytic(surface),
+                None => return Ok(None),
+            },
             SurfaceKind::Revolution => {
                 let payload = self.face_offset_basis_revolution_payload_occt(shape)?;
                 let basis_geometry = self.face_offset_basis_curve_geometry_occt(shape)?;

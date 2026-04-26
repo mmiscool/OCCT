@@ -309,6 +309,32 @@ fn assert_ported_surface_kind(
     }
 }
 
+fn assert_offset_basis_kind(
+    basis: PortedOffsetBasisSurface,
+    expected_kind: SurfaceKind,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (expected_kind, basis) {
+        (SurfaceKind::Plane, PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(_)))
+        | (SurfaceKind::Cylinder, PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(_)))
+        | (SurfaceKind::Cone, PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(_)))
+        | (SurfaceKind::Sphere, PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(_)))
+        | (SurfaceKind::Torus, PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(_)))
+        | (
+            SurfaceKind::Extrusion,
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { .. }),
+        )
+        | (
+            SurfaceKind::Revolution,
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. }),
+        ) => Ok(()),
+        _ => Err(std::io::Error::other(format!(
+            "{label} expected {expected_kind:?} offset basis, got {basis:?}"
+        ))
+        .into()),
+    }
+}
+
 fn assert_brep_analytic_faces_use_rust_surface_route(
     kernel: &ModelKernel,
     label: &str,
@@ -471,6 +497,83 @@ fn assert_brep_analytic_faces_use_rust_surface_route(
         ))
         .into());
     }
+
+    Ok(())
+}
+
+fn assert_analytic_offset_brep_uses_rust_basis(
+    kernel: &ModelKernel,
+    label: &str,
+    source: &Shape,
+    expected_kind: SurfaceKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source_face = find_first_face_by_kind(kernel, source, expected_kind)?;
+    let offset_shape = kernel.context().make_offset_surface_face(
+        &source_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let brep = kernel.brep(&offset_shape)?;
+    let offset_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Offset)
+        .ok_or_else(|| std::io::Error::other(format!("{label} expected an offset brep face")))?;
+    let occt_area = kernel
+        .context()
+        .describe_shape_occt(&offset_shape)?
+        .surface_area;
+    let occt_sample = kernel
+        .context()
+        .face_sample_normalized_occt(&offset_shape, [0.37, 0.61])?;
+
+    assert!(
+        offset_face.ported_surface.is_none(),
+        "{label} offset face should use the dedicated offset descriptor path"
+    );
+    let surface = match offset_face.ported_face_surface {
+        Some(PortedFaceSurface::Offset(surface)) => surface,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "{label} expected offset face descriptor, got {other:?}"
+            ))
+            .into())
+        }
+    };
+    assert_eq!(
+        surface.payload.basis_surface_kind, expected_kind,
+        "{label} offset basis kind mismatch"
+    );
+    assert_offset_basis_kind(
+        surface.basis,
+        expected_kind,
+        &format!("{label} offset descriptor basis"),
+    )?;
+    assert!(
+        (offset_face.area - occt_area).abs() <= 5.0e-1,
+        "{label} offset face area drifted from OCCT: rust={} occt={}",
+        offset_face.area,
+        occt_area
+    );
+    let rust_sample = PortedFaceSurface::Offset(surface).sample_normalized_with_orientation(
+        offset_face.geometry,
+        [0.37, 0.61],
+        offset_face.orientation,
+    );
+    assert_vec3_close(
+        rust_sample.position,
+        occt_sample.position,
+        1.0e-6,
+        &format!("{label} offset descriptor sample position"),
+    )?;
+    assert_vec3_close(
+        rust_sample.normal,
+        occt_sample.normal,
+        1.0e-6,
+        &format!("{label} offset descriptor sample normal"),
+    )?;
 
     Ok(())
 }
@@ -2044,6 +2147,47 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
         offset_face.area
     );
     assert!(artifact.is_file());
+
+    let plane_source = kernel.make_box(BoxParams {
+        origin: [-8.0, -6.0, -4.0],
+        size: [16.0, 12.0, 8.0],
+    })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [4.0, -3.0, 1.5],
+        axis: [0.0, 0.0, 1.0],
+        radius: 6.0,
+        height: 18.0,
+    })?;
+    let cone = kernel.make_cone(ConeParams {
+        origin: [-6.0, 5.0, 2.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 15.0,
+    })?;
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [5.0, -4.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    })?;
+    let torus = kernel.make_torus(TorusParams {
+        origin: [-8.0, 6.0, -1.5],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 15.0,
+        minor_radius: 4.0,
+    })?;
+    for (label, source, expected_kind) in [
+        ("plane", &plane_source, SurfaceKind::Plane),
+        ("cylinder", &cylinder, SurfaceKind::Cylinder),
+        ("cone", &cone, SurfaceKind::Cone),
+        ("sphere", &sphere, SurfaceKind::Sphere),
+        ("torus", &torus, SurfaceKind::Torus),
+    ] {
+        assert_analytic_offset_brep_uses_rust_basis(&kernel, label, source, expected_kind)?;
+    }
 
     Ok(())
 }

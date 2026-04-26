@@ -33,13 +33,7 @@ pub(super) fn analytic_face_area(
     }
 
     if loops.is_empty() {
-        return match surface {
-            PortedSurface::Sphere(payload) => Some(4.0 * PI * payload.radius.abs().powi(2)),
-            PortedSurface::Torus(payload) => {
-                Some(4.0 * PI * PI * payload.major_radius.abs() * payload.minor_radius.abs())
-            }
-            _ => Some(0.0),
-        };
+        return rectangular_analytic_face_area(surface, face_geometry);
     }
 
     let plane = match surface {
@@ -85,6 +79,64 @@ pub(super) fn analytic_face_area(
         }
     }
     Some(area.abs())
+}
+
+fn rectangular_analytic_face_area(
+    surface: PortedSurface,
+    face_geometry: FaceGeometry,
+) -> Option<f64> {
+    let u_span = (face_geometry.u_max - face_geometry.u_min).abs();
+    let v_span = (face_geometry.v_max - face_geometry.v_min).abs();
+    if u_span <= 1.0e-12 || v_span <= 1.0e-12 {
+        return Some(0.0);
+    }
+
+    match surface {
+        PortedSurface::Plane(_) => Some(u_span * v_span),
+        PortedSurface::Cylinder(payload) => Some(payload.radius.abs() * u_span * v_span),
+        PortedSurface::Cone(payload) => {
+            let sin_angle = payload.semi_angle.sin();
+            Some(
+                u_span
+                    * integrate_parameter_span(face_geometry.v_min, face_geometry.v_max, |v| {
+                        (payload.reference_radius + v * sin_angle).abs()
+                    }),
+            )
+        }
+        PortedSurface::Sphere(payload) => Some(
+            payload.radius.abs().powi(2)
+                * u_span
+                * integrate_parameter_span(face_geometry.v_min, face_geometry.v_max, |v| {
+                    v.cos().abs()
+                }),
+        ),
+        PortedSurface::Torus(payload) => Some(
+            payload.minor_radius.abs()
+                * u_span
+                * integrate_parameter_span(face_geometry.v_min, face_geometry.v_max, |v| {
+                    (payload.major_radius + payload.minor_radius * v.cos()).abs()
+                }),
+        ),
+    }
+}
+
+fn integrate_parameter_span<F>(min: f64, max: f64, value_at: F) -> f64
+where
+    F: Fn(f64) -> f64,
+{
+    let span = max - min;
+    if span.abs() <= 1.0e-12 {
+        return 0.0;
+    }
+
+    let intervals = 256;
+    let step = span / intervals as f64;
+    let mut sum = value_at(min) + value_at(max);
+    for index in 1..intervals {
+        let weight = if index % 2 == 0 { 2.0 } else { 4.0 };
+        sum += weight * value_at(min + step * index as f64);
+    }
+    (sum * step / 3.0).abs()
 }
 
 fn exact_closed_face_area(surface: PortedSurface, face_geometry: FaceGeometry) -> Option<f64> {

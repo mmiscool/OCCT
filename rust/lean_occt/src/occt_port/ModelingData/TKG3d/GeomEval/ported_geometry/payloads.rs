@@ -2,13 +2,13 @@ use std::f64::consts::TAU;
 
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry,
-    EllipsePayload, Error, FaceGeometry, FaceUvBounds, LinePayload, Orientation, PlanePayload,
-    Shape, SpherePayload, SurfaceKind, TorusPayload,
+    EllipsePayload, Error, FaceGeometry, FaceSample, FaceUvBounds, LinePayload, Orientation,
+    PlanePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
 };
 
 use super::{
     add3, cross3, dot3, norm3, normalize3, sample_circle, sample_cone, sample_cylinder,
-    sample_ellipse, sample_sphere, sample_torus, scale3, subtract3, Atan2Components,
+    sample_ellipse, sample_sphere, sample_torus, scale3, subtract3, Atan2Components, PortedSurface,
 };
 
 pub(super) fn ported_line_geometry(
@@ -348,6 +348,16 @@ pub(super) fn ported_plane_payload(
     shape: &Shape,
     geometry: FaceGeometry,
 ) -> Result<Option<PlanePayload>, Error> {
+    ported_plane_payload_from_samples(geometry, |uv| context.face_sample_occt(shape, uv))
+}
+
+fn ported_plane_payload_from_samples<F>(
+    geometry: FaceGeometry,
+    mut sample_face: F,
+) -> Result<Option<PlanePayload>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
     if geometry.kind != SurfaceKind::Plane {
         return Ok(None);
     }
@@ -358,9 +368,9 @@ pub(super) fn ported_plane_payload(
         return Ok(None);
     }
 
-    let origin_sample = context.face_sample_occt(shape, [geometry.u_min, geometry.v_min])?;
-    let u_sample = context.face_sample_occt(shape, [geometry.u_max, geometry.v_min])?;
-    let v_sample = context.face_sample_occt(shape, [geometry.u_min, geometry.v_max])?;
+    let origin_sample = sample_face([geometry.u_min, geometry.v_min])?;
+    let u_sample = sample_face([geometry.u_max, geometry.v_min])?;
+    let v_sample = sample_face([geometry.u_min, geometry.v_max])?;
 
     let x_direction = scale3(
         subtract3(u_sample.position, origin_sample.position),
@@ -395,6 +405,20 @@ pub(super) fn ported_cylinder_payload(
     shape: &Shape,
     geometry: FaceGeometry,
 ) -> Result<Option<CylinderPayload>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    ported_cylinder_payload_from_samples(geometry, orientation, |uv| {
+        context.face_sample_occt(shape, uv)
+    })
+}
+
+fn ported_cylinder_payload_from_samples<F>(
+    geometry: FaceGeometry,
+    orientation: Orientation,
+    mut sample_face: F,
+) -> Result<Option<CylinderPayload>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
     if geometry.kind != SurfaceKind::Cylinder {
         return Ok(None);
     }
@@ -414,11 +438,10 @@ pub(super) fn ported_cylinder_payload(
         return Ok(None);
     }
 
-    let orientation = context.shape_orientation(shape)?;
-    let base_sample = context.face_sample_occt(shape, [u0, geometry.v_min])?;
-    let axis_sample = context.face_sample_occt(shape, [u0, geometry.v_max])?;
-    let probe_sample = context.face_sample_occt(shape, [u1, geometry.v_min])?;
-    let probe_top_sample = context.face_sample_occt(shape, [u1, geometry.v_max])?;
+    let base_sample = sample_face([u0, geometry.v_min])?;
+    let axis_sample = sample_face([u0, geometry.v_max])?;
+    let probe_sample = sample_face([u1, geometry.v_min])?;
+    let probe_top_sample = sample_face([u1, geometry.v_max])?;
     let normal_sign = if matches!(orientation, Orientation::Reversed) {
         -1.0
     } else {
@@ -495,6 +518,20 @@ pub(super) fn ported_cone_payload(
     shape: &Shape,
     geometry: FaceGeometry,
 ) -> Result<Option<ConePayload>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    ported_cone_payload_from_samples(geometry, orientation, |uv| {
+        context.face_sample_occt(shape, uv)
+    })
+}
+
+fn ported_cone_payload_from_samples<F>(
+    geometry: FaceGeometry,
+    orientation: Orientation,
+    mut sample_face: F,
+) -> Result<Option<ConePayload>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
     if geometry.kind != SurfaceKind::Cone {
         return Ok(None);
     }
@@ -514,17 +551,16 @@ pub(super) fn ported_cone_payload(
         return Ok(None);
     }
 
-    let orientation = context.shape_orientation(shape)?;
     let normal_sign = if matches!(orientation, Orientation::Reversed) {
         -1.0
     } else {
         1.0
     };
 
-    let base_sample = context.face_sample_occt(shape, [u0, geometry.v_min])?;
-    let base_top_sample = context.face_sample_occt(shape, [u0, geometry.v_max])?;
-    let probe_sample = context.face_sample_occt(shape, [u1, geometry.v_min])?;
-    let probe_top_sample = context.face_sample_occt(shape, [u1, geometry.v_max])?;
+    let base_sample = sample_face([u0, geometry.v_min])?;
+    let base_top_sample = sample_face([u0, geometry.v_max])?;
+    let probe_sample = sample_face([u1, geometry.v_min])?;
+    let probe_top_sample = sample_face([u1, geometry.v_max])?;
     let normal0 = scale3(base_sample.normal, normal_sign);
     let normal1 = scale3(probe_sample.normal, normal_sign);
     let generatrix0 = normalize3(scale3(
@@ -647,6 +683,20 @@ pub(super) fn ported_sphere_payload(
     shape: &Shape,
     geometry: FaceGeometry,
 ) -> Result<Option<SpherePayload>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    ported_sphere_payload_from_samples(geometry, orientation, |uv| {
+        context.face_sample_occt(shape, uv)
+    })
+}
+
+fn ported_sphere_payload_from_samples<F>(
+    geometry: FaceGeometry,
+    orientation: Orientation,
+    mut sample_face: F,
+) -> Result<Option<SpherePayload>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
     if geometry.kind != SurfaceKind::Sphere {
         return Ok(None);
     }
@@ -670,17 +720,16 @@ pub(super) fn ported_sphere_payload(
         return Ok(None);
     }
 
-    let orientation = context.shape_orientation(shape)?;
     let normal_sign = if matches!(orientation, Orientation::Reversed) {
         -1.0
     } else {
         1.0
     };
 
-    let base_sample = context.face_sample_occt(shape, [u0, v0])?;
-    let longitude_sample = context.face_sample_occt(shape, [u1, v0])?;
-    let latitude_sample = context.face_sample_occt(shape, [u0, v1])?;
-    let latitude_longitude_sample = context.face_sample_occt(shape, [u1, v1])?;
+    let base_sample = sample_face([u0, v0])?;
+    let longitude_sample = sample_face([u1, v0])?;
+    let latitude_sample = sample_face([u0, v1])?;
+    let latitude_longitude_sample = sample_face([u1, v1])?;
     let normal00 = scale3(base_sample.normal, normal_sign);
     let normal10 = scale3(longitude_sample.normal, normal_sign);
     let normal01 = scale3(latitude_sample.normal, normal_sign);
@@ -762,6 +811,20 @@ pub(super) fn ported_torus_payload(
     shape: &Shape,
     geometry: FaceGeometry,
 ) -> Result<Option<TorusPayload>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    ported_torus_payload_from_samples(geometry, orientation, |uv| {
+        context.face_sample_occt(shape, uv)
+    })
+}
+
+fn ported_torus_payload_from_samples<F>(
+    geometry: FaceGeometry,
+    orientation: Orientation,
+    mut sample_face: F,
+) -> Result<Option<TorusPayload>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
     if geometry.kind != SurfaceKind::Torus {
         return Ok(None);
     }
@@ -786,17 +849,16 @@ pub(super) fn ported_torus_payload(
         return Ok(None);
     }
 
-    let orientation = context.shape_orientation(shape)?;
     let normal_sign = if matches!(orientation, Orientation::Reversed) {
         -1.0
     } else {
         1.0
     };
 
-    let sample00 = context.face_sample_occt(shape, [u0, v0])?;
-    let sample01 = context.face_sample_occt(shape, [u0, v1])?;
-    let sample10 = context.face_sample_occt(shape, [u1, v0])?;
-    let sample11 = context.face_sample_occt(shape, [u1, v1])?;
+    let sample00 = sample_face([u0, v0])?;
+    let sample01 = sample_face([u0, v1])?;
+    let sample10 = sample_face([u1, v0])?;
+    let sample11 = sample_face([u1, v1])?;
     let normal00 = scale3(sample00.normal, normal_sign);
     let normal01 = scale3(sample01.normal, normal_sign);
     let normal10 = scale3(sample10.normal, normal_sign);
@@ -920,6 +982,61 @@ pub(super) fn ported_torus_payload(
     }
 
     Ok(Some(payload))
+}
+
+pub(super) fn ported_offset_basis_surface_payload(
+    context: &Context,
+    shape: &Shape,
+    offset: f64,
+    basis_geometry: FaceGeometry,
+) -> Result<Option<PortedSurface>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    let natural_normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut sample_basis = |uv| {
+        let offset_sample = context.face_sample_occt(shape, uv)?;
+        let natural_normal = scale3(offset_sample.normal, natural_normal_sign);
+        Ok(FaceSample {
+            position: subtract3(offset_sample.position, scale3(natural_normal, offset)),
+            normal: offset_sample.normal,
+        })
+    };
+
+    match basis_geometry.kind {
+        SurfaceKind::Plane => Ok(ported_plane_payload_from_samples(
+            basis_geometry,
+            &mut sample_basis,
+        )?
+        .map(PortedSurface::Plane)),
+        SurfaceKind::Cylinder => Ok(ported_cylinder_payload_from_samples(
+            basis_geometry,
+            orientation,
+            &mut sample_basis,
+        )?
+        .map(PortedSurface::Cylinder)),
+        SurfaceKind::Cone => {
+            Ok(
+                ported_cone_payload_from_samples(basis_geometry, orientation, &mut sample_basis)?
+                    .map(PortedSurface::Cone),
+            )
+        }
+        SurfaceKind::Sphere => {
+            Ok(
+                ported_sphere_payload_from_samples(basis_geometry, orientation, &mut sample_basis)?
+                    .map(PortedSurface::Sphere),
+            )
+        }
+        SurfaceKind::Torus => {
+            Ok(
+                ported_torus_payload_from_samples(basis_geometry, orientation, &mut sample_basis)?
+                    .map(PortedSurface::Torus),
+            )
+        }
+        _ => Ok(None),
+    }
 }
 
 fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
