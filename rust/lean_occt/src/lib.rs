@@ -1277,6 +1277,7 @@ pub(crate) struct OffsetSurfaceFaceMetadata {
 enum ShapeRustMetadata {
     None,
     OffsetSurfaceFace(OffsetSurfaceFaceMetadata),
+    SingleFaceOffsetResult(OffsetSurfaceFaceMetadata),
 }
 
 struct MeshHandle {
@@ -1460,6 +1461,10 @@ impl Context {
     }
 
     pub fn make_offset(&self, shape: &Shape, params: OffsetParams) -> Result<Shape, Error> {
+        let rust_metadata = self
+            .offset_surface_face_metadata_candidate(shape, params.offset)?
+            .map(ShapeRustMetadata::SingleFaceOffsetResult)
+            .unwrap_or(ShapeRustMetadata::None);
         let raw_params = ffi::LeanOcctOffsetParams {
             offset: params.offset,
             tolerance: params.tolerance,
@@ -1468,7 +1473,7 @@ impl Context {
         let raw = unsafe {
             ffi::lean_occt_shape_make_offset(self.raw.as_ptr(), shape.raw.as_ptr(), &raw_params)
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_offset_surface_face(
@@ -3833,8 +3838,24 @@ impl Shape {
     pub(crate) fn offset_surface_face_metadata(&self) -> Option<OffsetSurfaceFaceMetadata> {
         match self.rust_metadata {
             ShapeRustMetadata::OffsetSurfaceFace(metadata) => Some(metadata),
+            ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
             ShapeRustMetadata::None => None,
         }
+    }
+
+    pub(crate) fn single_face_offset_result_metadata(&self) -> Option<OffsetSurfaceFaceMetadata> {
+        match self.rust_metadata {
+            ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
+            ShapeRustMetadata::OffsetSurfaceFace(_) | ShapeRustMetadata::None => None,
+        }
+    }
+
+    pub(crate) fn with_offset_surface_face_metadata(
+        mut self,
+        metadata: OffsetSurfaceFaceMetadata,
+    ) -> Self {
+        self.rust_metadata = ShapeRustMetadata::OffsetSurfaceFace(metadata);
+        self
     }
 
     pub fn edge_count(&self) -> usize {

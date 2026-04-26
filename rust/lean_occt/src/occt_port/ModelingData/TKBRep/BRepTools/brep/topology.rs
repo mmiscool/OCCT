@@ -100,7 +100,11 @@ fn load_root_topology_snapshot(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    let face_shapes = attach_single_face_offset_metadata(
+        context,
+        shape,
+        context.subshapes_occt(shape, ShapeKind::Face)?,
+    )?;
     let prepared_face_shapes = face_shapes
         .iter()
         .enumerate()
@@ -139,6 +143,29 @@ fn load_root_topology_snapshot(
         wire_vertices,
         wire_vertex_indices,
     }))
+}
+
+fn attach_single_face_offset_metadata(
+    context: &Context,
+    shape: &Shape,
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
+    let Some(metadata) = shape.single_face_offset_result_metadata() else {
+        return Ok(face_shapes);
+    };
+    if face_shapes.len() != 1 {
+        return Ok(face_shapes);
+    }
+
+    let mut face_shapes = face_shapes;
+    let face_shape = face_shapes
+        .pop()
+        .expect("length was checked before popping single offset face");
+    if context.face_geometry_occt(&face_shape)?.kind != crate::SurfaceKind::Offset {
+        return Ok(vec![face_shape]);
+    }
+
+    Ok(vec![face_shape.with_offset_surface_face_metadata(metadata)])
 }
 
 pub(super) fn load_ported_topology(
