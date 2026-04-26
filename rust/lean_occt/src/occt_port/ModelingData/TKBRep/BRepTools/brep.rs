@@ -123,7 +123,6 @@ pub enum OffsetFaceBboxSource {
     ValidatedMesh,
     ValidatedFaceBrep,
     SummaryFaceBrep,
-    OcctFaceUnion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
