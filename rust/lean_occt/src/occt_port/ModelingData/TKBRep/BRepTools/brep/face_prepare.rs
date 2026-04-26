@@ -24,7 +24,7 @@ pub(super) fn prepare_face_surface_with_geometry(
     route: FaceSurfaceRoute,
 ) -> Result<PreparedFaceSurface, Error> {
     let ported_surface =
-        PortedSurface::from_context_with_geometry(context, face_shape, face_geometry)?;
+        PortedSurface::from_context_with_ported_payloads(context, face_shape, face_geometry)?;
     let ported_face_surface = ported_face_surface_descriptor_from_surface_with_route(
         context,
         face_shape,

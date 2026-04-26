@@ -5,9 +5,9 @@ use std::f64::consts::PI;
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
     ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams, OffsetShellBboxSource,
-    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams,
-    RevolutionParams, Shape, ShapeKind, SphereParams, SummaryBboxSource, SummaryVolumeSource,
-    SurfaceKind, ThroughHoleCut, TorusParams,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
+    PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SummaryBboxSource,
+    SummaryVolumeSource, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -289,6 +289,190 @@ fn assert_ported_face_surface_matches_public(
         ))
         .into()),
     }
+}
+
+fn assert_ported_surface_kind(
+    surface: PortedSurface,
+    expected_kind: SurfaceKind,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (expected_kind, surface) {
+        (SurfaceKind::Plane, PortedSurface::Plane(_))
+        | (SurfaceKind::Cylinder, PortedSurface::Cylinder(_))
+        | (SurfaceKind::Cone, PortedSurface::Cone(_))
+        | (SurfaceKind::Sphere, PortedSurface::Sphere(_))
+        | (SurfaceKind::Torus, PortedSurface::Torus(_)) => Ok(()),
+        _ => Err(std::io::Error::other(format!(
+            "{label} expected {expected_kind:?} analytic surface, got {surface:?}"
+        ))
+        .into()),
+    }
+}
+
+fn assert_brep_analytic_faces_use_rust_surface_route(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    brep: &lean_occt::BrepShape,
+    expected_kind: SurfaceKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let face_shapes = kernel.context().subshapes(shape, ShapeKind::Face)?;
+    if face_shapes.len() != brep.faces.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} face inventory mismatch: public={} brep={}",
+            face_shapes.len(),
+            brep.faces.len()
+        ))
+        .into());
+    }
+
+    let mut matched_faces = 0usize;
+    for (index, face_shape) in face_shapes.iter().enumerate() {
+        let public_geometry = kernel.context().face_geometry(face_shape)?;
+        if public_geometry.kind != expected_kind {
+            continue;
+        }
+        matched_faces += 1;
+
+        let actual_face = brep
+            .faces
+            .get(index)
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep face {index}")))?;
+        let surface = actual_face.ported_surface.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} face {index} did not populate BrepFace::ported_surface"
+            ))
+        })?;
+        assert_ported_surface_kind(
+            surface,
+            expected_kind,
+            &format!("{label} face {index} ported surface"),
+        )?;
+
+        let descriptor_surface = match actual_face.ported_face_surface {
+            Some(PortedFaceSurface::Analytic(surface)) => surface,
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "{label} face {index} expected analytic face descriptor, got {other:?}"
+                ))
+                .into())
+            }
+        };
+        assert_same_variant(
+            &descriptor_surface,
+            &surface,
+            &format!("{label} face {index} analytic descriptor"),
+        )?;
+
+        let raw_geometry = kernel.context().face_geometry_occt(face_shape)?;
+        if raw_geometry.kind != expected_kind {
+            return Err(std::io::Error::other(format!(
+                "{label} face {index} raw geometry kind mismatch: raw={:?} expected={expected_kind:?}",
+                raw_geometry.kind
+            ))
+            .into());
+        }
+        assert_face_geometry_close(
+            actual_face.geometry,
+            raw_geometry,
+            1.0e-9,
+            &format!("{label} face {index} raw geometry"),
+        )?;
+
+        let raw_surface =
+            PortedSurface::from_context_with_geometry(kernel.context(), face_shape, raw_geometry)?
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "{label} face {index} raw geometry route returned no ported surface"
+                    ))
+                })?;
+        assert_same_variant(
+            &raw_surface,
+            &surface,
+            &format!("{label} face {index} raw surface route"),
+        )?;
+
+        let uv_t = [0.37, 0.61];
+        let surface_sample = surface.sample_normalized_with_orientation(
+            actual_face.geometry,
+            uv_t,
+            actual_face.orientation,
+        );
+        let descriptor_sample = descriptor_surface.sample_normalized_with_orientation(
+            actual_face.geometry,
+            uv_t,
+            actual_face.orientation,
+        );
+        let raw_sample = raw_surface.sample_normalized_with_orientation(
+            raw_geometry,
+            uv_t,
+            actual_face.orientation,
+        );
+        let occt_sample = kernel
+            .context()
+            .face_sample_normalized_occt(face_shape, uv_t)?;
+        assert_vec3_close(
+            surface_sample.position,
+            descriptor_sample.position,
+            1.0e-12,
+            &format!("{label} face {index} descriptor sample position"),
+        )?;
+        assert_vec3_close(
+            surface_sample.normal,
+            descriptor_sample.normal,
+            1.0e-12,
+            &format!("{label} face {index} descriptor sample normal"),
+        )?;
+        assert_vec3_close(
+            surface_sample.position,
+            raw_sample.position,
+            1.0e-8,
+            &format!("{label} face {index} raw route sample position"),
+        )?;
+        assert_vec3_close(
+            surface_sample.normal,
+            raw_sample.normal,
+            1.0e-8,
+            &format!("{label} face {index} raw route sample normal"),
+        )?;
+        assert_vec3_close(
+            surface_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{label} face {index} OCCT sample position"),
+        )?;
+        assert_vec3_close(
+            surface_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{label} face {index} OCCT sample normal"),
+        )?;
+
+        let expected_area = kernel
+            .context()
+            .ported_face_area(face_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} face {index} did not produce a ported face area"
+                ))
+            })?;
+        if (actual_face.area - expected_area).abs() > 1.0e-8 {
+            return Err(std::io::Error::other(format!(
+                "{label} face {index} area mismatch: brep={} public={expected_area}",
+                actual_face.area
+            ))
+            .into());
+        }
+    }
+
+    if matched_faces == 0 {
+        return Err(std::io::Error::other(format!(
+            "{label} did not expose any {expected_kind:?} faces"
+        ))
+        .into());
+    }
+
+    Ok(())
 }
 
 fn assert_topology_matches(
@@ -1058,37 +1242,49 @@ fn ported_brep_uses_exact_primitive_surface_and_volume_formulas(
             2.0 * (20.0 * 30.0 + 20.0 * 40.0 + 30.0 * 40.0),
             20.0 * 30.0 * 40.0,
             "primitive_box",
+            SurfaceKind::Plane,
         ),
         (
             "cylinder",
             2.0 * PI * 6.0 * (18.0 + 6.0),
             PI * 6.0 * 6.0 * 18.0,
             "primitive_cylinder",
+            SurfaceKind::Cylinder,
         ),
         (
             "cone",
             PI * (9.0 + 3.0) * cone_slant + PI * (9.0 * 9.0 + 3.0 * 3.0),
             PI * 15.0 * (9.0 * 9.0 + 9.0 * 3.0 + 3.0 * 3.0) / 3.0,
             "primitive_cone",
+            SurfaceKind::Cone,
         ),
         (
             "sphere",
             4.0 * PI * 7.0 * 7.0,
             4.0 * PI * 7.0 * 7.0 * 7.0 / 3.0,
             "primitive_sphere",
+            SurfaceKind::Sphere,
         ),
         (
             "torus",
             4.0 * PI * PI * 15.0 * 4.0,
             2.0 * PI * PI * 15.0 * 4.0 * 4.0,
             "primitive_torus",
+            SurfaceKind::Torus,
         ),
     ];
 
-    for (name, expected_area, expected_volume, artifact_name) in expected {
+    for (name, expected_area, expected_volume, artifact_name, expected_surface_kind) in expected {
         let artifact =
             support::export_document_shape(&mut document, name, "brep_workflows", artifact_name)?;
         let brep = document.brep(name)?;
+        assert_brep_analytic_faces_use_rust_surface_route(
+            document.kernel(),
+            name,
+            document.shape(name)?,
+            &brep,
+            expected_surface_kind,
+        )?;
         let summary = document.summary(name)?;
         let occt_summary = document
             .kernel()

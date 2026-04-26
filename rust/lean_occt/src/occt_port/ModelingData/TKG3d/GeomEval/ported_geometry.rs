@@ -304,29 +304,28 @@ impl PortedSurface {
         shape: &Shape,
         geometry: FaceGeometry,
     ) -> Result<Option<Self>, Error> {
+        Self::from_context_with_ported_payloads(context, shape, geometry)
+    }
+
+    pub(crate) fn from_context_with_ported_payloads(
+        context: &Context,
+        shape: &Shape,
+        geometry: FaceGeometry,
+    ) -> Result<Option<Self>, Error> {
         match geometry.kind {
             SurfaceKind::Plane => {
-                if let Some(payload) = ported_plane_payload(context, shape, geometry)? {
-                    return Ok(Some(Self::Plane(payload)));
-                }
-                Ok(context.face_plane_payload_occt(shape).ok().map(Self::Plane))
+                Ok(ported_plane_payload(context, shape, geometry)?.map(Self::Plane))
             }
-            SurfaceKind::Cylinder => Ok(Some(Self::Cylinder(
-                ported_cylinder_payload(context, shape, geometry)?
-                    .unwrap_or(context.face_cylinder_payload_occt(shape)?),
-            ))),
-            SurfaceKind::Cone => Ok(Some(Self::Cone(
-                ported_cone_payload(context, shape, geometry)?
-                    .unwrap_or(context.face_cone_payload_occt(shape)?),
-            ))),
-            SurfaceKind::Sphere => Ok(Some(Self::Sphere(
-                ported_sphere_payload(context, shape, geometry)?
-                    .unwrap_or(context.face_sphere_payload_occt(shape)?),
-            ))),
-            SurfaceKind::Torus => Ok(Some(Self::Torus(
-                ported_torus_payload(context, shape, geometry)?
-                    .unwrap_or(context.face_torus_payload_occt(shape)?),
-            ))),
+            SurfaceKind::Cylinder => {
+                Ok(ported_cylinder_payload(context, shape, geometry)?.map(Self::Cylinder))
+            }
+            SurfaceKind::Cone => Ok(ported_cone_payload(context, shape, geometry)?.map(Self::Cone)),
+            SurfaceKind::Sphere => {
+                Ok(ported_sphere_payload(context, shape, geometry)?.map(Self::Sphere))
+            }
+            SurfaceKind::Torus => {
+                Ok(ported_torus_payload(context, shape, geometry)?.map(Self::Torus))
+            }
             _ => Ok(None),
         }
     }
