@@ -2183,7 +2183,7 @@ impl Context {
             return Ok(surface);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
+        let geometry = self.face_geometry(shape)?;
         if geometry.kind != SurfaceKind::Offset {
             return Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Offset,

@@ -2328,6 +2328,25 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             revolution_direct_offset_face,
         ),
     ] {
+        let public_geometry = context.face_geometry(&offset_face)?;
+        let ported_geometry = context
+            .ported_face_geometry(&offset_face)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust face geometry")))?;
+        let occt_geometry = context.face_geometry_occt(&offset_face)?;
+        assert_eq!(public_geometry.kind, SurfaceKind::Offset);
+        assert_face_geometry_close(
+            public_geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} public offset geometry"),
+        )?;
+        assert_face_geometry_close(
+            public_geometry,
+            occt_geometry,
+            1.0e-12,
+            &format!("{label} offset occt geometry"),
+        )?;
+
         let offset_surface = require_ported_offset_face_surface(
             context.ported_face_surface_descriptor(&offset_face)?,
             &format!("{label} offset public payload"),

@@ -877,7 +877,7 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<Option<PortedOffsetSurface>, Error> {
-        let geometry = self.face_geometry_occt(shape)?;
+        let geometry = self.face_geometry(shape)?;
         self.ported_offset_surface_with_geometry(shape, geometry)
     }
 
