@@ -1770,14 +1770,23 @@ impl Context {
         }
     }
 
+    fn ported_edge_curve_payload(
+        &self,
+        shape: &Shape,
+        expected: CurveKind,
+    ) -> Result<PortedCurve, Error> {
+        let geometry = self.edge_geometry(shape)?;
+        PortedCurve::from_context_with_ported_payloads(self, shape, geometry)?
+            .ok_or_else(|| unsupported_ported_curve_payload_error(expected, geometry.kind))
+    }
+
     pub fn edge_line_payload(&self, shape: &Shape) -> Result<LinePayload, Error> {
-        match self.ported_edge_curve(shape)? {
-            Some(PortedCurve::Line(payload)) => Ok(payload),
-            Some(curve) => Err(mismatched_ported_curve_payload_error(
+        match self.ported_edge_curve_payload(shape, CurveKind::Line)? {
+            PortedCurve::Line(payload) => Ok(payload),
+            curve => Err(mismatched_ported_curve_payload_error(
                 CurveKind::Line,
                 ported_curve_kind(curve),
             )),
-            None => self.edge_line_payload_occt(shape),
         }
     }
 
@@ -1804,13 +1813,12 @@ impl Context {
     }
 
     pub fn edge_circle_payload(&self, shape: &Shape) -> Result<CirclePayload, Error> {
-        match self.ported_edge_curve(shape)? {
-            Some(PortedCurve::Circle(payload)) => Ok(payload),
-            Some(curve) => Err(mismatched_ported_curve_payload_error(
+        match self.ported_edge_curve_payload(shape, CurveKind::Circle)? {
+            PortedCurve::Circle(payload) => Ok(payload),
+            curve => Err(mismatched_ported_curve_payload_error(
                 CurveKind::Circle,
                 ported_curve_kind(curve),
             )),
-            None => self.edge_circle_payload_occt(shape),
         }
     }
 
@@ -1843,13 +1851,12 @@ impl Context {
     }
 
     pub fn edge_ellipse_payload(&self, shape: &Shape) -> Result<EllipsePayload, Error> {
-        match self.ported_edge_curve(shape)? {
-            Some(PortedCurve::Ellipse(payload)) => Ok(payload),
-            Some(curve) => Err(mismatched_ported_curve_payload_error(
+        match self.ported_edge_curve_payload(shape, CurveKind::Ellipse)? {
+            PortedCurve::Ellipse(payload) => Ok(payload),
+            curve => Err(mismatched_ported_curve_payload_error(
                 CurveKind::Ellipse,
                 ported_curve_kind(curve),
             )),
-            None => self.edge_ellipse_payload_occt(shape),
         }
     }
 
@@ -3430,6 +3437,12 @@ fn ported_face_surface_descriptor_kind(surface: PortedFaceSurface) -> SurfaceKin
 fn mismatched_ported_curve_payload_error(expected: CurveKind, actual: CurveKind) -> Error {
     Error::new(format!(
         "requested {expected:?} payload for ported {actual:?} edge"
+    ))
+}
+
+fn unsupported_ported_curve_payload_error(expected: CurveKind, actual: CurveKind) -> Error {
+    Error::new(format!(
+        "Rust-owned {expected:?} edge payload extraction did not cover {actual:?} edge"
     ))
 }
 

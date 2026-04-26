@@ -50,6 +50,32 @@ fn find_first_face_by_kind(
     Err(std::io::Error::other(format!("expected face with surface kind {:?}", kind)).into())
 }
 
+fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
+    match curve {
+        PortedCurve::Line(_) => CurveKind::Line,
+        PortedCurve::Circle(_) => CurveKind::Circle,
+        PortedCurve::Ellipse(_) => CurveKind::Ellipse,
+    }
+}
+
+fn require_ported_edge_curve(
+    curve: Option<PortedCurve>,
+    expected: CurveKind,
+    label: &str,
+) -> Result<PortedCurve, Box<dyn std::error::Error>> {
+    let curve = curve
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust curve descriptor")))?;
+    let actual = ported_curve_kind(curve);
+    if actual == expected {
+        Ok(curve)
+    } else {
+        Err(std::io::Error::other(format!(
+            "{label} expected Rust {expected:?} descriptor, got {actual:?}"
+        ))
+        .into())
+    }
+}
+
 fn ported_surface_kind(surface: PortedSurface) -> SurfaceKind {
     match surface {
         PortedSurface::Plane(_) => SurfaceKind::Plane,
@@ -1608,93 +1634,93 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     let context = kernel.context();
 
     let line_edge = find_first_edge_by_kind(&kernel, &cut, CurveKind::Line)?;
+    let line_descriptor = require_ported_edge_curve(
+        context.ported_edge_curve(&line_edge)?,
+        CurveKind::Line,
+        "line public payload",
+    )?;
     let line_payload = context.edge_line_payload(&line_edge)?;
+    let PortedCurve::Line(line_descriptor_payload) = line_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_line_payload_close(
+        line_payload,
+        line_descriptor_payload,
+        1.0e-12,
+        "line public descriptor payload",
+    )?;
     let line_payload_occt = context.edge_line_payload_occt(&line_edge)?;
-    assert_vec3_close(
-        line_payload.origin,
-        line_payload_occt.origin,
+    assert_line_payload_close(
+        line_payload,
+        line_payload_occt,
         1.0e-12,
-        "line payload origin",
+        "line public occt payload",
     )?;
-    assert_vec3_close(
-        line_payload.direction,
-        line_payload_occt.direction,
-        1.0e-12,
-        "line payload direction",
-    )?;
+    let error = context
+        .edge_circle_payload(&line_edge)
+        .expect_err("line edge should reject circle payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Circle payload for ported Line edge"));
 
     let circle_edge = find_first_edge_by_kind(&kernel, &cut, CurveKind::Circle)?;
+    let circle_descriptor = require_ported_edge_curve(
+        context.ported_edge_curve(&circle_edge)?,
+        CurveKind::Circle,
+        "circle public payload",
+    )?;
     let circle_payload = context.edge_circle_payload(&circle_edge)?;
+    let PortedCurve::Circle(circle_descriptor_payload) = circle_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_circle_payload_close(
+        circle_payload,
+        circle_descriptor_payload,
+        1.0e-12,
+        "circle public descriptor payload",
+    )?;
     let circle_payload_occt = context.edge_circle_payload_occt(&circle_edge)?;
-    assert_vec3_close(
-        circle_payload.center,
-        circle_payload_occt.center,
+    assert_circle_payload_close(
+        circle_payload,
+        circle_payload_occt,
         1.0e-12,
-        "circle payload center",
+        "circle public occt payload",
     )?;
-    assert_vec3_close(
-        circle_payload.normal,
-        circle_payload_occt.normal,
-        1.0e-12,
-        "circle payload normal",
-    )?;
-    assert_vec3_close(
-        circle_payload.x_direction,
-        circle_payload_occt.x_direction,
-        1.0e-12,
-        "circle payload x direction",
-    )?;
-    assert_vec3_close(
-        circle_payload.y_direction,
-        circle_payload_occt.y_direction,
-        1.0e-12,
-        "circle payload y direction",
-    )?;
-    assert_scalar_close(
-        circle_payload.radius,
-        circle_payload_occt.radius,
-        1.0e-12,
-        "circle payload radius",
-    )?;
+    let error = context
+        .edge_line_payload(&circle_edge)
+        .expect_err("circle edge should reject line payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Line payload for ported Circle edge"));
 
+    let ellipse_descriptor = require_ported_edge_curve(
+        context.ported_edge_curve(&ellipse_edge)?,
+        CurveKind::Ellipse,
+        "ellipse public payload",
+    )?;
     let ellipse_payload = context.edge_ellipse_payload(&ellipse_edge)?;
+    let PortedCurve::Ellipse(ellipse_descriptor_payload) = ellipse_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_ellipse_payload_close(
+        ellipse_payload,
+        ellipse_descriptor_payload,
+        1.0e-12,
+        "ellipse public descriptor payload",
+    )?;
     let ellipse_payload_occt = context.edge_ellipse_payload_occt(&ellipse_edge)?;
-    assert_vec3_close(
-        ellipse_payload.center,
-        ellipse_payload_occt.center,
+    assert_ellipse_payload_close(
+        ellipse_payload,
+        ellipse_payload_occt,
         1.0e-12,
-        "ellipse payload center",
+        "ellipse public occt payload",
     )?;
-    assert_vec3_close(
-        ellipse_payload.normal,
-        ellipse_payload_occt.normal,
-        1.0e-12,
-        "ellipse payload normal",
-    )?;
-    assert_vec3_close(
-        ellipse_payload.x_direction,
-        ellipse_payload_occt.x_direction,
-        1.0e-12,
-        "ellipse payload x direction",
-    )?;
-    assert_vec3_close(
-        ellipse_payload.y_direction,
-        ellipse_payload_occt.y_direction,
-        1.0e-12,
-        "ellipse payload y direction",
-    )?;
-    assert_scalar_close(
-        ellipse_payload.major_radius,
-        ellipse_payload_occt.major_radius,
-        1.0e-12,
-        "ellipse payload major radius",
-    )?;
-    assert_scalar_close(
-        ellipse_payload.minor_radius,
-        ellipse_payload_occt.minor_radius,
-        1.0e-12,
-        "ellipse payload minor radius",
-    )?;
+    let error = context
+        .edge_line_payload(&ellipse_edge)
+        .expect_err("ellipse edge should reject line payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Line payload for ported Ellipse edge"));
 
     let plane_face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?;
     let plane_descriptor = require_ported_analytic_face_surface(
