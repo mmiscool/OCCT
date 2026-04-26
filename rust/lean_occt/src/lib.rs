@@ -1643,6 +1643,7 @@ impl Context {
     }
 
     pub fn make_torus(&self, params: TorusParams) -> Result<Shape, Error> {
+        let rust_metadata = torus_analytic_result_metadata(params);
         let raw_params = ffi::LeanOcctTorusParams {
             x: params.origin[0],
             y: params.origin[1],
@@ -1658,7 +1659,7 @@ impl Context {
         };
 
         let raw = unsafe { ffi::lean_occt_shape_make_torus(self.raw.as_ptr(), &raw_params) };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_ellipse_edge(&self, params: EllipseEdgeParams) -> Result<Shape, Error> {
@@ -4849,6 +4850,55 @@ fn sphere_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> 
         is_v_periodic: false,
         u_period: TAU,
         v_period: 0.0,
+    }
+}
+
+fn torus_analytic_result_metadata(params: TorusParams) -> ShapeRustMetadata {
+    match torus_analytic_face_metadata_inventory(params) {
+        Some(inventory) if !inventory.is_empty() => {
+            ShapeRustMetadata::MultiFaceAnalyticResult(inventory)
+        }
+        _ => ShapeRustMetadata::None,
+    }
+}
+
+fn torus_analytic_face_metadata_inventory(
+    params: TorusParams,
+) -> Option<Vec<AnalyticSurfaceFaceMetadata>> {
+    if !params.origin.iter().all(|value| value.is_finite())
+        || !params.axis.iter().all(|value| value.is_finite())
+        || !params.x_direction.iter().all(|value| value.is_finite())
+        || vector_norm3(params.axis) <= 1.0e-12
+        || vector_norm3(params.x_direction) <= 1.0e-12
+        || !torus_radius_supported(params.major_radius)
+        || !torus_radius_supported(params.minor_radius)
+        || params.major_radius <= params.minor_radius
+    {
+        return None;
+    }
+
+    Some(vec![AnalyticSurfaceFaceMetadata {
+        geometry_seed: torus_face_geometry_seed(0.0, TAU, 0.0, TAU),
+    }])
+}
+
+fn torus_radius_supported(value: f64) -> bool {
+    value.is_finite() && value > 1.0e-12
+}
+
+fn torus_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
+    FaceGeometry {
+        kind: SurfaceKind::Torus,
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+        is_u_closed: true,
+        is_v_closed: true,
+        is_u_periodic: true,
+        is_v_periodic: true,
+        u_period: TAU,
+        v_period: TAU,
     }
 }
 
