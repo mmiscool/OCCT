@@ -3900,6 +3900,24 @@ impl Shape {
         }
     }
 
+    #[doc(hidden)]
+    pub fn has_rust_offset_surface_face_metadata(&self) -> bool {
+        matches!(
+            self.rust_metadata,
+            ShapeRustMetadata::OffsetSurfaceFace(_) | ShapeRustMetadata::SingleFaceOffsetResult(_)
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn rust_multi_face_offset_source_count(&self) -> Option<usize> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::MultiFaceOffsetResult(metadata) => Some(metadata.len()),
+            ShapeRustMetadata::OffsetSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::None => None,
+        }
+    }
+
     pub(crate) fn with_multi_face_offset_result_metadata(
         mut self,
         metadata: Vec<OffsetSurfaceFaceMetadata>,

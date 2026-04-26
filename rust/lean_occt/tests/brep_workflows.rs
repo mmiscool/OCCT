@@ -3000,6 +3000,160 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn ported_brep_maps_multi_source_swept_offsets_in_rust() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let revolved = kernel.make_revolution(
+        &extrusion_face,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let offset = kernel.make_offset(
+        &revolved,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    let context = kernel.context();
+    assert_eq!(
+        offset.rust_multi_face_offset_source_count(),
+        Some(4),
+        "multi-source swept offset should carry the full Rust source-face metadata inventory"
+    );
+    let offset_faces = context
+        .subshapes(&offset, ShapeKind::Face)?
+        .into_iter()
+        .filter_map(|face_shape| match context.face_geometry(&face_shape) {
+            Ok(geometry) if geometry.kind == SurfaceKind::Offset => Some(Ok(face_shape)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        offset_faces.len(),
+        4,
+        "multi-source swept offset should expose the generated OFFSET_SURFACE faces"
+    );
+
+    for (face_index, face_shape) in offset_faces.iter().enumerate() {
+        assert!(
+            face_shape.has_rust_offset_surface_face_metadata(),
+            "multi-source offset face {face_index} should be mapped to a Rust source metadata candidate before public payload queries"
+        );
+        let descriptor = match context.ported_face_surface_descriptor(face_shape)? {
+            Some(PortedFaceSurface::Offset(surface)) => surface,
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "multi-source offset face {face_index} did not expose a Rust descriptor: {other:?}"
+                ))
+                .into());
+            }
+        };
+        assert!(
+            matches!(
+                descriptor.payload.basis_surface_kind,
+                SurfaceKind::Revolution | SurfaceKind::Extrusion
+            ),
+            "multi-source offset face {face_index} should keep the generated swept basis in Rust, got {:?}",
+            descriptor.payload.basis_surface_kind
+        );
+        assert!(
+            matches!(
+                descriptor.basis,
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. })
+                    | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { .. })
+            ),
+            "multi-source offset face {face_index} should expose a swept basis descriptor"
+        );
+        assert!(
+            (descriptor.payload.offset_value.abs() - 2.5).abs() <= 1.0e-9,
+            "multi-source offset face {face_index} descriptor offset drifted"
+        );
+
+        let public_payload = context.face_offset_payload(face_shape)?;
+        assert!(
+            (public_payload.offset_value - descriptor.payload.offset_value).abs() <= 1.0e-9,
+            "multi-source offset face {face_index} public payload should come from the attached Rust descriptor"
+        );
+        assert_eq!(
+            public_payload.basis_surface_kind, descriptor.payload.basis_surface_kind,
+            "multi-source offset face {face_index} public payload basis drifted"
+        );
+        assert_eq!(
+            context.face_offset_basis_geometry(face_shape)?.kind,
+            descriptor.payload.basis_surface_kind,
+            "multi-source offset face {face_index} public basis geometry drifted"
+        );
+
+        let orientation = context.shape_orientation(face_shape)?;
+        let rust_sample = descriptor.sample_normalized_with_orientation([0.37, 0.61], orientation);
+        let occt_sample = context.face_sample_normalized_occt(face_shape, [0.37, 0.61])?;
+        assert_vec3_close(
+            rust_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("multi-source offset face {face_index} descriptor sample position"),
+        )?;
+        assert_vec3_close(
+            rust_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("multi-source offset face {face_index} descriptor sample normal"),
+        )?;
+    }
+
+    for (shell_index, shell_shape) in context
+        .subshapes(&offset, ShapeKind::Shell)?
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            shell_shape.rust_multi_face_offset_source_count(),
+            Some(4),
+            "offset shell {shell_index} should retain the Rust multi-source metadata inventory"
+        );
+        for (face_index, shell_face_shape) in context
+            .subshapes(shell_shape, ShapeKind::Face)?
+            .iter()
+            .enumerate()
+        {
+            if context.face_geometry(shell_face_shape)?.kind != SurfaceKind::Offset {
+                continue;
+            }
+            assert!(
+                shell_face_shape.has_rust_offset_surface_face_metadata(),
+                "offset shell {shell_index} face {face_index} should carry resolved Rust metadata"
+            );
+            assert!(matches!(
+                context.ported_face_surface_descriptor(shell_face_shape)?,
+                Some(PortedFaceSurface::Offset(_))
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ported_brep_uses_rust_owned_bounding_boxes() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;

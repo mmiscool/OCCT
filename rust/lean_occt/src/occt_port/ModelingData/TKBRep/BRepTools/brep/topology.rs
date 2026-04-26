@@ -4,7 +4,11 @@ use super::face_snapshot::{
 };
 use super::wire_topology::{pack_wire_topology, root_wire_topology, PreparedRootWireShape};
 use super::*;
-use crate::OffsetSurfaceFaceMetadata;
+use crate::{OffsetSurfaceFaceMetadata, OffsetSurfacePayload};
+
+const OFFSET_METADATA_MATCH_UV_SAMPLES: [[f64; 2]; 4] =
+    [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]];
+const OFFSET_METADATA_MATCH_SCORE_TOLERANCE: f64 = 1.0e-12;
 
 pub(super) struct PreparedShellShape {
     pub(super) shell_shape: Shape,
@@ -211,8 +215,8 @@ fn attach_multi_face_offset_metadata(
                 return Ok(face_shape);
             }
 
-            let mut matched = None;
-            let mut match_count = 0usize;
+            let mut best_match = None;
+            let mut tied_best_match = false;
             for candidate in metadata.iter().copied() {
                 let signed_candidates = [
                     candidate,
@@ -225,26 +229,80 @@ fn attach_multi_face_offset_metadata(
                     if variant_index == 1 && candidate.offset_value.abs() <= 1.0e-12 {
                         continue;
                     }
-                    match context.ported_offset_surface_from_metadata(&face_shape, signed_candidate)
+                    if let Some(score) =
+                        offset_metadata_match_score(context, &face_shape, signed_candidate)?
                     {
-                        Ok(Some(_)) => {
-                            matched = Some(signed_candidate);
-                            match_count += 1;
+                        match best_match {
+                            None => {
+                                best_match = Some((score, signed_candidate));
+                                tied_best_match = false;
+                            }
+                            Some((best_score, _))
+                                if score + OFFSET_METADATA_MATCH_SCORE_TOLERANCE < best_score =>
+                            {
+                                best_match = Some((score, signed_candidate));
+                                tied_best_match = false;
+                            }
+                            Some((best_score, _))
+                                if (score - best_score).abs()
+                                    <= OFFSET_METADATA_MATCH_SCORE_TOLERANCE =>
+                            {
+                                tied_best_match = true;
+                            }
+                            Some(_) => {}
                         }
-                        Ok(None) | Err(_) => {}
                     }
                 }
             }
 
-            if match_count == 1 {
-                Ok(face_shape.with_offset_surface_face_metadata(
-                    matched.expect("single validated offset metadata match"),
-                ))
+            if let Some((_, matched)) = best_match.filter(|_| !tied_best_match) {
+                Ok(face_shape.with_offset_surface_face_metadata(matched))
             } else {
                 Ok(face_shape)
             }
         })
         .collect()
+}
+
+fn offset_metadata_match_score(
+    context: &Context,
+    face_shape: &Shape,
+    metadata: OffsetSurfaceFaceMetadata,
+) -> Result<Option<f64>, Error> {
+    match context.ported_offset_surface_from_metadata(face_shape, metadata) {
+        Ok(Some(_)) => {}
+        Ok(None) | Err(_) => return Ok(None),
+    }
+
+    let orientation = context.shape_orientation(face_shape)?;
+    let generated_normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+    let source_basis = PortedOffsetSurface {
+        payload: OffsetSurfacePayload {
+            offset_value: 0.0,
+            basis_surface_kind: metadata.basis_geometry.kind,
+        },
+        basis_geometry: metadata.basis_geometry,
+        basis: metadata.basis,
+    };
+
+    let mut score = 0.0;
+    for uv_t in OFFSET_METADATA_MATCH_UV_SAMPLES {
+        let generated_sample = context.face_sample_normalized_occt(face_shape, uv_t)?;
+        let generated_basis_normal = scale3(generated_sample.normal, generated_normal_sign);
+        let generated_basis_position = subtract3(
+            generated_sample.position,
+            scale3(generated_basis_normal, metadata.offset_value),
+        );
+        let source_sample = source_basis.sample_normalized(uv_t);
+        let delta = subtract3(generated_basis_position, source_sample.position);
+        score += dot3(delta, delta);
+    }
+
+    Ok(Some(score))
 }
 
 pub(super) fn load_ported_topology(
