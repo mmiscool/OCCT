@@ -15,20 +15,22 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_snapshot.rs::ported_snapshot_plane_payload()` now uses public `Context::face_geometry(face_shape)?` before Rust-owned `PortedSurface::from_context_with_ported_payloads()` instead of directly calling `context.face_geometry_occt(face_shape)?`. The holed planar BRep regression now verifies the snapshot plane payload through public face geometry rather than a raw geometry route. The grep guard for `face_geometry_occt(face_shape)` in `face_snapshot.rs` is clean, while the single-face and holed-planar topology tests still pass.
-- Active milestone: `M13. Rust-Owned Periodic Edge Geometry Direction`.
-- Next bounded cut: replace the remaining `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs::ported_edge_geometry()` direct `self.edge_sample_occt(shape, 0.0)?.tangent` calls in the circle and ellipse branches with Rust-owned periodic direction inference derived from ported payloads, endpoints, and edge length.
+- Completed evidence: `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs::ported_edge_geometry()` no longer samples OCCT at normalized parameter `0.0` for circle or ellipse tangents. `ported_periodic_curve_geometry()` now reconstructs the signed periodic span from Rust-owned payload endpoint parameters and Rust length evaluation, using the already-loaded edge descriptor parameter span only to break endpoint/length-symmetric periodic ties. Negative full-period spans survive canonicalization, and `ported_curve_sampling_matches_occt` now checks Rust start/end parameter samples against explicit OCCT oracle samples.
+- Active milestone: `M14. Rust-Owned Offset Surface Descriptor Entry`.
+- Next bounded cut: replace `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs::ported_offset_surface()` direct `self.face_geometry_occt(shape)?` entry with the public/Rust-owned `self.face_geometry(shape)?` gate, then strengthen offset descriptor/payload coverage and add a grep guard for that narrowed fallback.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture`
-  - `! rg -n 'face_geometry_occt\(face_shape\)' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_snapshot.rs`
-  - `git diff --check`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_areas_match_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_curve_bounding_boxes -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
+  - `! rg -n 'edge_sample_occt\(shape, 0\.0\)\?\.tangent' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs`
+  - `git diff --check`
 
 ## M1. Rust-Owned Offset Shell Bounding Boxes
 
@@ -178,10 +180,22 @@ Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo chec
 
 Outcome: public/Rust-owned circle and ellipse edge geometry no longer samples OCCT at normalized parameter `0.0` solely to determine periodic direction after Rust payload extraction has already identified the supported curve.
 
-Status: active. `ported_geometry.rs::ported_edge_geometry()` still calls `self.edge_sample_occt(shape, 0.0)?.tangent` in both the circle and ellipse branches before calling `ported_periodic_curve_geometry()`. That direct sample is an exercised OCCT-backed dependency in supported public edge geometry reconstruction.
+Status: complete on 2026-04-26. `ported_geometry.rs::ported_edge_geometry()` no longer calls `self.edge_sample_occt(shape, 0.0)?.tangent` for circle or ellipse edges. `ported_periodic_curve_geometry()` now maps endpoints onto the ported payload, evaluates candidate periodic spans against the Rust-owned curve length, and uses the already-loaded edge descriptor span only as a tie-breaker when endpoints and length are symmetric, such as closed full circles or half-period arcs. Canonicalization now preserves negative full-period spans before snapping periodic endpoints, which keeps reversed closed circles usable in BRep wire area/volume paths.
 
 Definition of done: exercised circle and ellipse public edge geometry derives direction and parameters from Rust-owned payloads, endpoints, and edge length; public curve sampling and BRep exact-curve tests stay green; no `edge_sample_occt(shape, 0.0)?.tangent` call remains in `ported_geometry.rs`.
 
-Bounded tasks: inspect `ported_periodic_curve_geometry()` and the circle/ellipse callers, introduce a Rust-owned periodic direction helper that does not use OCCT sampling, handle full closed and partial periodic arcs, strengthen curve sampling or exact-curve coverage if the stricter path exposes a gap, and add a grep guard for the removed raw tangent sample.
+Bounded tasks: complete. The circle and ellipse callers no longer request raw tangent samples, the shared periodic helper handles closed full-period and partial periodic spans through endpoint/length candidate selection, the start/end parameter regression checks Rust samples against OCCT oracle samples, and the grep guard blocks reintroducing the removed raw tangent dependency.
 
-Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_curve_bounding_boxes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `! rg -n 'edge_sample_occt\(shape, 0\.0\)\?\.tangent' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs`, `git diff --check`.
+Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_areas_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_curve_bounding_boxes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `! rg -n 'edge_sample_occt\(shape, 0\.0\)\?\.tangent' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs`, `git diff --check`.
+
+## M14. Rust-Owned Offset Surface Descriptor Entry
+
+Outcome: public offset surface descriptor and payload entry stop bypassing the M8 public/Rust-owned face geometry gate before reconstructing offset metadata.
+
+Status: active. `ported_geometry.rs::ported_offset_surface()` still starts with `self.face_geometry_occt(shape)?` and then calls `ported_offset_surface_with_geometry()`. That direct raw geometry read is an exercised entry path for public offset payload, offset-basis, and offset sampling queries even though supported face geometry has already been narrowed behind `Context::face_geometry()`.
+
+Definition of done: exercised public offset descriptor/payload queries enter through `Context::face_geometry(shape)?` before offset reconstruction, no direct `face_geometry_occt(shape)?` call remains in `ported_offset_surface()`, and offset surface sampling, offset basis queries, and BRep offset-face regressions stay green.
+
+Bounded tasks: change `ported_offset_surface()` to use public face geometry, confirm the call does not recurse through `ported_offset_surface_with_geometry()`, strengthen offset descriptor or payload coverage around the public entry if needed, and add a grep guard for the removed direct raw geometry call. Leave the deeper `face_offset_payload_occt()` and `face_offset_basis_geometry_occt()` helpers visible as the next offset payload cut instead of mixing two fallback families in one step.
+
+Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_offset_surface_sampling_matches_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `! rg -n 'let geometry = self\.face_geometry_occt\(shape\)\?' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs`, `git diff --check`.

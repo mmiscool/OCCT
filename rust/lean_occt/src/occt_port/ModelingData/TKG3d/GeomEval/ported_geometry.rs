@@ -673,6 +673,15 @@ impl PortedFaceSurface {
     }
 }
 
+fn periodic_edge_direction_preference(geometry: EdgeGeometry) -> Option<f64> {
+    let span = geometry.end_parameter - geometry.start_parameter;
+    if span.abs() > 1.0e-9 {
+        Some(span.signum())
+    } else {
+        None
+    }
+}
+
 impl Context {
     pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
         let geometry = self.edge_geometry_occt(shape)?;
@@ -690,15 +699,14 @@ impl Context {
                 return Ok(None);
             };
             let edge_length = shape.linear_length();
-            let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
+            let direction_preference = periodic_edge_direction_preference(geometry);
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Circle,
                 endpoints,
-                start_tangent,
                 edge_length,
                 TAU,
+                direction_preference,
                 |point| Some(circle_parameter(payload, point)),
-                circle_derivative_from_parameter(payload),
                 |start_parameter, end_parameter| {
                     PortedCurve::Circle(payload).length_with_geometry(EdgeGeometry {
                         kind: CurveKind::Circle,
@@ -717,15 +725,14 @@ impl Context {
                 return Ok(None);
             };
             let edge_length = shape.linear_length();
-            let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
+            let direction_preference = periodic_edge_direction_preference(geometry);
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Ellipse,
                 endpoints,
-                start_tangent,
                 edge_length,
                 TAU,
+                direction_preference,
                 |point| ellipse_parameter(payload, point),
-                ellipse_derivative_from_parameter(payload),
                 |start_parameter, end_parameter| {
                     PortedCurve::Ellipse(payload).length_with_geometry(EdgeGeometry {
                         kind: CurveKind::Ellipse,

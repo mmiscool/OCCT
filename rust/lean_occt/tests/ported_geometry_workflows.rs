@@ -981,6 +981,27 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             1.0e-12,
             label,
         )?;
+        for (parameter_label, parameter) in [
+            ("start", geometry.start_parameter),
+            ("end", geometry.end_parameter),
+        ] {
+            let rust_parameter_sample = ported.sample_with_geometry(geometry, parameter);
+            let occt_parameter_sample = kernel
+                .context()
+                .edge_sample_at_parameter_occt(&edge, parameter)?;
+            assert_vec3_close(
+                rust_parameter_sample.position,
+                occt_parameter_sample.position,
+                1.0e-8,
+                &format!("{label} {parameter_label} parameter position"),
+            )?;
+            assert_vec3_close(
+                rust_parameter_sample.tangent,
+                occt_parameter_sample.tangent,
+                1.0e-8,
+                &format!("{label} {parameter_label} parameter tangent"),
+            )?;
+        }
         let length_tolerance = if label == "ellipse" { 5.0e-2 } else { 1.0e-7 };
         assert!(
             (rust_length - occt_length).abs() <= length_tolerance,
