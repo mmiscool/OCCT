@@ -779,6 +779,10 @@ impl Context {
     }
 
     pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
+        if let Some(geometry) = ported_offset_surface_from_metadata_face_geometry(self, shape)? {
+            return Ok(Some(geometry));
+        }
+
         let raw_geometry = self.face_geometry_occt(shape)?;
 
         if matches!(
@@ -990,6 +994,84 @@ pub(crate) fn ported_swept_face_surface_from_samples(
     geometry: FaceGeometry,
 ) -> Result<Option<PortedSweptSurface>, Error> {
     ported_offset_basis_swept_surface_payload(context, shape, 0.0, geometry)
+}
+
+fn ported_offset_surface_from_metadata_face_geometry(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<FaceGeometry>, Error> {
+    let Some(metadata) = shape.offset_surface_face_metadata() else {
+        return Ok(None);
+    };
+    let surface = match context.ported_offset_surface_from_metadata(shape, metadata) {
+        Ok(Some(surface)) => surface,
+        Ok(None) | Err(_) => return Ok(None),
+    };
+    Ok(Some(ported_offset_surface_face_geometry(
+        surface,
+        metadata.direct_surface_face,
+    )))
+}
+
+fn ported_offset_surface_face_geometry(
+    surface: PortedOffsetSurface,
+    direct_offset_face: bool,
+) -> FaceGeometry {
+    let basis_geometry = surface.basis_geometry;
+    let mut geometry = match surface.basis {
+        PortedOffsetBasisSurface::Analytic(_) => FaceGeometry {
+            kind: SurfaceKind::Offset,
+            ..basis_geometry
+        },
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { .. }) => FaceGeometry {
+            kind: SurfaceKind::Offset,
+            is_v_closed: false,
+            ..basis_geometry
+        },
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. }) => FaceGeometry {
+            kind: SurfaceKind::Offset,
+            is_v_closed: false,
+            ..basis_geometry
+        },
+    };
+
+    if direct_offset_face {
+        geometry = rectangular_trimmed_offset_face_geometry(geometry);
+    }
+
+    geometry
+}
+
+fn rectangular_trimmed_offset_face_geometry(mut geometry: FaceGeometry) -> FaceGeometry {
+    geometry.is_u_periodic =
+        rectangular_trimmed_periodic_span(geometry.u_min, geometry.u_max, geometry.u_period);
+    geometry.u_period = if geometry.is_u_periodic {
+        geometry.u_period
+    } else {
+        0.0
+    };
+    geometry.is_v_periodic =
+        rectangular_trimmed_periodic_span(geometry.v_min, geometry.v_max, geometry.v_period);
+    geometry.v_period = if geometry.is_v_periodic {
+        geometry.v_period
+    } else {
+        0.0
+    };
+    geometry.is_u_closed = geometry.is_u_periodic;
+    geometry.is_v_closed = geometry.is_v_closed && geometry.is_v_periodic;
+    geometry
+}
+
+fn rectangular_trimmed_periodic_span(min: f64, max: f64, period: f64) -> bool {
+    if period <= 0.0 {
+        return false;
+    }
+    let span = max - min;
+    if span <= 1.0e-9 {
+        return false;
+    }
+    let periods = (span / period).round();
+    periods >= 1.0 && (span - periods * period).abs() <= 1.0e-9
 }
 
 fn ported_root_line_edge_geometry_from_normalized_samples(

@@ -4958,6 +4958,23 @@ fn ported_brep_maps_multi_source_swept_offsets_in_rust() -> Result<(), Box<dyn s
             face_shape.has_rust_offset_surface_face_metadata(),
             "multi-source offset face {face_index} should be mapped to a Rust source metadata candidate before public payload queries"
         );
+        let public_geometry = context.face_geometry(face_shape)?;
+        let ported_geometry = context.ported_face_geometry(face_shape)?.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "multi-source offset face {face_index} did not expose Rust-owned face geometry"
+            ))
+        })?;
+        assert_eq!(
+            public_geometry.kind,
+            SurfaceKind::Offset,
+            "multi-source offset face {face_index} public geometry should stay in the offset family"
+        );
+        assert_face_geometry_close(
+            public_geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("multi-source offset face {face_index} Rust-owned geometry"),
+        )?;
         let descriptor = match context.ported_face_surface_descriptor(face_shape)? {
             Some(PortedFaceSurface::Offset(surface)) => surface,
             other => {

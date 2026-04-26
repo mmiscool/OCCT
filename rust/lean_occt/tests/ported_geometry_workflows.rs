@@ -3386,6 +3386,10 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             revolution_direct_offset_face,
         ),
     ] {
+        assert!(
+            offset_face.has_rust_offset_surface_face_metadata(),
+            "{label} offset face geometry should be backed by retained Rust metadata before ported geometry is queried"
+        );
         let public_geometry = context.face_geometry(&offset_face)?;
         let ported_geometry = context
             .ported_face_geometry(&offset_face)?
@@ -3404,6 +3408,18 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             1.0e-12,
             &format!("{label} offset occt geometry"),
         )?;
+        if basis_kind == SurfaceKind::Revolution {
+            assert!(
+                !ported_geometry.is_v_closed,
+                "{label} revolution offset geometry should preserve OCCT's non-closed offset V axis"
+            );
+        }
+        if label == "revolution-direct" {
+            assert!(
+                !ported_geometry.is_u_periodic && ported_geometry.u_period.abs() <= 1.0e-12,
+                "{label} direct rectangular-trimmed offset geometry should not expose a partial revolution as U-periodic"
+            );
+        }
 
         let offset_surface = require_ported_offset_face_surface(
             context.ported_face_surface_descriptor(&offset_face)?,

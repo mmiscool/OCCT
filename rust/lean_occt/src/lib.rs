@@ -1480,6 +1480,7 @@ pub(crate) struct OffsetSurfaceFaceMetadata {
     pub(crate) offset_value: f64,
     pub(crate) basis_geometry: FaceGeometry,
     pub(crate) basis: PortedOffsetBasisSurface,
+    pub(crate) direct_surface_face: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1690,7 +1691,10 @@ impl Context {
     ) -> Result<Shape, Error> {
         let rust_metadata = self
             .offset_surface_face_metadata_candidate(basis_face, params.offset)?
-            .map(ShapeRustMetadata::OffsetSurfaceFace)
+            .map(|mut metadata| {
+                metadata.direct_surface_face = true;
+                ShapeRustMetadata::OffsetSurfaceFace(metadata)
+            })
             .unwrap_or(ShapeRustMetadata::None);
         let raw_params = ffi::LeanOcctOffsetParams {
             offset: params.offset,
@@ -4358,6 +4362,7 @@ impl Context {
             offset_value,
             basis_geometry,
             basis,
+            direct_surface_face: false,
         }))
     }
 
