@@ -106,18 +106,13 @@ impl PortedCurve {
         geometry: EdgeGeometry,
     ) -> Result<Option<Self>, Error> {
         match geometry.kind {
-            CurveKind::Line => Ok(Some(Self::Line(
-                ported_line_payload(context, shape, geometry)?
-                    .unwrap_or(context.edge_line_payload_occt(shape)?),
-            ))),
-            CurveKind::Circle => Ok(Some(Self::Circle(
-                ported_circle_payload(context, shape, geometry)?
-                    .unwrap_or(context.edge_circle_payload_occt(shape)?),
-            ))),
-            CurveKind::Ellipse => Ok(Some(Self::Ellipse(
-                ported_ellipse_payload(context, shape, geometry)?
-                    .unwrap_or(context.edge_ellipse_payload_occt(shape)?),
-            ))),
+            CurveKind::Line => Ok(ported_line_payload(context, shape, geometry)?.map(Self::Line)),
+            CurveKind::Circle => {
+                Ok(ported_circle_payload(context, shape, geometry)?.map(Self::Circle))
+            }
+            CurveKind::Ellipse => {
+                Ok(ported_ellipse_payload(context, shape, geometry)?.map(Self::Ellipse))
+            }
             _ => Ok(None),
         }
     }

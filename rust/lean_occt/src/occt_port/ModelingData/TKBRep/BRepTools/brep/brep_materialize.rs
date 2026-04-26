@@ -50,13 +50,7 @@ pub(super) fn ported_brep_edges(
                 Err(_) => context.edge_geometry_occt(edge_shape)?,
             };
             let ported_curve =
-                match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)
-                {
-                    Ok(ported_curve) => ported_curve,
-                    Err(_) => {
-                        PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?
-                    }
-                };
+                PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?;
             let adjacent_face_indices = adjacent_face_indices(topology, index)?;
             let (start_point, end_point) = edge_points(topology, index);
             let length = match ported_curve {

@@ -5,9 +5,9 @@ use std::f64::consts::PI;
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, LoopRole,
     ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams, OffsetShellBboxSource,
-    PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams, RevolutionParams,
-    Shape, ShapeKind, SphereParams, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
-    ThroughHoleCut, TorusParams,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams,
+    RevolutionParams, Shape, ShapeKind, SphereParams, SummaryBboxSource, SummaryVolumeSource,
+    SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -497,6 +497,138 @@ fn assert_brep_edge_lengths_match(
             ))
             .into());
         }
+    }
+
+    Ok(())
+}
+
+fn assert_brep_ported_curve_matches_public(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    brep: &lean_occt::BrepShape,
+    expected_kind: CurveKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != brep.edges.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} edge inventory mismatch: public={} brep={}",
+            edge_shapes.len(),
+            brep.edges.len()
+        ))
+        .into());
+    }
+
+    let mut matched = 0usize;
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let geometry = kernel.context().edge_geometry(edge_shape)?;
+        if geometry.kind != expected_kind {
+            continue;
+        }
+
+        let actual_edge = brep
+            .edges
+            .get(index)
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep edge {index}")))?;
+        assert_edge_geometry_close(
+            actual_edge.geometry,
+            geometry,
+            1.0e-9,
+            &format!("{label} edge {index} geometry"),
+        )?;
+
+        let actual_curve = actual_edge.ported_curve.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} edge {index} expected ported {expected_kind:?} curve"
+            ))
+        })?;
+        let expected_curve = kernel
+            .context()
+            .ported_edge_curve(edge_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} edge {index} public path expected ported {expected_kind:?} curve"
+                ))
+            })?;
+        assert_same_variant(
+            &actual_curve,
+            &expected_curve,
+            &format!("{label} edge {index} curve"),
+        )?;
+
+        let derived_length = actual_curve.length_with_geometry(actual_edge.geometry);
+        if (actual_edge.length - derived_length).abs() > 1.0e-9 {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} length should come from the ported curve: brep={} derived={derived_length}",
+                actual_edge.length
+            ))
+            .into());
+        }
+
+        let public_length = expected_curve.length_with_geometry(geometry);
+        if (actual_edge.length - public_length).abs() > 1.0e-9 {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} length mismatch: brep={} public={public_length}",
+                actual_edge.length
+            ))
+            .into());
+        }
+
+        let parameter = 0.5 * (geometry.start_parameter + geometry.end_parameter);
+        let actual_sample = actual_curve.sample_with_geometry(actual_edge.geometry, parameter);
+        let occt_sample = kernel
+            .context()
+            .edge_sample_at_parameter_occt(edge_shape, parameter)?;
+        assert_vec3_close(
+            actual_sample.position,
+            occt_sample.position,
+            1.0e-8,
+            &format!("{label} edge {index} sample position"),
+        )?;
+        assert_vec3_close(
+            actual_sample.tangent,
+            occt_sample.tangent,
+            1.0e-8,
+            &format!("{label} edge {index} sample tangent"),
+        )?;
+
+        let occt_length = kernel
+            .context()
+            .describe_shape_occt(edge_shape)?
+            .linear_length;
+        let occt_tolerance = if expected_kind == CurveKind::Ellipse {
+            5.0e-2
+        } else {
+            1.0e-7
+        };
+        if (actual_edge.length - occt_length).abs() > occt_tolerance {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} length drifted from OCCT: brep={} occt={} tol={occt_tolerance}",
+                actual_edge.length,
+                occt_length
+            ))
+            .into());
+        }
+
+        match (expected_kind, actual_curve) {
+            (CurveKind::Line, PortedCurve::Line(_))
+            | (CurveKind::Circle, PortedCurve::Circle(_))
+            | (CurveKind::Ellipse, PortedCurve::Ellipse(_)) => {}
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "{label} edge {index} expected {expected_kind:?} curve, got {actual_curve:?}"
+                ))
+                .into());
+            }
+        }
+        matched += 1;
+    }
+
+    if matched == 0 {
+        return Err(std::io::Error::other(format!(
+            "{label} did not expose any {expected_kind:?} BRep edges"
+        ))
+        .into());
     }
 
     Ok(())
@@ -1108,6 +1240,11 @@ fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::erro
         radius: 5.0,
         height: 14.0,
     })?;
+    let box_shape = kernel.make_box(BoxParams {
+        origin: [-6.0, -4.0, -2.0],
+        size: [12.0, 8.0, 6.0],
+    })?;
+    let line_edge = find_first_edge_by_kind(&kernel, &box_shape, CurveKind::Line)?;
     let circle_face = find_first_face_by_kind(&kernel, &cylinder, SurfaceKind::Plane)?;
     let circle_edge = find_first_edge_by_kind(&kernel, &cylinder, CurveKind::Circle)?;
     let prism = kernel.make_prism(
@@ -1118,6 +1255,7 @@ fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::erro
     )?;
 
     for (label, shape) in [
+        ("line_edge", &line_edge),
         ("ellipse_edge", &ellipse),
         ("circle_face", &circle_face),
         ("circle_edge", &circle_edge),
@@ -1148,6 +1286,15 @@ fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::erro
             occt_summary.bbox_max,
             5.0e-7,
         )?;
+    }
+
+    for (label, shape, expected_kind) in [
+        ("line_edge", &line_edge, CurveKind::Line),
+        ("circle_edge", &circle_edge, CurveKind::Circle),
+        ("ellipse_edge", &ellipse, CurveKind::Ellipse),
+    ] {
+        let brep = kernel.brep(shape)?;
+        assert_brep_ported_curve_matches_public(&kernel, label, shape, &brep, expected_kind)?;
     }
 
     Ok(())

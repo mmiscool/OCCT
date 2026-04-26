@@ -73,13 +73,7 @@ fn single_face_edge_with_route(
                 Err(_) => context.edge_geometry_occt(edge_shape)?,
             };
             let ported_curve =
-                match PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)
-                {
-                    Ok(ported_curve) => ported_curve,
-                    Err(_) => {
-                        PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?
-                    }
-                };
+                PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?;
             (geometry, ported_curve)
         }
     };
