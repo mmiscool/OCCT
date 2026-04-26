@@ -552,6 +552,22 @@ fn assert_offset_swept_basis_curve_close(
                 1.0e-12,
                 &format!("{label} basis ellipse occt payload"),
             )?;
+            let error = context
+                .face_offset_basis_curve_line_payload(offset_face)
+                .expect_err(
+                    "ellipse offset basis curve should reject line payload requests in Rust",
+                );
+            assert!(error.to_string().contains(
+                "requested Line offset-basis curve payload for ported Ellipse offset basis curve"
+            ));
+            let error = context
+                .face_offset_basis_curve_circle_payload(offset_face)
+                .expect_err(
+                    "ellipse offset basis curve should reject circle payload requests in Rust",
+                );
+            assert!(error.to_string().contains(
+                "requested Circle offset-basis curve payload for ported Ellipse offset basis curve"
+            ));
         }
         curve => {
             return Err(std::io::Error::other(format!(

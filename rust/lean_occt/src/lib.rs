@@ -2715,7 +2715,9 @@ impl Context {
                     basis_geometry,
                     ..
                 }) => Ok(basis_geometry),
-                _ => self.face_offset_basis_curve_geometry_occt(shape),
+                basis => Err(unsupported_ported_offset_basis_curve_geometry_error(
+                    ported_offset_basis_surface_kind(basis),
+                )),
             },
             None => self.face_offset_basis_curve_geometry_occt(shape),
         }
@@ -2768,7 +2770,17 @@ impl Context {
                     basis_curve: PortedCurve::Line(payload),
                     ..
                 }) => Ok(payload),
-                _ => self.face_offset_basis_curve_line_payload_occt(shape),
+                PortedOffsetBasisSurface::Swept(
+                    PortedSweptSurface::Revolution { basis_curve, .. }
+                    | PortedSweptSurface::Extrusion { basis_curve, .. },
+                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                    CurveKind::Line,
+                    ported_curve_kind(basis_curve),
+                )),
+                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                    CurveKind::Line,
+                    ported_offset_basis_surface_kind(basis),
+                )),
             },
             None => self.face_offset_basis_curve_line_payload_occt(shape),
         }
@@ -2813,7 +2825,17 @@ impl Context {
                     basis_curve: PortedCurve::Circle(payload),
                     ..
                 }) => Ok(payload),
-                _ => self.face_offset_basis_curve_circle_payload_occt(shape),
+                PortedOffsetBasisSurface::Swept(
+                    PortedSweptSurface::Revolution { basis_curve, .. }
+                    | PortedSweptSurface::Extrusion { basis_curve, .. },
+                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                    CurveKind::Circle,
+                    ported_curve_kind(basis_curve),
+                )),
+                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                    CurveKind::Circle,
+                    ported_offset_basis_surface_kind(basis),
+                )),
             },
             None => self.face_offset_basis_curve_circle_payload_occt(shape),
         }
@@ -2864,7 +2886,17 @@ impl Context {
                     basis_curve: PortedCurve::Ellipse(payload),
                     ..
                 }) => Ok(payload),
-                _ => self.face_offset_basis_curve_ellipse_payload_occt(shape),
+                PortedOffsetBasisSurface::Swept(
+                    PortedSweptSurface::Revolution { basis_curve, .. }
+                    | PortedSweptSurface::Extrusion { basis_curve, .. },
+                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                    CurveKind::Ellipse,
+                    ported_curve_kind(basis_curve),
+                )),
+                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                    CurveKind::Ellipse,
+                    ported_offset_basis_surface_kind(basis),
+                )),
             },
             None => self.face_offset_basis_curve_ellipse_payload_occt(shape),
         }
@@ -3365,6 +3397,30 @@ fn mismatched_ported_offset_basis_payload_error(
 ) -> Error {
     Error::new(format!(
         "requested {expected:?} offset-basis payload for ported {actual:?} offset basis"
+    ))
+}
+
+fn unsupported_ported_offset_basis_curve_geometry_error(actual: SurfaceKind) -> Error {
+    Error::new(format!(
+        "requested offset-basis curve geometry for ported {actual:?} offset basis"
+    ))
+}
+
+fn mismatched_ported_offset_basis_curve_payload_error(
+    expected: CurveKind,
+    actual: CurveKind,
+) -> Error {
+    Error::new(format!(
+        "requested {expected:?} offset-basis curve payload for ported {actual:?} offset basis curve"
+    ))
+}
+
+fn unsupported_ported_offset_basis_curve_payload_error(
+    expected: CurveKind,
+    actual: SurfaceKind,
+) -> Error {
+    Error::new(format!(
+        "requested {expected:?} offset-basis curve payload for ported {actual:?} offset basis"
     ))
 }
 
