@@ -4,35 +4,35 @@ Current milestone: `M49. Rust-Owned Face UV Bounds Seed Narrowing` from `porting
 
 ## Completed Evidence
 
-- M49 direct single-face swept seed cut is complete for exercised edge-source `make_prism()` and `make_revolution()` faces.
-- `make_prism()` and `make_revolution()` now retain `SingleFaceSweptResult` metadata when the source is a supported Rust-owned line/circle/ellipse edge. Extrusion seeds use the source edge parameter span on U and OCCT-compatible `-direction_length..0` bounds on V; revolution seeds use `0..angle_radians` on U and the source edge parameter span on V.
-- Ported topology face enumeration attaches `SweptSurfaceFaceMetadata` only when a swept result exposes exactly one face, avoiding ambiguous multi-face side/cap inventories for this cut.
-- `Context::ported_face_geometry()` now tries `ported_swept_surface_from_metadata_face_geometry(self, shape)?` before `face_uv_bounds_occt(shape)`. The metadata helper validates the swept descriptor from samples using the Rust seed and does not call the raw UV-bounds helper.
-- `ported_swept_surface_sampling_matches_occt` asserts constructor-owned direct swept faces carry Rust swept metadata. `ported_face_geometry_classifies_swept_before_raw_geometry` proves metadata classification runs before the raw UV-bounds seed and blocks raw face-geometry/swept descriptor regressions.
+- M49 direct single-face swept seed cut remains complete for exercised edge-source `make_prism()` and `make_revolution()` faces.
+- M49 multi-face swept seed cut is now complete for the exercised face-source `make_revolution()` side-face path. Face-source sweeps retain conservative `MultiFaceSweptResult` inventories from Rust-owned ellipse edge geometry while edge-source sweeps keep `SingleFaceSweptResult`.
+- Ported topology now propagates multi-face swept inventories through root and shell loading, validates each generated face against candidate swept seeds, and attaches `SweptSurfaceFaceMetadata` only when exactly one seed matches.
+- The swept metadata helper validates normalized OCCT sample positions and oriented normals before accepting a Rust UV seed. This keeps caps, analytic faces, unsupported faces, imported faces, and ambiguous/domain-mismatched faces off swept metadata.
+- `Context::ported_face_geometry()` still consumes swept metadata before `face_uv_bounds_occt(shape)`. The face-source revolution side-face regression now proves the tagged face returns geometry and samples through the Rust path; the face-source prism fixture explicitly guards that its current caps/analytic side faces remain untagged.
 - Verification passed with the exact commands listed below, including the full Rust suite and `git diff --check`.
 
 ## Target
 
-Narrow the remaining M49 raw bounds fallback beyond direct single-face edge sweeps.
+Narrow the remaining M49 raw bounds fallback beyond swept side-face metadata.
 
-`face_uv_bounds_occt(shape)` still seeds metadata-free, imported, unsupported, analytic, and multi-face constructor-owned swept faces. The next useful cut is to carry Rust-owned swept UV seeds onto validated side faces from multi-face constructor-owned swept results while leaving caps on their current analytic/raw-seed path.
+`face_uv_bounds_occt(shape)` still seeds constructor-owned analytic faces, caps, imported faces, unsupported faces, and metadata-free faces. The next useful cut is to carry Rust-owned analytic UV seeds onto a validated generated face inventory while preserving the raw bounds path for unsupported or ambiguous cases.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Extend swept metadata inventory to validated multi-face constructor-owned swept side faces from face-source `make_revolution()` and `make_prism()` fixtures.
-3. Derive source edge parameter spans and sweep ranges in Rust, match generated side faces by descriptor/sample validation, and attach `SweptSurfaceFaceMetadata` only to uniquely validated side faces.
-4. Keep cap and analytic faces on the existing path until a separate analytic seed cut; do not attach swept metadata to caps, imported faces, unsupported faces, or ambiguous matches.
-5. Strengthen regression/source coverage so matched multi-face swept side faces classify before `face_uv_bounds_occt(shape)`.
+2. Extend constructor-owned face metadata to the first analytic UV-seed family, preferably exercised `make_box()` planar faces or the planar/cylindrical cap-side faces that still hit `face_uv_bounds_occt(shape)`.
+3. Derive the generated face geometry seeds from Rust construction data, propagate the inventory through topology loading, and attach metadata only after normalized sample/orientation validation against the generated face.
+4. Keep imported, unsupported, cap/side cases not covered by the new analytic seed, and ambiguous matches on the existing raw bounds path.
+5. Strengthen regression/source coverage so the newly tagged analytic faces classify before `face_uv_bounds_occt(shape)` without weakening the swept metadata guards.
 6. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
 - Do not reintroduce `face_geometry_occt(shape)` inside `Context::ported_face_geometry()`.
 - Keep offset metadata first, swept metadata before `face_uv_bounds_occt(shape)`, and analytic candidates before the generic swept recognizer.
-- Do not silently attach swept metadata to metadata-free, imported, invalid, unsupported, cap, or ambiguous faces.
+- Do not attach swept or analytic metadata to metadata-free, imported, invalid, unsupported, cap/side faces outside the current cut, or ambiguous faces.
 - Preserve explicit raw/oracle face geometry, UV bounds, swept payload, offset payload, basis, and sampling APIs.
-- Keep direct swept, public payload, swept BRep solid, swept-offset metadata, multi-source swept offset, offset-solid volume, source-guard, and full-suite regressions green.
+- Keep direct swept, multi-face swept, public payload, swept BRep solid, swept-offset metadata, multi-source swept offset, offset-solid volume, source-guard, and full-suite regressions green.
 
 ## Verification
 

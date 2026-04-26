@@ -4127,6 +4127,10 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
             angle_radians: PI,
         },
     )?;
+    assert!(
+        revolved.rust_multi_face_swept_source_count().unwrap_or(0) > 0,
+        "face-source revolution should retain Rust swept side-face seeds"
+    );
 
     let artifact = support::export_kernel_shape(
         &kernel,
@@ -4162,6 +4166,10 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         .ok_or_else(|| std::io::Error::other("expected an extrusion face in the revolved solid"))?;
     let extrusion_face = &brep.faces[extrusion_index];
     let extrusion_face_shape = &face_shapes[extrusion_index];
+    assert!(
+        !extrusion_face_shape.has_rust_swept_surface_face_metadata(),
+        "swept revolution cap extrusion face should stay off swept side-face metadata"
+    );
     let extrusion_surface = extrusion_face
         .ported_face_surface
         .ok_or_else(|| std::io::Error::other("expected a ported extrusion descriptor"))?;
@@ -4257,6 +4265,10 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         .ok_or_else(|| std::io::Error::other("expected a revolution face in the revolved solid"))?;
     let revolution_face = &brep.faces[revolution_index];
     let revolution_face_shape = &face_shapes[revolution_index];
+    assert!(
+        revolution_face_shape.has_rust_swept_surface_face_metadata(),
+        "face-source revolution side face should carry a Rust UV seed before raw bounds"
+    );
     let revolution_surface = revolution_face
         .ported_face_surface
         .ok_or_else(|| std::io::Error::other("expected a ported revolution descriptor"))?;

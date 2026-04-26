@@ -954,6 +954,14 @@ impl Context {
     ) -> Result<Option<PortedOffsetSurface>, Error> {
         ported_offset_surface_from_metadata(self, shape, metadata)
     }
+
+    pub(crate) fn ported_swept_face_geometry_from_metadata(
+        &self,
+        shape: &Shape,
+        metadata: SweptSurfaceFaceMetadata,
+    ) -> Result<Option<FaceGeometry>, Error> {
+        ported_swept_face_geometry_from_metadata(self, shape, metadata)
+    }
 }
 
 pub(crate) fn ported_swept_face_surface_from_samples(
@@ -987,10 +995,12 @@ fn ported_swept_face_geometry_from_metadata(
     if ported_swept_surface_kind(surface) != seed_geometry.kind {
         return Ok(None);
     }
-    Ok(Some(ported_swept_face_geometry_from_surface(
-        seed_geometry,
-        surface,
-    )))
+    let geometry = ported_swept_face_geometry_from_surface(seed_geometry, surface);
+    if ported_swept_surface_matches_occt_samples(context, shape, geometry, surface)? {
+        Ok(Some(geometry))
+    } else {
+        Ok(None)
+    }
 }
 
 fn ported_swept_face_geometry_candidate(
@@ -1071,6 +1081,26 @@ fn ported_swept_face_geometry_from_surface(
     }
 
     geometry
+}
+
+fn ported_swept_surface_matches_occt_samples(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+    surface: PortedSweptSurface,
+) -> Result<bool, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+        let expected = context.face_sample_normalized_occt(shape, uv_t)?;
+        let actual = surface.sample_normalized_with_orientation(geometry, uv_t, orientation);
+        if !approx_vec3_eq(actual.position, expected.position, 1.0e-6)
+            || !approx_vec3_eq(actual.normal, expected.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn ported_offset_surface_from_metadata_face_geometry(

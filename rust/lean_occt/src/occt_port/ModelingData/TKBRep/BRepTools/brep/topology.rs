@@ -178,6 +178,9 @@ fn load_root_topology_snapshot(
     let multi_face_offset_metadata = shape
         .multi_face_offset_result_metadata()
         .map(|metadata| metadata.to_vec());
+    let multi_face_swept_metadata = shape
+        .multi_face_swept_result_metadata()
+        .map(|metadata| metadata.to_vec());
     let prepared_shell_shapes = context
         .subshapes_occt(shape, ShapeKind::Shell)?
         .into_iter()
@@ -190,6 +193,12 @@ fn load_root_topology_snapshot(
             let shell_shape = match &multi_face_offset_metadata {
                 Some(metadata) => {
                     shell_shape.with_multi_face_offset_result_metadata(metadata.clone())
+                }
+                None => shell_shape,
+            };
+            let shell_shape = match &multi_face_swept_metadata {
+                Some(metadata) => {
+                    shell_shape.with_multi_face_swept_result_metadata(metadata.clone())
                 }
                 None => shell_shape,
             };
@@ -608,6 +617,10 @@ fn load_root_shell_topology_snapshot(
     let shell_shape = context.duplicate_shape_occt(shape)?;
     let shell_shape = match shape.multi_face_offset_result_metadata() {
         Some(metadata) => shell_shape.with_multi_face_offset_result_metadata(metadata.to_vec()),
+        None => shell_shape,
+    };
+    let shell_shape = match shape.multi_face_swept_result_metadata() {
+        Some(metadata) => shell_shape.with_multi_face_swept_result_metadata(metadata.to_vec()),
         None => shell_shape,
     };
     let face_shapes = match context.root_shell_face_shapes_occt(&shell_shape) {
@@ -1360,7 +1373,7 @@ fn attach_offset_result_face_metadata(
     shape: &Shape,
     face_shapes: Vec<Shape>,
 ) -> Result<Vec<Shape>, Error> {
-    let face_shapes = attach_swept_result_face_metadata(shape, face_shapes);
+    let face_shapes = attach_swept_result_face_metadata(context, shape, face_shapes)?;
 
     if let Some(metadata) = shape.single_face_offset_result_metadata() {
         return attach_single_face_offset_metadata(context, metadata, face_shapes);
@@ -1377,30 +1390,78 @@ fn attach_offset_result_face_metadata(
     Ok(face_shapes)
 }
 
-fn attach_swept_result_face_metadata(shape: &Shape, face_shapes: Vec<Shape>) -> Vec<Shape> {
+fn attach_swept_result_face_metadata(
+    context: &Context,
+    shape: &Shape,
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
     if let Some(metadata) = shape.single_face_swept_result_metadata() {
-        return attach_single_face_swept_metadata(metadata, face_shapes);
+        return attach_single_face_swept_metadata(context, metadata, face_shapes);
+    }
+
+    if let Some(metadata) = shape.multi_face_swept_result_metadata() {
+        return attach_multi_face_swept_metadata(context, metadata, face_shapes);
     }
 
     if let Some(metadata) = shape.swept_surface_face_metadata() {
-        return attach_single_face_swept_metadata(metadata, face_shapes);
+        return attach_single_face_swept_metadata(context, metadata, face_shapes);
     }
 
-    face_shapes
+    Ok(face_shapes)
 }
 
 fn attach_single_face_swept_metadata(
+    context: &Context,
     metadata: SweptSurfaceFaceMetadata,
     face_shapes: Vec<Shape>,
-) -> Vec<Shape> {
+) -> Result<Vec<Shape>, Error> {
     if face_shapes.len() != 1 {
-        return face_shapes;
+        return Ok(face_shapes);
     }
     let mut face_shapes = face_shapes;
     let face_shape = face_shapes
         .pop()
         .expect("length was checked before popping single swept face");
-    vec![face_shape.with_swept_surface_face_metadata(metadata)]
+    match context.ported_swept_face_geometry_from_metadata(&face_shape, metadata) {
+        Ok(Some(_)) => Ok(vec![face_shape.with_swept_surface_face_metadata(metadata)]),
+        Ok(None) | Err(_) => Ok(vec![face_shape]),
+    }
+}
+
+fn attach_multi_face_swept_metadata(
+    context: &Context,
+    metadata: &[SweptSurfaceFaceMetadata],
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
+    if metadata.is_empty() {
+        return Ok(face_shapes);
+    }
+
+    face_shapes
+        .into_iter()
+        .map(|face_shape| {
+            let mut matched = None;
+            let mut ambiguous = false;
+            for candidate in metadata.iter().copied() {
+                match context.ported_swept_face_geometry_from_metadata(&face_shape, candidate) {
+                    Ok(Some(_)) => {
+                        if matched.is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                        matched = Some(candidate);
+                    }
+                    Ok(None) | Err(_) => {}
+                }
+            }
+
+            if let Some(metadata) = matched.filter(|_| !ambiguous) {
+                Ok(face_shape.with_swept_surface_face_metadata(metadata))
+            } else {
+                Ok(face_shape)
+            }
+        })
+        .collect()
 }
 
 pub(super) fn offset_result_face_shapes(

@@ -50,6 +50,25 @@ fn find_first_face_by_kind(
     Err(std::io::Error::other(format!("expected face with surface kind {:?}", kind)).into())
 }
 
+fn find_first_swept_metadata_face_by_kind(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    kind: SurfaceKind,
+) -> Result<Shape, Box<dyn std::error::Error>> {
+    for face in kernel.context().subshapes(shape, ShapeKind::Face)? {
+        if face.has_rust_swept_surface_face_metadata()
+            && kernel.context().face_geometry(&face)?.kind == kind
+        {
+            return Ok(face);
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "expected Rust-seeded swept face with surface kind {:?}",
+        kind
+    ))
+    .into())
+}
+
 fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
     match curve {
         PortedCurve::Line(_) => CurveKind::Line,
@@ -3752,6 +3771,37 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
             angle_radians: PI,
         },
     )?;
+    let source_extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let face_source_prism = kernel.make_prism(
+        &source_extrusion_face,
+        PrismParams {
+            direction: [7.0, 0.0, 11.0],
+        },
+    )?;
+    let face_source_revolution = kernel.make_revolution(
+        &source_extrusion_face,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    assert!(
+        face_source_revolution
+            .rust_multi_face_swept_source_count()
+            .unwrap_or(0)
+            > 0,
+        "face-source revolution should retain Rust swept side-face seeds"
+    );
+    let face_source_prism_faces = kernel
+        .context()
+        .subshapes(&face_source_prism, ShapeKind::Face)?;
+    assert!(
+        face_source_prism_faces
+            .iter()
+            .all(|face| !face.has_rust_swept_surface_face_metadata()),
+        "face-source prism caps and analytic side faces should not receive swept metadata"
+    );
 
     let prism_step = support::export_kernel_shape(
         &kernel,
@@ -3856,6 +3906,71 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
                 &format!("{kind:?} public sample normal at {:?}", uv_t),
             )?;
         }
+    }
+
+    for (shape, kind, label) in [(
+        &face_source_revolution,
+        SurfaceKind::Revolution,
+        "face-source revolution side face",
+    )] {
+        let occt_face = find_first_swept_metadata_face_by_kind(&kernel, shape, kind)?;
+        let geometry = kernel.context().face_geometry(&occt_face)?;
+        let geometry_occt = kernel.context().face_geometry_occt(&occt_face)?;
+        let ported_geometry = kernel
+            .context()
+            .ported_face_geometry(&occt_face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} geometry")))?;
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} ported geometry"),
+        )?;
+        assert_face_geometry_close(
+            geometry,
+            geometry_occt,
+            1.0e-12,
+            &format!("{label} occt geometry"),
+        )?;
+
+        let surface = kernel
+            .context()
+            .ported_face_surface_descriptor(&occt_face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} descriptor")))?;
+        let orientation = kernel.context().shape_orientation(&occt_face)?;
+        let sample =
+            surface.sample_normalized_with_orientation(geometry, [0.37, 0.61], orientation);
+        let public_sample = kernel
+            .context()
+            .ported_face_sample_normalized(&occt_face, [0.37, 0.61])?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} sample")))?;
+        let occt_sample = kernel
+            .context()
+            .face_sample_normalized_occt(&occt_face, [0.37, 0.61])?;
+        assert_vec3_close(
+            sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{label} sample position"),
+        )?;
+        assert_vec3_close(
+            sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{label} sample normal"),
+        )?;
+        assert_vec3_close(
+            public_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("{label} public sample position"),
+        )?;
+        assert_vec3_close(
+            public_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("{label} public sample normal"),
+        )?;
     }
 
     assert!(prism_step.is_file());
