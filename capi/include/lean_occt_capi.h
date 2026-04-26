@@ -626,10 +626,38 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
   size_t               the_endpoint_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_edge_vertex_inventory(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_vertex_point(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
   double*              the_xyz3);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_wire_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_wire(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_edge_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_edge(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_vertex_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_vertex(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t                the_index);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,

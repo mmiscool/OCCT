@@ -61,6 +61,9 @@ fn load_root_topology_snapshot(
     if root_wire_topology_inventory_required(context, shape)? {
         return load_root_wire_topology_snapshot(context, shape);
     }
+    if root_face_topology_inventory_required(context, shape)? {
+        return load_root_face_topology_snapshot(context, shape);
+    }
 
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
     let vertex_positions = vertex_shapes
@@ -315,40 +318,15 @@ fn load_root_wire_topology_snapshot(
     let mut edge_shapes = Vec::new();
     let mut root_edges = Vec::new();
 
-    for edge_shape in &wire_edge_occurrence_shapes {
-        let query = topology_edge_query(context, edge_shape)?;
-        let Some(start_vertex) = root_wire_vertex_index_from_ported_seed(
-            context,
-            edge_shape,
-            0,
-            query.endpoints.start,
-            &mut vertex_shapes,
-            &mut vertex_positions,
-        )?
-        else {
-            return Ok(None);
-        };
-        let Some(end_vertex) = root_wire_vertex_index_from_ported_seed(
-            context,
-            edge_shape,
-            1,
-            query.endpoints.end,
-            &mut vertex_shapes,
-            &mut vertex_positions,
-        )?
-        else {
-            return Ok(None);
-        };
-        let length = topology_edge_length(context, edge_shape, query.geometry)?;
-        if root_wire_existing_edge_index(context, edge_shape, &edge_shapes)?.is_none() {
-            edge_shapes.push(context.duplicate_shape_occt(edge_shape)?);
-            root_edges.push(RootEdgeTopology {
-                geometry: query.geometry,
-                start_vertex: Some(start_vertex),
-                end_vertex: Some(end_vertex),
-                length,
-            });
-        }
+    if !append_root_wire_inventory_from_ported_occurrences(
+        context,
+        &wire_edge_occurrence_shapes,
+        &mut vertex_shapes,
+        &mut vertex_positions,
+        &mut edge_shapes,
+        &mut root_edges,
+    )? {
+        return Ok(None);
     }
 
     let edges = root_edges
@@ -398,33 +376,259 @@ fn load_root_wire_topology_snapshot(
     }))
 }
 
-fn root_wire_vertex_index_from_ported_seed(
+fn root_face_topology_inventory_required(context: &Context, shape: &Shape) -> Result<bool, Error> {
+    let summary = context.describe_shape_occt(shape)?;
+    Ok(summary.root_kind == ShapeKind::Face && summary.face_count == 1 && summary.shell_count == 0)
+}
+
+fn load_root_face_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    let face_shapes = attach_offset_result_face_metadata(
+        context,
+        shape,
+        vec![context.duplicate_shape_occt(shape)?],
+    )?;
+    if face_shapes.len() != 1 {
+        return Ok(None);
+    }
+
+    let root_face_wire_shapes = match context.root_face_wire_shapes_occt(&face_shapes[0]) {
+        Ok(wire_shapes) => wire_shapes,
+        Err(_) => return Ok(None),
+    };
+    let vertex_shapes = match context.root_face_vertex_shapes_occt(&face_shapes[0]) {
+        Ok(vertex_shapes) => vertex_shapes,
+        Err(_) => return Ok(None),
+    };
+    let vertex_positions = vertex_shapes
+        .iter()
+        .map(|vertex_shape| context.root_vertex_point_seed_occt(vertex_shape))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let edge_shapes = match context.root_face_edge_shapes_occt(&face_shapes[0]) {
+        Ok(edge_shapes) => edge_shapes,
+        Err(_) => return Ok(None),
+    };
+    let root_edges = edge_shapes
+        .iter()
+        .map(|edge_shape| root_edge_topology(context, edge_shape, &vertex_positions))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut wire_shapes = Vec::with_capacity(root_face_wire_shapes.len());
+    let mut prepared_face_wire_shapes = Vec::with_capacity(root_face_wire_shapes.len());
+
+    for face_wire_shape in root_face_wire_shapes {
+        let wire_edge_occurrence_shapes = context.wire_edge_occurrences_occt(&face_wire_shape)?;
+        if wire_edge_occurrence_shapes.len() != face_wire_shape.edge_count() {
+            return Ok(None);
+        }
+
+        wire_shapes.push(context.duplicate_shape_occt(&face_wire_shape)?);
+        prepared_face_wire_shapes.push(PreparedRootWireShape {
+            wire_shape: face_wire_shape,
+            wire_edge_occurrence_shapes,
+        });
+    }
+
+    let edges = root_edges
+        .iter()
+        .map(|edge| crate::TopologyEdge {
+            start_vertex: edge.start_vertex,
+            end_vertex: edge.end_vertex,
+            length: edge.length,
+        })
+        .collect::<Vec<_>>();
+
+    let mut root_wires = Vec::with_capacity(prepared_face_wire_shapes.len());
+    for prepared_wire_shape in &prepared_face_wire_shapes {
+        let Some(root_wire) = root_wire_topology(
+            context,
+            prepared_wire_shape,
+            &vertex_positions,
+            &edge_shapes,
+            &root_edges,
+        )?
+        else {
+            return Ok(None);
+        };
+        root_wires.push(root_wire);
+    }
+    let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
+        pack_wire_topology(&root_wires);
+    let prepared_face_shapes = vec![PreparedFaceShape {
+        face_index: 0,
+        face_wire_shapes: prepared_face_wire_shapes,
+    }];
+
+    Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
+        vertex_positions,
+        edge_shapes,
+        wire_shapes,
+        prepared_shell_shapes: Vec::new(),
+        face_shapes,
+        prepared_face_shapes,
+        edges,
+        root_edges,
+        root_wires,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    }))
+}
+
+fn append_root_wire_inventory_from_ported_occurrences(
+    context: &Context,
+    wire_edge_occurrence_shapes: &[Shape],
+    vertex_shapes: &mut Vec<Shape>,
+    vertex_positions: &mut Vec<[f64; 3]>,
+    edge_shapes: &mut Vec<Shape>,
+    root_edges: &mut Vec<RootEdgeTopology>,
+) -> Result<bool, Error> {
+    for edge_shape in wire_edge_occurrence_shapes {
+        let query = topology_edge_query(context, edge_shape)?;
+        let Some((start_vertex, end_vertex)) = root_wire_edge_vertex_indices_from_ported_seed(
+            context,
+            edge_shape,
+            query.endpoints.start,
+            query.endpoints.end,
+            vertex_shapes,
+            vertex_positions,
+        )?
+        else {
+            return Ok(false);
+        };
+        let length = topology_edge_length(context, edge_shape, query.geometry)?;
+        if root_wire_existing_edge_index(context, edge_shape, edge_shapes)?.is_none() {
+            edge_shapes.push(context.duplicate_shape_occt(edge_shape)?);
+            root_edges.push(RootEdgeTopology {
+                geometry: query.geometry,
+                start_vertex: Some(start_vertex),
+                end_vertex: Some(end_vertex),
+                length,
+            });
+        }
+    }
+
+    Ok(true)
+}
+
+fn root_wire_edge_vertex_indices_from_ported_seed(
     context: &Context,
     edge_shape: &Shape,
-    endpoint_index: usize,
-    endpoint: [f64; 3],
+    start_endpoint: [f64; 3],
+    end_endpoint: [f64; 3],
+    vertex_shapes: &mut Vec<Shape>,
+    vertex_positions: &mut Vec<[f64; 3]>,
+) -> Result<Option<(usize, usize)>, Error> {
+    for vertex_index in 0..2 {
+        let vertex_shape = match context.edge_vertex_inventory_shape_occt(edge_shape, vertex_index)
+        {
+            Ok(vertex_shape) => vertex_shape,
+            Err(_) if vertex_index > 0 => break,
+            Err(_) => return Ok(None),
+        };
+        if root_wire_vertex_index_from_inventory_shape(
+            context,
+            vertex_shape,
+            vertex_shapes,
+            vertex_positions,
+        )?
+        .is_none()
+        {
+            return Ok(None);
+        }
+    }
+
+    let first_endpoint_shape = match context.root_edge_vertex_shape_occt(edge_shape, 0) {
+        Ok(vertex_shape) => vertex_shape,
+        Err(_) => return Ok(None),
+    };
+    let last_endpoint_shape = match context.root_edge_vertex_shape_occt(edge_shape, 1) {
+        Ok(vertex_shape) => vertex_shape,
+        Err(_) => return Ok(None),
+    };
+    let Some(first_vertex) =
+        root_wire_existing_vertex_index(context, &first_endpoint_shape, vertex_shapes)?
+    else {
+        return Ok(None);
+    };
+    let Some(last_vertex) =
+        root_wire_existing_vertex_index(context, &last_endpoint_shape, vertex_shapes)?
+    else {
+        return Ok(None);
+    };
+    Ok(root_wire_oriented_vertex_indices(
+        start_endpoint,
+        end_endpoint,
+        first_vertex,
+        last_vertex,
+        vertex_positions,
+    ))
+}
+
+fn root_wire_vertex_index_from_inventory_shape(
+    context: &Context,
+    vertex_shape: Shape,
     vertex_shapes: &mut Vec<Shape>,
     vertex_positions: &mut Vec<[f64; 3]>,
 ) -> Result<Option<usize>, Error> {
-    let vertex_shape = match context.root_edge_vertex_shape_occt(edge_shape, endpoint_index) {
-        Ok(vertex_shape) => vertex_shape,
+    let vertex_position = match context.root_vertex_point_seed_occt(&vertex_shape) {
+        Ok(position) => position,
         Err(_) => return Ok(None),
     };
     for (index, existing_shape) in vertex_shapes.iter().enumerate() {
         if context.shape_is_same_occt(&vertex_shape, existing_shape)? {
-            if root_wire_endpoint_matches_position(vertex_positions[index], endpoint) {
+            if root_wire_endpoint_matches_position(vertex_positions[index], vertex_position) {
                 return Ok(Some(index));
             }
             return Ok(None);
         }
     }
-    if match_vertex_index(vertex_positions, endpoint).is_some() {
+    if match_vertex_index(vertex_positions, vertex_position).is_some() {
         return Ok(None);
     }
 
     vertex_shapes.push(vertex_shape);
-    vertex_positions.push(endpoint);
+    vertex_positions.push(vertex_position);
     Ok(Some(vertex_positions.len() - 1))
+}
+
+fn root_wire_existing_vertex_index(
+    context: &Context,
+    vertex_shape: &Shape,
+    vertex_shapes: &[Shape],
+) -> Result<Option<usize>, Error> {
+    for (index, existing_shape) in vertex_shapes.iter().enumerate() {
+        if context.shape_is_same_occt(vertex_shape, existing_shape)? {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
+fn root_wire_oriented_vertex_indices(
+    start_endpoint: [f64; 3],
+    end_endpoint: [f64; 3],
+    first_vertex: usize,
+    last_vertex: usize,
+    vertex_positions: &[[f64; 3]],
+) -> Option<(usize, usize)> {
+    let first_position = *vertex_positions.get(first_vertex)?;
+    let last_position = *vertex_positions.get(last_vertex)?;
+    if root_wire_endpoint_matches_position(first_position, start_endpoint)
+        && root_wire_endpoint_matches_position(last_position, end_endpoint)
+    {
+        return Some((first_vertex, last_vertex));
+    }
+    if root_wire_endpoint_matches_position(first_position, end_endpoint)
+        && root_wire_endpoint_matches_position(last_position, start_endpoint)
+    {
+        return Some((last_vertex, first_vertex));
+    }
+    None
 }
 
 fn root_wire_existing_edge_index(

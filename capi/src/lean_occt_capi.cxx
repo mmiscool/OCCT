@@ -657,6 +657,31 @@ static TopoDS_Edge indexedWireEdgeOccurrence(const TopoDS_Wire& the_wire, std::s
   throw std::out_of_range("Requested wire edge occurrence index was out of range.");
 }
 
+static std::size_t countRootFaceWires(const TopoDS_Face& the_face)
+{
+  std::size_t a_count = 0;
+  for (TopExp_Explorer a_wire_exp(the_face, TopAbs_WIRE); a_wire_exp.More(); a_wire_exp.Next())
+  {
+    ++a_count;
+  }
+  return a_count;
+}
+
+static TopoDS_Wire indexedRootFaceWire(const TopoDS_Face& the_face, std::size_t the_index)
+{
+  std::size_t a_current_index = 0;
+  for (TopExp_Explorer a_wire_exp(the_face, TopAbs_WIRE); a_wire_exp.More();
+       a_wire_exp.Next(), ++a_current_index)
+  {
+    if (a_current_index == the_index)
+    {
+      return TopoDS::Wire(a_wire_exp.Current());
+    }
+  }
+
+  throw std::out_of_range("Requested root face wire index was out of range.");
+}
+
 static uint32_t toUInt32(std::size_t the_value)
 {
   if (the_value > static_cast<std::size_t>(UINT32_MAX))
@@ -3029,6 +3054,16 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex
   });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_edge_vertex_inventory(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireEdgeShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_vertex_point(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
@@ -3046,6 +3081,66 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_vertex_poin
 
     writePoint(the_xyz3, BRep_Tool::Pnt(requireVertexShape(the_shape)));
     return LEAN_OCCT_RESULT_OK;
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_wire_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root face wire count output pointer was null.", [&](size_t& the_result) {
+    the_result = countRootFaceWires(requireFaceShape(the_shape));
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_wire(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedRootFaceWire(requireFaceShape(the_shape), the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_edge_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root face edge count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireFaceShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_edge(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireFaceShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_face_vertex_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root face vertex count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireFaceShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_vertex(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireFaceShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
   });
 }
 
