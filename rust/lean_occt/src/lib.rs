@@ -2086,6 +2086,27 @@ impl Context {
             .ok_or_else(|| unsupported_ported_surface_payload_error(expected, geometry.kind))
     }
 
+    fn ported_swept_face_surface_payload(
+        &self,
+        shape: &Shape,
+        expected: SurfaceKind,
+    ) -> Result<PortedFaceSurface, Error> {
+        if let Some(surface) = self.ported_face_surface_descriptor(shape)? {
+            return Ok(surface);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if geometry.kind != expected {
+            return Err(mismatched_ported_surface_payload_error(
+                expected,
+                geometry.kind,
+            ));
+        }
+
+        brep::ported_face_surface_descriptor(self, shape, geometry)?
+            .ok_or_else(|| unsupported_ported_surface_payload_error(expected, geometry.kind))
+    }
+
     pub fn face_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
         match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Plane)? {
             PortedSurface::Plane(payload) => Ok(payload),
@@ -2282,15 +2303,12 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<RevolutionSurfacePayload, Error> {
-        match self.ported_face_surface_descriptor(shape)? {
-            Some(PortedFaceSurface::Swept(PortedSweptSurface::Revolution { payload, .. })) => {
-                Ok(payload)
-            }
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_swept_face_surface_payload(shape, SurfaceKind::Revolution)? {
+            PortedFaceSurface::Swept(PortedSweptSurface::Revolution { payload, .. }) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Revolution,
                 ported_face_surface_descriptor_kind(surface),
             )),
-            None => self.face_revolution_payload_occt(shape),
         }
     }
 
@@ -2322,15 +2340,12 @@ impl Context {
     }
 
     pub fn face_extrusion_payload(&self, shape: &Shape) -> Result<ExtrusionSurfacePayload, Error> {
-        match self.ported_face_surface_descriptor(shape)? {
-            Some(PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { payload, .. })) => {
-                Ok(payload)
-            }
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_swept_face_surface_payload(shape, SurfaceKind::Extrusion)? {
+            PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { payload, .. }) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Extrusion,
                 ported_face_surface_descriptor_kind(surface),
             )),
-            None => self.face_extrusion_payload_occt(shape),
         }
     }
 

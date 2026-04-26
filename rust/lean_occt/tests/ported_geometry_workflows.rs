@@ -79,6 +79,36 @@ fn require_ported_analytic_face_surface(
     }
 }
 
+fn require_ported_swept_face_surface(
+    surface: Option<PortedFaceSurface>,
+    expected: SurfaceKind,
+    label: &str,
+) -> Result<PortedSweptSurface, Box<dyn std::error::Error>> {
+    let surface = surface.ok_or_else(|| {
+        std::io::Error::other(format!("{label} missing Rust swept surface descriptor"))
+    })?;
+    match surface {
+        PortedFaceSurface::Swept(surface) => {
+            let actual = match &surface {
+                PortedSweptSurface::Revolution { .. } => SurfaceKind::Revolution,
+                PortedSweptSurface::Extrusion { .. } => SurfaceKind::Extrusion,
+            };
+            if actual == expected {
+                Ok(surface)
+            } else {
+                Err(std::io::Error::other(format!(
+                    "{label} expected Rust {expected:?} swept descriptor, got {actual:?}"
+                ))
+                .into())
+            }
+        }
+        descriptor => Err(std::io::Error::other(format!(
+            "{label} expected Rust {expected:?} swept descriptor, got {descriptor:?}"
+        ))
+        .into()),
+    }
+}
+
 fn assert_vec3_close(
     lhs: [f64; 3],
     rhs: [f64; 3],
@@ -1389,28 +1419,23 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
     )?;
     let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
     let context = kernel.context();
+    let extrusion_descriptor = require_ported_swept_face_surface(
+        context.ported_face_surface_descriptor(&extrusion_face)?,
+        SurfaceKind::Extrusion,
+        "extrusion public payload",
+    )?;
+    let extrusion_descriptor_payload = match extrusion_descriptor {
+        PortedSweptSurface::Extrusion { payload, .. } => payload,
+        descriptor => unreachable!("validated extrusion descriptor was {descriptor:?}"),
+    };
     let extrusion_payload = context.face_extrusion_payload(&extrusion_face)?;
     let extrusion_payload_occt = context.face_extrusion_payload_occt(&extrusion_face)?;
-    let extrusion_descriptor = context
-        .ported_face_surface_descriptor(&extrusion_face)?
-        .ok_or_else(|| std::io::Error::other("expected ported extrusion descriptor"))?;
-
-    match extrusion_descriptor {
-        PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { payload, .. }) => {
-            assert_extrusion_payload_close(
-                extrusion_payload,
-                payload,
-                1.0e-12,
-                "extrusion public descriptor payload",
-            )?;
-        }
-        descriptor => {
-            return Err(std::io::Error::other(format!(
-                "unexpected extrusion descriptor: {descriptor:?}"
-            ))
-            .into())
-        }
-    }
+    assert_extrusion_payload_close(
+        extrusion_payload,
+        extrusion_descriptor_payload,
+        1.0e-12,
+        "extrusion public descriptor payload",
+    )?;
     assert_extrusion_payload_close(
         extrusion_payload,
         extrusion_payload_occt,
@@ -1433,28 +1458,23 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
         },
     )?;
     let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let revolution_descriptor = require_ported_swept_face_surface(
+        context.ported_face_surface_descriptor(&revolution_face)?,
+        SurfaceKind::Revolution,
+        "revolution public payload",
+    )?;
+    let revolution_descriptor_payload = match revolution_descriptor {
+        PortedSweptSurface::Revolution { payload, .. } => payload,
+        descriptor => unreachable!("validated revolution descriptor was {descriptor:?}"),
+    };
     let revolution_payload = context.face_revolution_payload(&revolution_face)?;
     let revolution_payload_occt = context.face_revolution_payload_occt(&revolution_face)?;
-    let revolution_descriptor = context
-        .ported_face_surface_descriptor(&revolution_face)?
-        .ok_or_else(|| std::io::Error::other("expected ported revolution descriptor"))?;
-
-    match revolution_descriptor {
-        PortedFaceSurface::Swept(PortedSweptSurface::Revolution { payload, .. }) => {
-            assert_revolution_payload_close(
-                revolution_payload,
-                payload,
-                1.0e-12,
-                "revolution public descriptor payload",
-            )?;
-        }
-        descriptor => {
-            return Err(std::io::Error::other(format!(
-                "unexpected revolution descriptor: {descriptor:?}"
-            ))
-            .into())
-        }
-    }
+    assert_revolution_payload_close(
+        revolution_payload,
+        revolution_descriptor_payload,
+        1.0e-12,
+        "revolution public descriptor payload",
+    )?;
     assert_revolution_payload_close(
         revolution_payload,
         revolution_payload_occt,
