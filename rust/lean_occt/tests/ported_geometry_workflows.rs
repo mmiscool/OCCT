@@ -764,7 +764,17 @@ fn ported_vertex_points_match_occt() -> Result<(), Box<dyn std::error::Error>> {
         .enumerate()
     {
         let context_point = kernel.context().vertex_point(&vertex)?;
+        let ported_point = kernel
+            .context()
+            .ported_vertex_point(&vertex)?
+            .ok_or_else(|| std::io::Error::other("expected Rust-owned vertex point"))?;
         let occt_point = kernel.context().vertex_point_occt(&vertex)?;
+        assert_vec3_close(
+            context_point,
+            ported_point,
+            1.0e-12,
+            &format!("vertex {index} ported"),
+        )?;
         assert_vec3_close(
             context_point,
             occt_point,

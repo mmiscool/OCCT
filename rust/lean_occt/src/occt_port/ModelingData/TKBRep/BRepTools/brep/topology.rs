@@ -13,8 +13,10 @@ pub(super) struct PreparedShellShape {
 }
 
 struct TopologySnapshotRootFields {
+    vertex_shapes: Vec<Shape>,
     vertex_positions: Vec<[f64; 3]>,
     edge_shapes: Vec<Shape>,
+    wire_shapes: Vec<Shape>,
     prepared_shell_shapes: Vec<PreparedShellShape>,
     face_shapes: Vec<Shape>,
     prepared_face_shapes: Vec<PreparedFaceShape>,
@@ -30,7 +32,9 @@ struct TopologySnapshotRootFields {
 
 pub(super) struct LoadedPortedTopology {
     pub(super) topology: TopologySnapshot,
+    pub(super) vertex_shapes: Vec<Shape>,
     pub(super) edge_shapes: Vec<Shape>,
+    pub(super) wire_shapes: Vec<Shape>,
     pub(super) prepared_shell_shapes: Vec<PreparedShellShape>,
     pub(super) face_shapes: Vec<Shape>,
 }
@@ -80,6 +84,10 @@ fn load_root_topology_snapshot(
     }
     let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
         pack_wire_topology(&root_wires);
+    let wire_shapes = prepared_wire_shapes
+        .into_iter()
+        .map(|prepared_wire_shape| prepared_wire_shape.wire_shape)
+        .collect::<Vec<_>>();
     let prepared_shell_shapes = context
         .subshapes_occt(shape, ShapeKind::Shell)?
         .into_iter()
@@ -115,8 +123,10 @@ fn load_root_topology_snapshot(
         .collect::<Result<Vec<_>, Error>>()?;
 
     Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
         vertex_positions,
         edge_shapes,
+        wire_shapes,
         prepared_shell_shapes,
         face_shapes,
         prepared_face_shapes,
@@ -136,8 +146,10 @@ pub(super) fn load_ported_topology(
     shape: &Shape,
 ) -> Result<Option<LoadedPortedTopology>, Error> {
     let Some(TopologySnapshotRootFields {
+        vertex_shapes,
         vertex_positions,
         edge_shapes,
+        wire_shapes,
         prepared_shell_shapes,
         face_shapes,
         prepared_face_shapes,
@@ -190,7 +202,9 @@ pub(super) fn load_ported_topology(
             face_wire_orientations,
             face_wire_roles,
         },
+        vertex_shapes,
         edge_shapes,
+        wire_shapes,
         prepared_shell_shapes,
         face_shapes,
     }))

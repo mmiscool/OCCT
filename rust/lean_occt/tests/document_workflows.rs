@@ -56,6 +56,17 @@ fn document_tracks_named_boolean_and_round_trip_workflow() -> Result<(), Box<dyn
 
     let cut_report = document.report("cut")?;
     let step_report = document.report("cut_step")?;
+    let cut_shape = document.shape("cut")?;
+    let public_topology = document.kernel().context().topology(cut_shape)?;
+    let ported_topology = document
+        .kernel()
+        .context()
+        .ported_topology(cut_shape)?
+        .ok_or_else(|| std::io::Error::other("expected cut to have Rust-owned topology"))?;
+    let public_face_count = document
+        .kernel()
+        .context()
+        .subshape_count(cut_shape, ShapeKind::Face)?;
 
     assert!(document.contains_shape("base"));
     assert!(document.contains_shape("tool"));
@@ -70,6 +81,9 @@ fn document_tracks_named_boolean_and_round_trip_workflow() -> Result<(), Box<dyn
     );
     assert_eq!(cut_report.triangle_count(), 160);
     assert_eq!(step_report.triangle_count(), cut_report.triangle_count());
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(public_face_count, ported_topology.faces.len());
 
     let names = document.shape_names().collect::<Vec<_>>();
     assert_eq!(names, vec!["base", "tool", "cut", "cut_step"]);

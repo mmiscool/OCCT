@@ -1612,10 +1612,8 @@ impl Context {
     }
 
     pub fn vertex_point(&self, shape: &Shape) -> Result<[f64; 3], Error> {
-        match self.ported_vertex_point(shape)? {
-            Some(point) => Ok(point),
-            None => self.vertex_point_occt(shape),
-        }
+        self.ported_vertex_point(shape)?
+            .ok_or_else(|| unsupported_ported_topology_query_error("vertex point"))
     }
 
     pub fn vertex_point_occt(&self, shape: &Shape) -> Result<[f64; 3], Error> {
@@ -3103,10 +3101,8 @@ impl Context {
     }
 
     pub fn topology(&self, shape: &Shape) -> Result<TopologySnapshot, Error> {
-        match self.ported_topology(shape)? {
-            Some(topology) => Ok(topology),
-            None => self.topology_occt(shape),
-        }
+        self.ported_topology(shape)?
+            .ok_or_else(|| unsupported_ported_topology_query_error("topology"))
     }
 
     pub fn topology_occt(&self, shape: &Shape) -> Result<TopologySnapshot, Error> {
@@ -3293,29 +3289,28 @@ impl Context {
     }
 
     pub fn subshape_count(&self, shape: &Shape, kind: ShapeKind) -> Result<usize, Error> {
+        if let Some(count) = self.ported_subshape_count(shape, kind)? {
+            return Ok(count);
+        }
+
         match kind {
-            ShapeKind::Face | ShapeKind::Wire | ShapeKind::Edge | ShapeKind::Vertex => {
-                match self.ported_topology(shape)? {
-                    Some(topology) => Ok(match kind {
-                        ShapeKind::Face => topology.faces.len(),
-                        ShapeKind::Wire => topology.wires.len(),
-                        ShapeKind::Edge => topology.edges.len(),
-                        ShapeKind::Vertex => topology.vertex_positions.len(),
-                        _ => unreachable!("handled by the outer match"),
-                    }),
-                    None => self.subshape_count_occt(shape, kind),
-                }
-            }
-            ShapeKind::Compound | ShapeKind::CompSolid | ShapeKind::Solid | ShapeKind::Shell => {
+            ShapeKind::Compound | ShapeKind::CompSolid | ShapeKind::Solid => {
                 let summary = self.describe_shape(shape)?;
                 Ok(match kind {
                     ShapeKind::Compound => summary.compound_count,
                     ShapeKind::CompSolid => summary.compsolid_count,
                     ShapeKind::Solid => summary.solid_count,
-                    ShapeKind::Shell => summary.shell_count,
                     _ => unreachable!("handled by the outer match"),
                 })
             }
+            ShapeKind::Face
+            | ShapeKind::Wire
+            | ShapeKind::Edge
+            | ShapeKind::Vertex
+            | ShapeKind::Shell => Err(unsupported_ported_subshape_query_error(
+                "subshape count",
+                kind,
+            )),
             _ => self.subshape_count_occt(shape, kind),
         }
     }
@@ -3340,6 +3335,9 @@ impl Context {
     pub fn subshape(&self, shape: &Shape, kind: ShapeKind, index: usize) -> Result<Shape, Error> {
         match self.ported_subshape(shape, kind, index)? {
             Some(subshape) => Ok(subshape),
+            None if rust_owned_topology_subshape_query_required(kind) => {
+                Err(unsupported_ported_subshape_query_error("subshape", kind))
+            }
             None => self.subshape_occt(shape, kind, index),
         }
     }
@@ -3364,6 +3362,9 @@ impl Context {
     pub fn subshapes(&self, shape: &Shape, kind: ShapeKind) -> Result<Vec<Shape>, Error> {
         match self.ported_subshapes(shape, kind)? {
             Some(shapes) => Ok(shapes),
+            None if rust_owned_topology_subshape_query_required(kind) => {
+                Err(unsupported_ported_subshape_query_error("subshapes", kind))
+            }
             None => self.subshapes_occt(shape, kind),
         }
     }
@@ -3534,6 +3535,25 @@ fn rust_owned_face_query_required(kind: SurfaceKind) -> bool {
             | SurfaceKind::Extrusion
             | SurfaceKind::Offset
     )
+}
+
+fn rust_owned_topology_subshape_query_required(kind: ShapeKind) -> bool {
+    matches!(
+        kind,
+        ShapeKind::Vertex | ShapeKind::Edge | ShapeKind::Wire | ShapeKind::Face | ShapeKind::Shell
+    )
+}
+
+fn unsupported_ported_topology_query_error(operation: &str) -> Error {
+    Error::new(format!(
+        "Rust-owned {operation} extraction did not cover this shape"
+    ))
+}
+
+fn unsupported_ported_subshape_query_error(operation: &str, kind: ShapeKind) -> Error {
+    Error::new(format!(
+        "Rust-owned {operation} extraction did not cover {kind:?} subshapes"
+    ))
 }
 
 fn unsupported_ported_face_query_error(operation: &str, kind: SurfaceKind) -> Error {

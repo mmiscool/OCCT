@@ -1,13 +1,19 @@
 use super::summary::{classify_root_kind, shape_counts};
+use super::topology::{load_ported_topology, LoadedPortedTopology};
 use super::topology_access::optional_vertex_position;
 use super::*;
 
-fn topology_backed_subshape_count(topology: &TopologySnapshot, kind: ShapeKind) -> Option<usize> {
+fn topology_backed_subshape_count(
+    topology: &TopologySnapshot,
+    loaded: Option<&LoadedPortedTopology>,
+    kind: ShapeKind,
+) -> Option<usize> {
     match kind {
         ShapeKind::Face => Some(topology.faces.len()),
         ShapeKind::Wire => Some(topology.wires.len()),
         ShapeKind::Edge => Some(topology.edges.len()),
         ShapeKind::Vertex => Some(topology.vertex_positions.len()),
+        ShapeKind::Shell => loaded.map(|loaded| loaded.prepared_shell_shapes.len()),
         _ => None,
     }
 }
@@ -60,24 +66,37 @@ pub(super) fn ported_edge_endpoints(
     Ok(Some(EdgeEndpoints { start, end }))
 }
 
+pub(super) fn ported_subshape_count(
+    context: &Context,
+    shape: &Shape,
+    kind: ShapeKind,
+) -> Result<Option<usize>, Error> {
+    let Some(loaded) = load_ported_topology(context, shape)? else {
+        return Ok(None);
+    };
+    Ok(topology_backed_subshape_count(
+        &loaded.topology,
+        Some(&loaded),
+        kind,
+    ))
+}
+
 pub(super) fn ported_subshape(
     context: &Context,
     shape: &Shape,
     kind: ShapeKind,
     index: usize,
 ) -> Result<Option<Shape>, Error> {
-    let Some(topology) = context.ported_topology(shape)? else {
+    let Some(mut shapes) = ported_subshapes(context, shape, kind)? else {
         return Ok(None);
     };
-    let Some(count) = topology_backed_subshape_count(&topology, kind) else {
-        return Ok(None);
-    };
-    if index >= count {
+    if index >= shapes.len() {
         return Err(Error::new(format!(
-            "subshape index {index} out of bounds for {kind:?} count {count}"
+            "subshape index {index} out of bounds for {kind:?} count {}",
+            shapes.len()
         )));
     }
-    Ok(Some(context.subshape_occt(shape, kind, index)?))
+    Ok(Some(shapes.remove(index)))
 }
 
 pub(super) fn ported_subshapes(
@@ -85,16 +104,29 @@ pub(super) fn ported_subshapes(
     shape: &Shape,
     kind: ShapeKind,
 ) -> Result<Option<Vec<Shape>>, Error> {
-    let Some(topology) = context.ported_topology(shape)? else {
+    let Some(loaded) = load_ported_topology(context, shape)? else {
         return Ok(None);
     };
-    let Some(expected_count) = topology_backed_subshape_count(&topology, kind) else {
+    let Some(expected_count) =
+        topology_backed_subshape_count(&loaded.topology, Some(&loaded), kind)
+    else {
         return Ok(None);
     };
-    let shapes = context.subshapes_occt(shape, kind)?;
+    let shapes = match kind {
+        ShapeKind::Face => loaded.face_shapes,
+        ShapeKind::Wire => loaded.wire_shapes,
+        ShapeKind::Edge => loaded.edge_shapes,
+        ShapeKind::Vertex => loaded.vertex_shapes,
+        ShapeKind::Shell => loaded
+            .prepared_shell_shapes
+            .into_iter()
+            .map(|prepared_shell| prepared_shell.shell_shape)
+            .collect::<Vec<_>>(),
+        _ => return Ok(None),
+    };
     if shapes.len() != expected_count {
         return Err(Error::new(format!(
-            "expected {expected_count} {kind:?} subshape(s) from topology, found {} via OCCT",
+            "expected {expected_count} {kind:?} subshape handle(s) from ported topology, found {}",
             shapes.len()
         )));
     }

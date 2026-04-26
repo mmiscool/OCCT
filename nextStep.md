@@ -1,38 +1,35 @@
 # Next Task
 
-Current milestone: `M8. Public Geometry and Sampling Fallback Narrowing` from `portingMilestones.md`.
+Current milestone: `M9. BRep Materialization Fallback Narrowing` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `rust/lean_occt/src/lib.rs` public analytic, swept, offset, offset-basis, and edge payload wrappers no longer silently call direct `*_payload_occt()` helpers after Rust descriptor extraction returns `None`; explicit raw payload APIs remain opt-in parity/oracle APIs.
-- `rust/lean_occt/src/lib.rs` public edge geometry/sampling wrappers (`edge_geometry()`, `edge_endpoints()`, `edge_sample()`, and `edge_sample_at_parameter()`) now require Rust `ported_edge_*` extraction for supported `Line`, `Circle`, and `Ellipse` edges. If Rust extraction returns `None` for those supported curve kinds, the wrapper returns a Rust-owned unsupported error instead of silently calling direct `edge_*_occt()` helpers.
-- `rust/lean_occt/src/lib.rs` public face geometry/sampling wrappers (`face_geometry()`, `face_sample()`, and `face_sample_normalized()`) now require Rust `PortedFaceSurface` extraction for supported analytic (`Plane`, `Cylinder`, `Cone`, `Sphere`, `Torus`), swept (`Revolution`, `Extrusion`), and `Offset` faces. If Rust extraction returns `None` for those supported surface kinds, the wrapper returns a Rust-owned unsupported error instead of silently calling direct `face_*_occt()` helpers.
-- The face geometry/sampling OCCT escape hatch is now limited to unsupported raw surface kinds, while explicit `face_geometry_occt()`, `face_sample_occt()`, and `face_sample_normalized_occt()` remain available as opt-in parity/oracle APIs.
-- `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs::ported_face_geometry()` validates swept and offset descriptors before reporting public geometry as ported, and it keeps Rust analytic recovery for raw BSpline/Bezier/unknown labels that sample as supported analytic surfaces.
-- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_prepare.rs` now calls `ported_offset_surface_with_geometry()` so offset descriptor extraction uses the already-known face geometry instead of re-entering public `face_geometry()`.
-- `rust/lean_occt/tests/ported_geometry_workflows.rs::ported_surface_sampling_matches_occt`, `ported_swept_surface_sampling_matches_occt`, and `ported_offset_surface_sampling_matches_occt` now require ported face geometry/descriptors and compare public face geometry/samples against Rust results before explicit OCCT oracle checks.
-- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `! rg -n 'None => self.face_(sample|sample_normalized|geometry)_occt\\(' rust/lean_occt/src/lib.rs`, `! rg -n 'ported_offset_surface\\(face_shape\\)|eprintln!|validated shell mesh|offset shell bbox|shape summary bbox failed|offset shell face bbox' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_prepare.rs`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, and `git diff --check`.
+- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs::LoadedPortedTopology` now carries the root vertex, edge, wire, face, and prepared shell handles captured while loading Rust topology.
+- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs` serves `ported_subshape_count()`, `ported_subshape()`, and `ported_subshapes()` for `Vertex`, `Edge`, `Wire`, `Face`, and `Shell` from that loaded Rust topology inventory instead of rematerializing the same public inventory through generic OCCT subshape helpers.
+- `rust/lean_occt/src/lib.rs` public `vertex_point()` and `topology()` now require Rust `ported_vertex_point()`/`ported_topology()` results and return explicit Rust-owned unsupported errors when the ported topology path cannot cover the shape.
+- `rust/lean_occt/src/lib.rs` public `subshape_count()`, `subshape()`, and `subshapes()` now require the Rust topology inventory for `Vertex`, `Edge`, `Wire`, `Face`, and `Shell`; direct OCCT subshape fallbacks remain only for unsupported shape kinds or explicit raw `*_occt()` parity/oracle APIs.
+- `rust/lean_occt/tests/brep_workflows.rs` compares public topology and topology-backed public subshape traversal against Rust topology before explicit OCCT oracle checks, including shell materialization for the offset-solid workflow.
+- `rust/lean_occt/tests/document_workflows.rs` and `selector_workflows.rs` now exercise public topology/subshape traversal through higher-level document and selector paths and compare it against `ported_topology()`.
+- `rust/lean_occt/tests/ported_geometry_workflows.rs::ported_vertex_points_match_occt` now requires public vertex points to match the Rust-owned `ported_vertex_point()` result before comparing with the explicit OCCT oracle.
+- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_vertex_points_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `rg -n 'rust_owned_topology_subshape_query_required|unsupported_ported_topology_query_error|ported_subshape_count' rust/lean_occt/src/lib.rs rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs`, and `git diff --check`.
 
 ## Target
 
-Remove or strictly narrow the remaining public vertex/topology/subshape fallback family in `rust/lean_occt/src/lib.rs`: `vertex_point()`, `topology()`, `subshape_count()`, `subshape()`, and `subshapes()` still have direct OCCT helper escape paths around Rust topology extraction.
+Remove or strictly narrow the remaining BRep materialization fallback that catches Rust-owned public edge geometry failures and silently calls direct OCCT edge geometry helpers for supported line/circle/ellipse edges.
 
 ## Next Bounded Cut
 
-1. Start with the public topology/subshape family in `rust/lean_occt/src/lib.rs`: `topology()`, `subshape_count()`, `subshape()`, and `subshapes()`, then include `vertex_point()` if the same topology inventory gives a bounded Rust-owned replacement.
-2. Require Rust `ported_topology()`/`ported_subshapes()` behavior before public supported topology queries can succeed; do not silently rescue through direct OCCT helpers after ported topology extraction can identify the shape.
-3. Preserve explicit raw OCCT APIs as opt-in parity/oracle APIs or strictly unsupported-topology escape hatches.
-4. Strengthen `brep_workflows`, `document_workflows`, and `selector_workflows` so public traversal/count/materialization is compared against Rust topology before explicit OCCT oracle comparison.
+1. Start in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/brep_materialize.rs::ported_brep_edges()` and `brep/face_topology.rs::single_face_edge_with_route()`.
+2. Replace `Err(_) => context.edge_geometry_occt(edge_shape)?` with a Rust-owned supported-edge helper that returns ported edge geometry for line/circle/ellipse edges or an explicit unsupported-kind error, without swallowing a Rust extraction failure into OCCT.
+3. Keep explicit raw `edge_geometry_occt()` available as an oracle API and only use unsupported-kind OCCT escape hatches where the BRep route cannot identify a supported ported edge.
+4. Strengthen `brep_workflows`, `document_workflows`, and `selector_workflows` so exercised BRep edge materialization proves `BrepEdge::geometry` and `BrepEdge::ported_curve` came through the Rust-owned path before any explicit OCCT oracle comparison.
 
 ## Guardrails
 
 - Read `portingMilestones.md` and `nextStep.md` at the start of the next turn before editing.
+- Do not reintroduce direct OCCT helper fallbacks into public payload, geometry, sampling, topology, vertex, or supported subshape wrappers narrowed under M7 and M8.
 - Do not reintroduce `face_bboxes_occt()`, `OffsetFaceBboxSource::OcctFaceUnion`, `offset_shape_bbox_occt()`, or `SummaryBboxSource::OffsetOcctSubshapeUnion`.
 - Do not weaken `unsupported_bbox_summary_fallback_allowed()` or `unsupported_volume_summary_fallback_allowed()`.
-- Do not reintroduce direct `*_payload_occt()` fallbacks into public payload wrappers; explicit raw payload APIs may remain available only as opt-in parity/oracle APIs.
-- Do not reopen supported line/circle/ellipse public edge geometry or sampling fallbacks; direct `edge_*_occt()` helpers may only remain public oracles or unsupported curve-kind escape hatches.
-- Do not reopen supported analytic/swept/offset public face geometry or sampling fallbacks; direct `face_*_occt()` helpers may only remain public oracles or unsupported surface-kind escape hatches.
-- Once a Rust descriptor returns `Some(...)`, mismatched payload, geometry, sampling, or topology requests should fail explicitly in Rust instead of trying another OCCT helper.
 - Do not reintroduce OCCT line, circle, or ellipse payload helper rescues into `PortedCurve::from_context_with_geometry()`, `ported_edge_geometry()`, or BRep edge materialization.
 - Do not reintroduce OCCT plane, cylinder, cone, sphere, or torus payload helper rescues into `PortedSurface::from_context_with_geometry()`, `ported_face_geometry()`, BRep face materialization, or planar face snapshot reconstruction.
 - Do not reintroduce `face_extrusion_payload_occt()` or `face_revolution_payload_occt()` inside `brep/swept_face.rs` or the public swept payload wrappers.
@@ -42,12 +39,10 @@ Remove or strictly narrow the remaining public vertex/topology/subshape fallback
 ## Verification
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-- `rg -n 'pub fn (vertex_point|topology|subshape_count|subshape|subshapes)' rust/lean_occt/src/lib.rs`
+- `rg -n 'Err\\(_\\) => context\\.edge_geometry_occt|FaceSurfaceRoute::Raw => context\\.(edge|face)_geometry_occt' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
 - `git diff --check`

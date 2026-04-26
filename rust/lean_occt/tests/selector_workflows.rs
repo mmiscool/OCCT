@@ -37,6 +37,7 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
         .context()
         .ported_topology(base_shape)?
         .ok_or_else(|| std::io::Error::other("expected base box to have ported topology"))?;
+    let public_topology = document.kernel().context().topology(base_shape)?;
     let public_face_shapes = document
         .kernel()
         .context()
@@ -64,6 +65,12 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
     assert_eq!(shortest_edge.geometry.kind, CurveKind::Line);
     assert!((longest_edge.length - 60.0).abs() <= 1.0e-9);
     assert!((shortest_edge.length - 10.0).abs() <= 1.0e-9);
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
     assert_eq!(faces.len(), ported_topology.faces.len());
     assert_eq!(edges.len(), ported_topology.edges.len());
     assert_eq!(public_face_shapes.len(), ported_topology.faces.len());

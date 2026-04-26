@@ -711,6 +711,13 @@ fn assert_topology_backed_subshape_counts_match(
     shape: &Shape,
     topology: &lean_occt::TopologySnapshot,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let public_topology = kernel.context().topology(shape)?;
+    assert_topology_matches(
+        &format!("{label} public topology"),
+        &public_topology,
+        topology,
+    )?;
+
     for (kind, expected_count) in [
         (ShapeKind::Face, topology.faces.len()),
         (ShapeKind::Wire, topology.wires.len()),
@@ -2499,6 +2506,30 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
     let shell_shapes = kernel.context().subshapes(&offset, ShapeKind::Shell)?;
 
     assert_eq!(summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(
+        kernel.context().subshape_count(&offset, ShapeKind::Shell)?,
+        shell_shapes.len(),
+        "offset solid shell count should come from the loaded Rust topology inventory"
+    );
+    assert_eq!(
+        kernel
+            .context()
+            .subshape_count_occt(&offset, ShapeKind::Shell)?,
+        shell_shapes.len(),
+        "Rust-owned shell inventory should match OCCT's raw shell count"
+    );
+    for (shell_index, shell_shape) in shell_shapes.iter().enumerate() {
+        let indexed_shell = kernel
+            .context()
+            .subshape(&offset, ShapeKind::Shell, shell_index)?;
+        let public_topology = kernel.context().topology(shell_shape)?;
+        let indexed_topology = kernel.context().topology(&indexed_shell)?;
+        assert_topology_matches(
+            &format!("offset solid shell {shell_index} public subshape"),
+            &indexed_topology,
+            &public_topology,
+        )?;
+    }
     assert!(
         !offset_faces.is_empty(),
         "expected offset solid to retain offset faces"
@@ -2565,9 +2596,9 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         occt_summary.bbox_max,
         5.0e-2,
     )?;
-    for (shell_index, shell_shape) in shell_shapes.into_iter().enumerate() {
-        let shell_brep = kernel.context().ported_brep(&shell_shape)?;
-        let shell_occt = kernel.context().describe_shape_occt(&shell_shape)?;
+    for (shell_index, shell_shape) in shell_shapes.iter().enumerate() {
+        let shell_brep = kernel.context().ported_brep(shell_shape)?;
+        let shell_occt = kernel.context().describe_shape_occt(shell_shape)?;
         let label = format!("offset solid shell {shell_index} brep summary");
         assert_eq!(
             shell_brep.summary_bbox_source(),
