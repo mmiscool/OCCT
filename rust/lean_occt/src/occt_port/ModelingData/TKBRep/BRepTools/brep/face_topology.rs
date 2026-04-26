@@ -1,4 +1,4 @@
-use super::brep_materialize::ported_brep_wires;
+use super::brep_materialize::{ported_brep_edge_geometry_and_curve, ported_brep_wires};
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -58,17 +58,9 @@ fn single_face_edge_with_route(
     context: &Context,
     index: usize,
     edge_shape: &Shape,
-    route: FaceSurfaceRoute,
+    _route: FaceSurfaceRoute,
 ) -> Result<BrepEdge, Error> {
-    let geometry = match route {
-        FaceSurfaceRoute::Raw => context.edge_geometry_occt(edge_shape)?,
-        FaceSurfaceRoute::Public => match context.edge_geometry(edge_shape) {
-            Ok(geometry) => geometry,
-            Err(_) => context.edge_geometry_occt(edge_shape)?,
-        },
-    };
-    let ported_curve =
-        PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?;
+    let (geometry, ported_curve) = ported_brep_edge_geometry_and_curve(context, edge_shape)?;
     Ok(single_face_edge(index, geometry, ported_curve))
 }
 

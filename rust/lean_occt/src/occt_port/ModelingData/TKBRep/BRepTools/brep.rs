@@ -41,9 +41,9 @@ use crate::ported_geometry::{
     PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
-    ConePayload, Context, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error, FaceGeometry,
-    FaceSample, LoopRole, Mesh, MeshParams, Orientation, PlanePayload, PortedCurve, PortedSurface,
-    Shape, ShapeKind, ShapeSummary, SpherePayload, TopologySnapshot, TorusPayload,
+    ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error,
+    FaceGeometry, FaceSample, LoopRole, Mesh, MeshParams, Orientation, PlanePayload, PortedCurve,
+    PortedSurface, Shape, ShapeKind, ShapeSummary, SpherePayload, TopologySnapshot, TorusPayload,
 };
 
 const SUMMARY_VOLUME_MESH_PARAMS: MeshParams = MeshParams {

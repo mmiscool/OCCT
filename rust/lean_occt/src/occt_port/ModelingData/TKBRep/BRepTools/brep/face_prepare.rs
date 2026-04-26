@@ -64,10 +64,7 @@ fn ported_face_surface_descriptor_from_surface_with_route(
 fn face_geometry_with_route(
     context: &Context,
     face_shape: &Shape,
-    route: FaceSurfaceRoute,
+    _route: FaceSurfaceRoute,
 ) -> Result<FaceGeometry, Error> {
-    match route {
-        FaceSurfaceRoute::Raw => context.face_geometry_occt(face_shape),
-        FaceSurfaceRoute::Public => context.face_geometry(face_shape),
-    }
+    context.face_geometry(face_shape)
 }

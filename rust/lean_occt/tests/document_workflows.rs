@@ -308,6 +308,7 @@ fn document_supports_query_driven_features() -> Result<(), Box<dyn std::error::E
     let circle_edges = document.edge_indices_by_curve_kind("drilled", CurveKind::Circle)?;
 
     let rounded_report = document.report("rounded")?;
+    let rounded_brep = document.brep("rounded")?;
 
     assert_eq!(selected_face.geometry.kind, SurfaceKind::Plane);
     assert!(selected_face.sample.normal[2] > 0.9);
@@ -318,6 +319,18 @@ fn document_supports_query_driven_features() -> Result<(), Box<dyn std::error::E
     assert!(!circle_edges.is_empty());
     assert_eq!(rounded_report.summary.primary_kind, ShapeKind::Solid);
     assert!(rounded_report.triangle_count() > 0);
+    assert!(rounded_brep.edges.iter().any(|edge| matches!(
+        edge.geometry.kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    )));
+    assert!(rounded_brep
+        .edges
+        .iter()
+        .filter(|edge| matches!(
+            edge.geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ))
+        .all(|edge| edge.ported_curve.is_some()));
     assert!(rounded_step.is_file());
 
     Ok(())

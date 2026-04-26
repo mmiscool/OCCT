@@ -1034,17 +1034,43 @@ fn assert_brep_edge_geometries_match_public(
 
     for (index, edge_shape) in edge_shapes.iter().enumerate() {
         let expected_geometry = kernel.context().edge_geometry(edge_shape)?;
-        let actual_geometry = brep
+        let actual_edge = brep
             .edges
             .get(index)
-            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep edge {index}")))?
-            .geometry;
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing brep edge {index}")))?;
         assert_edge_geometry_close(
-            actual_geometry,
+            actual_edge.geometry,
             expected_geometry,
             1.0e-9,
             &format!("{label} edge {index} geometry"),
         )?;
+
+        if matches!(
+            expected_geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ) {
+            let actual_curve = actual_edge.ported_curve.ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} edge {index} expected Rust-owned {:?} BRep curve",
+                    expected_geometry.kind
+                ))
+            })?;
+            let expected_curve =
+                kernel
+                    .context()
+                    .ported_edge_curve(edge_shape)?
+                    .ok_or_else(|| {
+                        std::io::Error::other(format!(
+                            "{label} edge {index} public Rust edge curve missing for {:?}",
+                            expected_geometry.kind
+                        ))
+                    })?;
+            assert_same_variant(
+                &actual_curve,
+                &expected_curve,
+                &format!("{label} edge {index} BRep/public curve"),
+            )?;
+        }
     }
 
     Ok(())

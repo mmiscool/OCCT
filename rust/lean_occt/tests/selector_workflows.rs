@@ -79,6 +79,14 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
     assert_eq!(edges.len(), brep.edges.len());
     assert!(faces.iter().all(|face| face.ported_face_surface.is_some()));
     assert!(edges.iter().all(|edge| edge.ported_curve.is_some()));
+    assert!(brep
+        .edges
+        .iter()
+        .filter(|edge| matches!(
+            edge.geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ))
+        .all(|edge| edge.ported_curve.is_some()));
     assert_eq!(
         faces
             .get(largest_plane.index)
@@ -95,6 +103,12 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
             .kind,
         longest_edge.geometry.kind
     );
+    assert!(brep
+        .edges
+        .get(longest_edge.index)
+        .ok_or_else(|| std::io::Error::other("longest BRep edge index missing"))?
+        .ported_curve
+        .is_some());
     assert!(base_step.is_file());
 
     Ok(())
