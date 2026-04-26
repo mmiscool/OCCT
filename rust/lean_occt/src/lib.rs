@@ -1263,6 +1263,20 @@ pub struct Context {
 
 pub struct Shape {
     raw: NonNull<ffi::LeanOcctShape>,
+    rust_metadata: ShapeRustMetadata,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OffsetSurfaceFaceMetadata {
+    pub(crate) offset_value: f64,
+    pub(crate) basis_geometry: FaceGeometry,
+    pub(crate) basis_surface: PortedSurface,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ShapeRustMetadata {
+    None,
+    OffsetSurfaceFace(OffsetSurfaceFaceMetadata),
 }
 
 struct MeshHandle {
@@ -1462,6 +1476,10 @@ impl Context {
         basis_face: &Shape,
         params: OffsetParams,
     ) -> Result<Shape, Error> {
+        let rust_metadata = self
+            .offset_surface_face_metadata_candidate(basis_face, params.offset)?
+            .map(ShapeRustMetadata::OffsetSurfaceFace)
+            .unwrap_or(ShapeRustMetadata::None);
         let raw_params = ffi::LeanOcctOffsetParams {
             offset: params.offset,
             tolerance: params.tolerance,
@@ -1474,7 +1492,7 @@ impl Context {
                 &raw_params,
             )
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_cylindrical_hole(
@@ -3452,9 +3470,47 @@ impl Context {
         })
     }
 
+    fn offset_surface_face_metadata_candidate(
+        &self,
+        basis_face: &Shape,
+        offset_value: f64,
+    ) -> Result<Option<OffsetSurfaceFaceMetadata>, Error> {
+        let raw_basis_geometry = match self.face_geometry_occt(basis_face) {
+            Ok(geometry) => geometry,
+            Err(_) => return Ok(None),
+        };
+        if !offset_surface_face_metadata_supports_basis(raw_basis_geometry.kind) {
+            return Ok(None);
+        }
+
+        let basis_geometry = self.face_geometry(basis_face)?;
+        let Some(basis_surface) =
+            PortedSurface::from_context_with_ported_payloads(self, basis_face, basis_geometry)?
+        else {
+            return Err(unsupported_ported_surface_payload_error(
+                raw_basis_geometry.kind,
+                basis_geometry.kind,
+            ));
+        };
+
+        Ok(Some(OffsetSurfaceFaceMetadata {
+            offset_value,
+            basis_geometry,
+            basis_surface,
+        }))
+    }
+
     fn wrap_shape(&self, raw: *mut ffi::LeanOcctShape) -> Result<Shape, Error> {
+        self.wrap_shape_with_metadata(raw, ShapeRustMetadata::None)
+    }
+
+    fn wrap_shape_with_metadata(
+        &self,
+        raw: *mut ffi::LeanOcctShape,
+        rust_metadata: ShapeRustMetadata,
+    ) -> Result<Shape, Error> {
         let raw = NonNull::new(raw).ok_or_else(|| Error::new(self.last_error()))?;
-        Ok(Shape { raw })
+        Ok(Shape { raw, rust_metadata })
     }
 }
 
@@ -3534,6 +3590,17 @@ fn rust_owned_face_query_required(kind: SurfaceKind) -> bool {
             | SurfaceKind::Revolution
             | SurfaceKind::Extrusion
             | SurfaceKind::Offset
+    )
+}
+
+fn offset_surface_face_metadata_supports_basis(kind: SurfaceKind) -> bool {
+    matches!(
+        kind,
+        SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus
     )
 }
 
@@ -3720,6 +3787,13 @@ impl From<ffi::LeanOcctSurfaceKind> for SurfaceKind {
 }
 
 impl Shape {
+    pub(crate) fn offset_surface_face_metadata(&self) -> Option<OffsetSurfaceFaceMetadata> {
+        match self.rust_metadata {
+            ShapeRustMetadata::OffsetSurfaceFace(metadata) => Some(metadata),
+            ShapeRustMetadata::None => None,
+        }
+    }
+
     pub fn edge_count(&self) -> usize {
         unsafe { ffi::lean_occt_shape_edge_count(self.raw.as_ptr()) }
     }

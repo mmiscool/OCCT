@@ -16,8 +16,8 @@ use crate::brep::{
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry, EdgeSample,
     EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, FaceUvBounds,
-    LinePayload, OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
-    SpherePayload, SurfaceKind, TorusPayload,
+    LinePayload, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, Orientation, PlanePayload,
+    RevolutionSurfacePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -93,6 +93,16 @@ fn is_analytic_surface_kind(kind: SurfaceKind) -> bool {
             | SurfaceKind::Sphere
             | SurfaceKind::Torus
     )
+}
+
+fn ported_analytic_surface_kind(surface: PortedSurface) -> SurfaceKind {
+    match surface {
+        PortedSurface::Plane(_) => SurfaceKind::Plane,
+        PortedSurface::Cylinder(_) => SurfaceKind::Cylinder,
+        PortedSurface::Cone(_) => SurfaceKind::Cone,
+        PortedSurface::Sphere(_) => SurfaceKind::Sphere,
+        PortedSurface::Torus(_) => SurfaceKind::Torus,
+    }
 }
 
 impl PortedCurve {
@@ -890,6 +900,10 @@ impl Context {
             return Ok(None);
         }
 
+        if let Some(metadata) = shape.offset_surface_face_metadata() {
+            return ported_offset_surface_from_metadata(self, shape, metadata);
+        }
+
         let payload = self.face_offset_payload_occt(shape)?;
         let basis_geometry = self.face_offset_basis_geometry_occt(shape)?;
         let basis = match payload.basis_surface_kind {
@@ -941,6 +955,52 @@ impl Context {
             basis,
         }))
     }
+}
+
+fn ported_offset_surface_from_metadata(
+    context: &Context,
+    shape: &Shape,
+    metadata: OffsetSurfaceFaceMetadata,
+) -> Result<Option<PortedOffsetSurface>, Error> {
+    let surface = PortedOffsetSurface {
+        payload: OffsetSurfacePayload {
+            offset_value: metadata.offset_value,
+            basis_surface_kind: ported_analytic_surface_kind(metadata.basis_surface),
+        },
+        basis_geometry: metadata.basis_geometry,
+        basis: PortedOffsetBasisSurface::Analytic(metadata.basis_surface),
+    };
+
+    if ported_offset_surface_matches_occt_samples(context, shape, surface)? {
+        Ok(Some(surface))
+    } else {
+        Ok(None)
+    }
+}
+
+fn ported_offset_surface_matches_occt_samples(
+    context: &Context,
+    shape: &Shape,
+    surface: PortedOffsetSurface,
+) -> Result<bool, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+        let expected = context.face_sample_normalized_occt(shape, uv_t)?;
+        let actual = surface.sample_normalized_with_orientation(uv_t, orientation);
+        if !approx_vec3_eq(actual.position, expected.position, 1.0e-6)
+            || !approx_vec3_eq(actual.normal, expected.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn approx_vec3_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
+    (lhs[0] - rhs[0]).abs() <= tolerance
+        && (lhs[1] - rhs[1]).abs() <= tolerance
+        && (lhs[2] - rhs[2]).abs() <= tolerance
 }
 
 fn ported_analytic_face_geometry_candidate(

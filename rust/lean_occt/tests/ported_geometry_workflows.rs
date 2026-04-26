@@ -2269,6 +2269,73 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             tolerance: 1.0e-4,
         },
     )?;
+
+    for (label, basis_kind, basis_face, offset_face) in [
+        ("plane", SurfaceKind::Plane, &plane_face, &plane_offset_face),
+        (
+            "cylinder",
+            SurfaceKind::Cylinder,
+            &cylinder_face,
+            &cylinder_offset_face,
+        ),
+        ("cone", SurfaceKind::Cone, &cone_face, &cone_offset_face),
+        (
+            "sphere",
+            SurfaceKind::Sphere,
+            &sphere_face,
+            &sphere_offset_face,
+        ),
+        ("torus", SurfaceKind::Torus, &torus_face, &torus_offset_face),
+    ] {
+        let offset_payload = context.face_offset_payload(offset_face)?;
+        assert_eq!(offset_payload.basis_surface_kind, basis_kind);
+        assert!(
+            (offset_payload.offset_value - 1.25).abs() <= 1.0e-12,
+            "{label} direct analytic offset value mismatch"
+        );
+
+        assert_face_geometry_close(
+            context.face_offset_basis_geometry(offset_face)?,
+            context.face_geometry(basis_face)?,
+            1.0e-12,
+            &format!("{label} direct analytic offset basis geometry"),
+        )?;
+
+        match basis_kind {
+            SurfaceKind::Plane => assert_plane_payload_close(
+                context.face_offset_basis_plane_payload(offset_face)?,
+                context.face_plane_payload(basis_face)?,
+                1.0e-12,
+                "direct plane offset basis payload",
+            )?,
+            SurfaceKind::Cylinder => assert_cylinder_payload_close(
+                context.face_offset_basis_cylinder_payload(offset_face)?,
+                context.face_cylinder_payload(basis_face)?,
+                1.0e-12,
+                "direct cylinder offset basis payload",
+            )?,
+            SurfaceKind::Cone => assert_cone_payload_close(
+                context.face_offset_basis_cone_payload(offset_face)?,
+                context.face_cone_payload(basis_face)?,
+                1.0e-12,
+                "direct cone offset basis payload",
+            )?,
+            SurfaceKind::Sphere => assert_sphere_payload_close(
+                context.face_offset_basis_sphere_payload(offset_face)?,
+                context.face_sphere_payload(basis_face)?,
+                1.0e-12,
+                "direct sphere offset basis payload",
+            )?,
+            SurfaceKind::Torus => assert_torus_payload_close(
+                context.face_offset_basis_torus_payload(offset_face)?,
+                context.face_torus_payload(basis_face)?,
+                1.0e-12,
+                "direct torus offset basis payload",
+            )?,
+            _ => unreachable!("direct analytic offset test only covers analytic bases"),
+        }
+    }
+
     let extrusion_source_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
     let extrusion_direct_offset_face = context.make_offset_surface_face(
         &extrusion_source_face,
