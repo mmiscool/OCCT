@@ -43,7 +43,8 @@ use crate::ported_geometry::{
 use crate::{
     ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error,
     FaceGeometry, FaceSample, LoopRole, Mesh, MeshParams, Orientation, PlanePayload, PortedCurve,
-    PortedSurface, Shape, ShapeKind, ShapeSummary, SpherePayload, TopologySnapshot, TorusPayload,
+    PortedSurface, Shape, ShapeKind, ShapeSummary, SpherePayload, SurfaceKind, TopologySnapshot,
+    TorusPayload,
 };
 
 const SUMMARY_VOLUME_MESH_PARAMS: MeshParams = MeshParams {
@@ -180,6 +181,98 @@ impl BrepShape {
     }
 }
 
+fn strict_brep_raw_topology_fallback_allowed(
+    context: &Context,
+    shape: &Shape,
+) -> Result<bool, Error> {
+    Ok(!strict_brep_requires_ported_topology(context, shape)?)
+}
+
+fn strict_brep_requires_ported_topology(context: &Context, shape: &Shape) -> Result<bool, Error> {
+    let summary = context.describe_shape_occt(shape)?;
+    match summary.root_kind {
+        ShapeKind::Edge => strict_brep_root_edge_requires_ported_topology(context, shape),
+        ShapeKind::Wire => Ok(summary.face_count == 0 && summary.edge_count > 0),
+        ShapeKind::Face
+        | ShapeKind::Shell
+        | ShapeKind::Solid
+        | ShapeKind::CompSolid
+        | ShapeKind::Compound => {
+            if summary.face_count == 0 {
+                Ok(false)
+            } else {
+                strict_brep_face_inventory_requires_ported_topology(
+                    context,
+                    shape,
+                    summary.face_count,
+                )
+            }
+        }
+        ShapeKind::Unknown | ShapeKind::Vertex | ShapeKind::Shape => Ok(false),
+    }
+}
+
+fn strict_brep_root_edge_requires_ported_topology(
+    context: &Context,
+    shape: &Shape,
+) -> Result<bool, Error> {
+    let geometry = context.edge_geometry_occt(shape)?;
+    Ok(matches!(
+        geometry.kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    ))
+}
+
+fn strict_brep_face_inventory_requires_ported_topology(
+    context: &Context,
+    shape: &Shape,
+    face_count: usize,
+) -> Result<bool, Error> {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    if face_shapes.len() != face_count {
+        return Ok(false);
+    }
+
+    for face_shape in face_shapes {
+        let geometry = context.face_geometry_occt(&face_shape)?;
+        if !strict_brep_supported_surface_kind(geometry.kind) {
+            return Ok(false);
+        }
+    }
+
+    Ok(face_count > 0)
+}
+
+fn strict_brep_supported_surface_kind(kind: SurfaceKind) -> bool {
+    matches!(
+        kind,
+        SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus
+            | SurfaceKind::Revolution
+            | SurfaceKind::Extrusion
+            | SurfaceKind::Offset
+    )
+}
+
+fn strict_brep_missing_ported_topology_error(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Error, Error> {
+    let summary = context.describe_shape_occt(shape)?;
+    Ok(Error::new(format!(
+        "Rust-owned BRep materialization requires ported topology for supported {:?} root \
+         (faces={}, wires={}, edges={}, vertices={}), but the topology loader returned no snapshot",
+        summary.root_kind,
+        summary.face_count,
+        summary.wire_count,
+        summary.edge_count,
+        summary.vertex_count
+    )))
+}
+
 impl Context {
     pub fn ported_topology(&self, shape: &Shape) -> Result<Option<TopologySnapshot>, Error> {
         ported_topology_snapshot(self, shape)
@@ -196,6 +289,10 @@ impl Context {
                     FaceSurfaceRoute::Public,
                 ),
                 None => {
+                    if !strict_brep_raw_topology_fallback_allowed(self, shape)? {
+                        return Err(strict_brep_missing_ported_topology_error(self, shape)?);
+                    }
+
                     let prepared_shell_shapes = self
                         .subshapes_occt(shape, ShapeKind::Shell)?
                         .into_iter()

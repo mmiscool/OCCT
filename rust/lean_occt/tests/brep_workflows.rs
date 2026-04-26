@@ -705,6 +705,32 @@ fn assert_topology_matches(
     Ok(())
 }
 
+fn assert_supported_brep_materializes_from_ported_topology(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rust_topology = kernel
+        .context()
+        .ported_topology(shape)?
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust topology")))?;
+    let occt_topology = kernel.context().topology_occt(shape)?;
+    let brep = kernel.brep(shape)?;
+
+    assert_topology_matches(
+        &format!("{label} ported topology parity"),
+        &rust_topology,
+        &occt_topology,
+    )?;
+    assert_topology_matches(
+        &format!("{label} BRep topology source"),
+        &brep.topology,
+        &rust_topology,
+    )?;
+
+    Ok(())
+}
+
 fn topology_has_repeated_wire_edge_occurrence(topology: &lean_occt::TopologySnapshot) -> bool {
     topology.wires.iter().any(|wire| {
         let edge_indices = &topology.wire_edge_indices[wire.offset..wire.offset + wire.count];
@@ -1926,6 +1952,67 @@ fn ported_brep_uses_exact_curve_bounding_boxes() -> Result<(), Box<dyn std::erro
     ] {
         let brep = kernel.brep(shape)?;
         assert_brep_ported_curve_matches_public(&kernel, label, shape, &brep, expected_kind)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn supported_brep_materialization_requires_ported_topology(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let box_shape = kernel.make_box(BoxParams {
+        origin: [-10.0, -10.0, -10.0],
+        size: [20.0, 20.0, 20.0],
+    })?;
+    let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+    let helix = kernel.make_helix(HelixParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 20.0,
+        height: 30.0,
+        pitch: 10.0,
+    })?;
+    let prism = kernel.make_prism(
+        &ellipse,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
+    let revolution = kernel.make_revolution(
+        &ellipse,
+        RevolutionParams {
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angle_radians: PI,
+        },
+    )?;
+    let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let offset_surface = kernel.make_offset(
+        &revolution_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    for (label, shape) in [
+        ("analytic_box", &box_shape),
+        ("face_free_ellipse", &ellipse),
+        ("face_free_helix", &helix),
+        ("swept_extrusion", &prism),
+        ("swept_revolution", &revolution),
+        ("offset_surface", &offset_surface),
+    ] {
+        assert_supported_brep_materializes_from_ported_topology(&kernel, label, shape)?;
     }
 
     Ok(())
