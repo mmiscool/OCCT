@@ -229,7 +229,9 @@ fn strict_brep_root_edge_requires_ported_topology(
     context: &Context,
     shape: &Shape,
 ) -> Result<bool, Error> {
-    let geometry = context.edge_geometry_occt(shape)?;
+    let Some(geometry) = ported_root_edge_geometry(context, shape)? else {
+        return Ok(false);
+    };
     Ok(matches!(
         geometry.kind,
         CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse

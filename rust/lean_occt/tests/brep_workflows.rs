@@ -1998,6 +1998,14 @@ fn supported_brep_materialization_requires_ported_topology(
         origin: [-10.0, -10.0, -10.0],
         size: [20.0, 20.0, 20.0],
     })?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [18.0, -8.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 4.0,
+        height: 12.0,
+    })?;
+    let line_edge = find_first_edge_by_kind(&kernel, &box_shape, CurveKind::Line)?;
+    let circle_edge = find_first_edge_by_kind(&kernel, &cylinder, CurveKind::Circle)?;
     let ellipse = kernel.make_ellipse_edge(EllipseEdgeParams {
         origin: [30.0, 0.0, 0.0],
         axis: [0.0, 1.0, 0.0],
@@ -2036,9 +2044,35 @@ fn supported_brep_materialization_requires_ported_topology(
         },
     )?;
 
+    for (label, shape, expected_kind) in [
+        ("face_free_line_edge", &line_edge, CurveKind::Line),
+        ("face_free_circle_edge", &circle_edge, CurveKind::Circle),
+        ("face_free_ellipse_edge", &ellipse, CurveKind::Ellipse),
+    ] {
+        let geometry = kernel
+            .context()
+            .ported_edge_geometry(shape)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported geometry")))?;
+        assert_eq!(
+            geometry.kind, expected_kind,
+            "{label} should be classified by the Rust-owned root-edge inventory"
+        );
+        let rust_topology = kernel
+            .context()
+            .ported_topology(shape)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust topology")))?;
+        let brep = kernel.brep(shape)?;
+        assert_topology_matches(
+            &format!("{label} BRep topology source"),
+            &brep.topology,
+            &rust_topology,
+        )?;
+        assert_topology_edges_match_public_queries(&kernel, label, shape, &rust_topology, true)?;
+        assert_brep_ported_curve_matches_public(&kernel, label, shape, &brep, expected_kind)?;
+    }
+
     for (label, shape) in [
         ("analytic_box", &box_shape),
-        ("face_free_ellipse", &ellipse),
         ("face_free_helix", &helix),
         ("swept_extrusion", &prism),
         ("swept_revolution", &revolution),
@@ -2046,6 +2080,41 @@ fn supported_brep_materialization_requires_ported_topology(
     ] {
         assert_supported_brep_materializes_from_ported_topology(&kernel, label, shape)?;
     }
+
+    let helix_edge = kernel.context().subshape_occt(&helix, ShapeKind::Edge, 0)?;
+    let helix_edge_summary = kernel.context().describe_shape_occt(&helix_edge)?;
+    assert_eq!(
+        helix_edge_summary.root_kind,
+        ShapeKind::Edge,
+        "helix child edge should exercise unsupported root-edge strict gating"
+    );
+    let helix_edge_geometry = kernel.context().edge_geometry_occt(&helix_edge)?;
+    assert!(
+        !matches!(
+            helix_edge_geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ),
+        "helix edge should remain outside the supported root-edge family, got {:?}",
+        helix_edge_geometry.kind
+    );
+    assert!(
+        kernel.context().ported_topology(&helix_edge)?.is_none(),
+        "unsupported root edge should not produce Rust-owned topology"
+    );
+    assert!(
+        kernel
+            .context()
+            .ported_edge_geometry(&helix_edge)?
+            .is_none(),
+        "unsupported root edge should not produce Rust-owned edge geometry"
+    );
+    let helix_edge_brep = kernel.brep(&helix_edge)?;
+    let helix_edge_occt_topology = kernel.context().topology_occt(&helix_edge)?;
+    assert_topology_matches(
+        "unsupported root helix edge explicit raw BRep fallback",
+        &helix_edge_brep.topology,
+        &helix_edge_occt_topology,
+    )?;
 
     Ok(())
 }

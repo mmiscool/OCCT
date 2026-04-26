@@ -15,19 +15,19 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: `M38. Close Remaining Public Edge Geometry Raw Classifier` is complete. `Context::ported_edge_geometry()` now has no post-root `edge_geometry_occt()` classifier: supported root line/circle/ellipse geometry still returns through `brep::ported_root_edge_geometry()`, while unsupported roots, non-edge inputs, and other non-owned shapes return `Ok(None)` so raw geometry is available only through explicit public/oracle fallback calls. The removed non-root raw reconstruction branch also removed its now-unused line/periodic geometry helpers from the payload module. Regression coverage now asserts non-edge ported edge geometry returns `None`, unsupported helix root edges still stay outside the ported geometry/topology path, public unsupported-root geometry still matches the explicit raw oracle, and full geometry/BRep workflows stay green.
-- Active milestone: `M39. Rust-Owned Strict BRep Root Edge Support Gate`.
-- Next bounded cut: replace `strict_brep_root_edge_requires_ported_topology() -> edge_geometry_occt()` with a topology-owned/root-inventory classifier so the strict BRep gate no longer uses raw edge geometry to decide whether supported root line/circle/ellipse edges require ported topology.
+- Completed evidence: `M39. Rust-Owned Strict BRep Root Edge Support Gate` is complete. `strict_brep_root_edge_requires_ported_topology()` now classifies supported root edges through `ported_root_edge_geometry()` and no longer calls `edge_geometry_occt()`. The strict BRep regression now exercises root line, circle, and ellipse edges through Rust-owned root-edge geometry/topology before materialization, while a helix child edge remains explicitly unsupported by ported root topology/geometry and still materializes only through the raw BRep fallback. The strict-gate source guard is clean, the focused BRep workflows pass, `cmake --build build --target LeanOcctCAPI` is up to date, and the full Rust crate test suite is green.
+- Active milestone: `M40. Rust-Owned Public Edge Query Support Gates`.
+- Next bounded cut: replace the remaining public edge query support classifiers in `Context::edge_endpoints()`, `edge_sample()`, `edge_sample_at_parameter()`, and `edge_geometry()` so they no longer call `edge_geometry_occt()` merely to decide whether a supported root line/circle/ellipse edge should require Rust-owned query behavior; keep the explicit raw `_occt` methods and unsupported helix/raw fallback behavior intact.
 - Verification:
   - `(cd rust/lean_occt && cargo fmt)`
-  - `(cd rust/lean_occt && cargo check)`
-  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows unsupported_root_edge_does_not_use_generic_raw_topology_inventory -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_edge_geometry_returns_none_for_non_edge_shapes -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test brep_workflows)`
   - `cmake --build build --target LeanOcctCAPI`
-  - `! perl -0ne 'print $1 if /(pub fn ported_edge_geometry[\s\S]*?)\n    pub fn ported_face_geometry/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'edge_geometry_occt\('`
+  - `(cd rust/lean_occt && cargo check)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_root_edge_endpoints_are_topology_backed -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows unsupported_root_edge_does_not_use_generic_raw_topology_inventory -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture)`
+  - `! perl -0ne 'print $1 if /(pub fn edge_endpoints[\s\S]*?)\n    pub fn edge_geometry_occt/' rust/lean_occt/src/lib.rs | rg -n 'edge_geometry_occt\('`
   - `(cd rust/lean_occt && cargo test)`
   - `git diff --check`
 
@@ -491,10 +491,22 @@ Verification: `(cd rust/lean_occt && cargo fmt)`, `(cd rust/lean_occt && cargo c
 
 Outcome: the strict BRep materialization gate for root edge shapes stops using direct `edge_geometry_occt()` as its support classifier; supported root line/circle/ellipse requirements come from the Rust-owned root topology inventory, and unsupported root edges remain explicit raw/oracle-only cases.
 
-Status: active, not started. After M38, `ported_edge_geometry()` is clean, but `brep.rs::strict_brep_root_edge_requires_ported_topology()` still calls `context.edge_geometry_occt(shape)?` to decide whether a root edge must be materialized from ported topology. The M36/M37 root-edge topology inventory already owns that support classification for root line/circle/ellipse edges.
+Status: complete on 2026-04-26. `brep.rs::strict_brep_root_edge_requires_ported_topology()` now calls `ported_root_edge_geometry()` and no longer reads `context.edge_geometry_occt(shape)?` as a support classifier. The strict BRep workflow now proves root line, circle, and ellipse edges are classified by the Rust-owned root-edge inventory and materialize BRep topology from the Rust topology snapshot, while an unsupported helix child edge remains outside ported root topology/geometry and only materializes through the explicit raw BRep fallback. The strict-gate source guard is clean.
 
 Definition of done: no `edge_geometry_occt()` call remains in `strict_brep_root_edge_requires_ported_topology()`; supported root line/circle/ellipse BRep materialization still requires ported topology; unsupported root edge families such as helix remain outside the strict supported-edge requirement; `supported_brep_materialization_requires_ported_topology` and face-free BRep workflows stay green; and a source guard proves the strict root-edge gate is free of direct raw edge geometry calls.
 
 Bounded tasks: replace `strict_brep_root_edge_requires_ported_topology()` with a root topology inventory/`ported_root_edge_geometry()` classifier, add or strengthen regression coverage for supported root edge strict materialization and unsupported helix exclusion, and add the source guard before running full verification.
 
 Verification: `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, `(cd rust/lean_occt && cargo test --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture)`, `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture)`, `! perl -0ne 'print $1 if /(fn strict_brep_root_edge_requires_ported_topology[\s\S]*?)\nfn strict_brep_face_inventory_requires_ported_topology/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs | rg -n 'edge_geometry_occt\('`, `(cd rust/lean_occt && cargo test)`, `git diff --check`.
+
+## M40. Rust-Owned Public Edge Query Support Gates
+
+Outcome: public edge geometry, endpoint, and sampling queries stop using direct `edge_geometry_occt()` as the support classifier after their Rust-owned ported query path returns `None`; supported root line/circle/ellipse edges are identified through Rust-owned root-edge support, and unsupported root edge families keep explicit raw/oracle fallback behavior.
+
+Status: active, not started. After M39, the strict BRep root-edge gate is clean, but `Context::edge_endpoints()`, `edge_sample()`, `edge_sample_at_parameter()`, and `edge_geometry()` in `rust/lean_occt/src/lib.rs` still call `self.edge_geometry_occt(shape)?` only to decide whether a missing ported result should be treated as a required Rust-owned query or allowed to fall back to the raw `_occt` operation.
+
+Definition of done: no `edge_geometry_occt()` call remains in the public edge query support-gate bodies before `edge_geometry_occt()` itself; supported root line/circle/ellipse edge geometry/endpoints/samples still require the Rust-owned root-edge path; unsupported helix/root-edge public geometry, endpoint, and sample queries still resolve through explicit raw fallback; and regression/source guards cover the whole public edge query family.
+
+Bounded tasks: introduce a Rust-owned edge query support classifier backed by `ported_root_edge_geometry()` or the root topology inventory, replace the four public support-gate `edge_geometry_occt()` classifiers in `src/lib.rs`, keep raw `_occt` calls only as actual unsupported fallback/oracle operations, strengthen root edge endpoint/sample/unsupported helix coverage if needed, and add a source guard over the public edge query block.
+
+Verification: `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_root_edge_endpoints_are_topology_backed -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows unsupported_root_edge_does_not_use_generic_raw_topology_inventory -- --nocapture)`, `(cd rust/lean_occt && cargo test --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture)`, `! perl -0ne 'print $1 if /(pub fn edge_endpoints[\s\S]*?)\n    pub fn edge_geometry_occt/' rust/lean_occt/src/lib.rs | rg -n 'edge_geometry_occt\('`, `(cd rust/lean_occt && cargo test)`, `git diff --check`.
