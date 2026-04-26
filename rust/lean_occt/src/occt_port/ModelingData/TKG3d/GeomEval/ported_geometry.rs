@@ -15,8 +15,8 @@ use crate::brep::{
 };
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeGeometry, EdgeSample,
-    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, LinePayload,
-    OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
+    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, FaceUvBounds,
+    LinePayload, OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape,
     SpherePayload, SurfaceKind, TorusPayload,
 };
 
@@ -74,6 +74,25 @@ pub enum PortedFaceSurface {
     Analytic(PortedSurface),
     Swept(PortedSweptSurface),
     Offset(PortedOffsetSurface),
+}
+
+const ANALYTIC_SURFACE_KINDS: [SurfaceKind; 5] = [
+    SurfaceKind::Plane,
+    SurfaceKind::Cylinder,
+    SurfaceKind::Cone,
+    SurfaceKind::Sphere,
+    SurfaceKind::Torus,
+];
+
+fn is_analytic_surface_kind(kind: SurfaceKind) -> bool {
+    matches!(
+        kind,
+        SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus
+    )
 }
 
 impl PortedCurve {
@@ -724,35 +743,40 @@ impl Context {
     }
 
     pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
-        if self.face_geometry_occt(shape)?.kind == SurfaceKind::Offset {
-            return Ok(None);
+        let raw_geometry = self.face_geometry_occt(shape)?;
+
+        if matches!(
+            raw_geometry.kind,
+            SurfaceKind::Revolution | SurfaceKind::Extrusion | SurfaceKind::Offset
+        ) {
+            let descriptor = ported_face_surface_descriptor_value(self, shape, raw_geometry)?;
+            return match (raw_geometry.kind, descriptor) {
+                (
+                    SurfaceKind::Revolution,
+                    Some(PortedFaceSurface::Swept(PortedSweptSurface::Revolution { .. })),
+                )
+                | (
+                    SurfaceKind::Extrusion,
+                    Some(PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { .. })),
+                )
+                | (SurfaceKind::Offset, Some(PortedFaceSurface::Offset(_))) => {
+                    Ok(Some(raw_geometry))
+                }
+                _ => Ok(None),
+            };
         }
 
         let bounds = self.face_uv_bounds_occt(shape)?;
-        let plane_geometry = ported_analytic_face_geometry(SurfaceKind::Plane, bounds);
-        let cylinder_geometry = ported_analytic_face_geometry(SurfaceKind::Cylinder, bounds);
-        let cone_geometry = ported_analytic_face_geometry(SurfaceKind::Cone, bounds);
-        let sphere_geometry = ported_analytic_face_geometry(SurfaceKind::Sphere, bounds);
-        let torus_geometry = ported_analytic_face_geometry(SurfaceKind::Torus, bounds);
-
-        if ported_plane_payload(self, shape, plane_geometry)?.is_some() {
-            return Ok(Some(plane_geometry));
+        if is_analytic_surface_kind(raw_geometry.kind) {
+            return ported_analytic_face_geometry_candidate(self, shape, raw_geometry.kind, bounds);
         }
 
-        if ported_cylinder_payload(self, shape, cylinder_geometry)?.is_some() {
-            return Ok(Some(cylinder_geometry));
-        }
-
-        if ported_cone_payload(self, shape, cone_geometry)?.is_some() {
-            return Ok(Some(cone_geometry));
-        }
-
-        if ported_sphere_payload(self, shape, sphere_geometry)?.is_some() {
-            return Ok(Some(sphere_geometry));
-        }
-
-        if ported_torus_payload(self, shape, torus_geometry)?.is_some() {
-            return Ok(Some(torus_geometry));
+        for candidate_kind in ANALYTIC_SURFACE_KINDS {
+            if let Some(geometry) =
+                ported_analytic_face_geometry_candidate(self, shape, candidate_kind, bounds)?
+            {
+                return Ok(Some(geometry));
+            }
         }
 
         Ok(None)
@@ -846,7 +870,16 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<Option<PortedOffsetSurface>, Error> {
-        if self.face_geometry(shape)?.kind != SurfaceKind::Offset {
+        let geometry = self.face_geometry_occt(shape)?;
+        self.ported_offset_surface_with_geometry(shape, geometry)
+    }
+
+    pub(crate) fn ported_offset_surface_with_geometry(
+        &self,
+        shape: &Shape,
+        geometry: FaceGeometry,
+    ) -> Result<Option<PortedOffsetSurface>, Error> {
+        if geometry.kind != SurfaceKind::Offset {
             return Ok(None);
         }
 
@@ -901,6 +934,25 @@ impl Context {
             basis,
         }))
     }
+}
+
+fn ported_analytic_face_geometry_candidate(
+    context: &Context,
+    shape: &Shape,
+    kind: SurfaceKind,
+    bounds: FaceUvBounds,
+) -> Result<Option<FaceGeometry>, Error> {
+    let geometry = ported_analytic_face_geometry(kind, bounds);
+    let has_payload = match kind {
+        SurfaceKind::Plane => ported_plane_payload(context, shape, geometry)?.is_some(),
+        SurfaceKind::Cylinder => ported_cylinder_payload(context, shape, geometry)?.is_some(),
+        SurfaceKind::Cone => ported_cone_payload(context, shape, geometry)?.is_some(),
+        SurfaceKind::Sphere => ported_sphere_payload(context, shape, geometry)?.is_some(),
+        SurfaceKind::Torus => ported_torus_payload(context, shape, geometry)?.is_some(),
+        _ => false,
+    };
+
+    Ok(has_payload.then_some(geometry))
 }
 
 fn sample_line(payload: LinePayload, parameter: f64) -> EdgeSample {

@@ -51,7 +51,7 @@ fn ported_face_surface_descriptor_from_surface_with_route(
         return Ok(Some(PortedFaceSurface::Analytic(surface)));
     }
 
-    if let Some(surface) = context.ported_offset_surface(face_shape)? {
+    if let Some(surface) = context.ported_offset_surface_with_geometry(face_shape, face_geometry)? {
         return Ok(Some(PortedFaceSurface::Offset(surface)));
     }
 

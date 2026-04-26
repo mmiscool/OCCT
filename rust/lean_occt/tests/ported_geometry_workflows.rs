@@ -1052,6 +1052,10 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
     ] {
         let geometry = kernel.context().face_geometry(&face)?;
         let geometry_occt = kernel.context().face_geometry_occt(&face)?;
+        let ported_geometry = kernel
+            .context()
+            .ported_face_geometry(&face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} geometry")))?;
         let context_bounds = kernel.context().face_uv_bounds(&face)?;
         let occt_bounds = kernel.context().face_uv_bounds_occt(&face)?;
         let uv = geometry.center_uv();
@@ -1150,6 +1154,12 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
                 && (context_bounds.v_max - occt_bounds.v_max).abs() <= 1.0e-12,
             "{label} bounds mismatch: context={context_bounds:?} occt={occt_bounds:?}"
         );
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} ported geometry"),
+        )?;
         assert_face_geometry_close(geometry, geometry_occt, 1.0e-12, label)?;
         assert_vec3_close(rust_sample.position, occt_sample.position, 1.0e-7, label)?;
         assert_vec3_close(rust_sample.normal, occt_sample.normal, 1.0e-7, label)?;
@@ -2626,6 +2636,50 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
         (&revolution, SurfaceKind::Revolution),
     ] {
         let occt_face = find_first_face_by_kind(&kernel, shape, kind)?;
+        let geometry = kernel.context().face_geometry(&occt_face)?;
+        let geometry_occt = kernel.context().face_geometry_occt(&occt_face)?;
+        let ported_geometry = kernel
+            .context()
+            .ported_face_geometry(&occt_face)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!("expected Rust {:?} face geometry", kind))
+            })?;
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{kind:?} ported geometry"),
+        )?;
+        assert_face_geometry_close(
+            geometry,
+            geometry_occt,
+            1.0e-12,
+            &format!("{kind:?} occt geometry"),
+        )?;
+        let descriptor = kernel
+            .context()
+            .ported_face_surface_descriptor(&occt_face)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!("expected Rust {:?} face descriptor", kind))
+            })?;
+        match (kind, descriptor) {
+            (
+                SurfaceKind::Extrusion,
+                PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { .. }),
+            )
+            | (
+                SurfaceKind::Revolution,
+                PortedFaceSurface::Swept(PortedSweptSurface::Revolution { .. }),
+            ) => {}
+            (_, descriptor) => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected Rust {:?} face descriptor: {descriptor:?}",
+                    kind
+                ))
+                .into())
+            }
+        }
+
         for uv_t in [[0.5, 0.5], [0.2, 0.7]] {
             let rust_sample = kernel
                 .context()
@@ -2633,6 +2687,7 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
                 .ok_or_else(|| {
                     std::io::Error::other(format!("expected a ported {:?} face sample", kind))
                 })?;
+            let context_sample = kernel.context().face_sample_normalized(&occt_face, uv_t)?;
             let occt_sample = kernel
                 .context()
                 .face_sample_normalized_occt(&occt_face, uv_t)?;
@@ -2648,6 +2703,18 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
                 occt_sample.normal,
                 1.0e-6,
                 &format!("{kind:?} sample normal at {:?}", uv_t),
+            )?;
+            assert_vec3_close(
+                context_sample.position,
+                rust_sample.position,
+                1.0e-12,
+                &format!("{kind:?} public sample position at {:?}", uv_t),
+            )?;
+            assert_vec3_close(
+                context_sample.normal,
+                rust_sample.normal,
+                1.0e-12,
+                &format!("{kind:?} public sample normal at {:?}", uv_t),
             )?;
         }
     }
@@ -2693,10 +2760,31 @@ fn ported_offset_surface_sampling_matches_occt() -> Result<(), Box<dyn std::erro
     )?;
 
     let offset_face = find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?;
+    let geometry = kernel.context().face_geometry(&offset_face)?;
+    let geometry_occt = kernel.context().face_geometry_occt(&offset_face)?;
+    let ported_geometry = kernel
+        .context()
+        .ported_face_geometry(&offset_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust offset face geometry"))?;
+    assert_face_geometry_close(geometry, ported_geometry, 1.0e-12, "offset ported geometry")?;
+    assert_face_geometry_close(geometry, geometry_occt, 1.0e-12, "offset occt geometry")?;
+    let descriptor = require_ported_offset_face_surface(
+        kernel
+            .context()
+            .ported_face_surface_descriptor(&offset_face)?,
+        "offset sample descriptor",
+    )?;
+    assert_eq!(
+        descriptor.payload.basis_surface_kind,
+        SurfaceKind::Revolution
+    );
     let rust_sample = kernel
         .context()
         .ported_face_sample_normalized(&offset_face, [0.5, 0.5])?
         .ok_or_else(|| std::io::Error::other("expected ported offset surface sample"))?;
+    let context_sample = kernel
+        .context()
+        .face_sample_normalized(&offset_face, [0.5, 0.5])?;
     let occt_sample = kernel
         .context()
         .face_sample_normalized_occt(&offset_face, [0.5, 0.5])?;
@@ -2712,6 +2800,18 @@ fn ported_offset_surface_sampling_matches_occt() -> Result<(), Box<dyn std::erro
         occt_sample.normal,
         1.0e-6,
         "offset sample normal",
+    )?;
+    assert_vec3_close(
+        context_sample.position,
+        rust_sample.position,
+        1.0e-12,
+        "offset public sample position",
+    )?;
+    assert_vec3_close(
+        context_sample.normal,
+        rust_sample.normal,
+        1.0e-12,
+        "offset public sample normal",
     )?;
     assert!(offset_step.is_file());
 

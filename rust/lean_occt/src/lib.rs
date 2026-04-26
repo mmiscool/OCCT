@@ -1959,9 +1959,18 @@ impl Context {
     }
 
     pub fn face_sample(&self, shape: &Shape, uv: [f64; 2]) -> Result<FaceSample, Error> {
-        match self.ported_face_sample(shape, uv)? {
-            Some(sample) => Ok(sample),
-            None => self.face_sample_occt(shape, uv),
+        if let Some(sample) = self.ported_face_sample(shape, uv)? {
+            return Ok(sample);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if rust_owned_face_query_required(geometry.kind) {
+            Err(unsupported_ported_face_query_error(
+                "face sample",
+                geometry.kind,
+            ))
+        } else {
+            self.face_sample_occt(shape, uv)
         }
     }
 
@@ -1994,9 +2003,18 @@ impl Context {
         shape: &Shape,
         uv_t: [f64; 2],
     ) -> Result<FaceSample, Error> {
-        match self.ported_face_sample_normalized(shape, uv_t)? {
-            Some(sample) => Ok(sample),
-            None => self.face_sample_normalized_occt(shape, uv_t),
+        if let Some(sample) = self.ported_face_sample_normalized(shape, uv_t)? {
+            return Ok(sample);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if rust_owned_face_query_required(geometry.kind) {
+            Err(unsupported_ported_face_query_error(
+                "normalized face sample",
+                geometry.kind,
+            ))
+        } else {
+            self.face_sample_normalized_occt(shape, uv_t)
         }
     }
 
@@ -2029,9 +2047,18 @@ impl Context {
     }
 
     pub fn face_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
-        match self.ported_face_geometry(shape)? {
-            Some(geometry) => Ok(geometry),
-            None => self.face_geometry_occt(shape),
+        if let Some(geometry) = self.ported_face_geometry(shape)? {
+            return Ok(geometry);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if rust_owned_face_query_required(geometry.kind) {
+            Err(unsupported_ported_face_query_error(
+                "face geometry",
+                geometry.kind,
+            ))
+        } else {
+            Ok(geometry)
         }
     }
 
@@ -3492,6 +3519,26 @@ fn rust_owned_edge_query_required(kind: CurveKind) -> bool {
 fn unsupported_ported_edge_query_error(operation: &str, kind: CurveKind) -> Error {
     Error::new(format!(
         "Rust-owned {operation} extraction did not cover {kind:?} edge"
+    ))
+}
+
+fn rust_owned_face_query_required(kind: SurfaceKind) -> bool {
+    matches!(
+        kind,
+        SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus
+            | SurfaceKind::Revolution
+            | SurfaceKind::Extrusion
+            | SurfaceKind::Offset
+    )
+}
+
+fn unsupported_ported_face_query_error(operation: &str, kind: SurfaceKind) -> Error {
+    Error::new(format!(
+        "Rust-owned {operation} extraction did not cover {kind:?} face"
     ))
 }
 
