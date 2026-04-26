@@ -71,6 +71,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
@@ -527,6 +528,16 @@ static TopoDS_Shell requireShellShape(const LeanOcctShape* the_shape)
     throw std::invalid_argument("LeanOcctShape was not a shell.");
   }
   return TopoDS::Shell(a_shape);
+}
+
+static TopoDS_Solid requireSolidShape(const LeanOcctShape* the_shape)
+{
+  const TopoDS_Shape& a_shape = requireShape(the_shape);
+  if (a_shape.ShapeType() != TopAbs_SOLID)
+  {
+    throw std::invalid_argument("LeanOcctShape was not a solid.");
+  }
+  return TopoDS::Solid(a_shape);
 }
 
 static LeanOcctShape* makeBooleanResult(const TopoDS_Shape& the_lhs,
@@ -3232,6 +3243,106 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_shell_verte
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_solid_shell_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root solid shell count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_SHELL);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_shell(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_SHELL, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_solid_face_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root solid face count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_FACE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_face(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_FACE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_solid_wire_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root solid wire count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_WIRE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_wire(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_WIRE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_solid_edge_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root solid edge count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_edge(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_solid_vertex_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root solid vertex count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_vertex(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
   });
 }
 

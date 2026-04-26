@@ -2497,6 +2497,180 @@ fn assert_root_shell_public_inventory(
     Ok(())
 }
 
+fn assert_root_solid_public_inventory(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if topology.faces.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "{label} expected a non-empty root solid face inventory"
+        ))
+        .into());
+    }
+
+    let shell_count = kernel.context().subshape_count(shape, ShapeKind::Shell)?;
+    let shell_shapes = kernel.context().subshapes(shape, ShapeKind::Shell)?;
+    if shell_shapes.is_empty() || shell_shapes.len() != shell_count {
+        return Err(std::io::Error::other(format!(
+            "{label} root solid shell inventory mismatch: public={} count={shell_count}",
+            shell_shapes.len()
+        ))
+        .into());
+    }
+    for (index, shell_shape) in shell_shapes.iter().enumerate() {
+        let indexed_shell = kernel.context().subshape(shape, ShapeKind::Shell, index)?;
+        let public_shell_topology = kernel.context().topology_occt(shell_shape)?;
+        let indexed_shell_topology = kernel.context().topology_occt(&indexed_shell)?;
+        assert_topology_matches(
+            &format!("{label} public root solid shell {index} handle"),
+            &public_shell_topology,
+            &indexed_shell_topology,
+        )?;
+        let shell_label = format!("{label} public shell {index}");
+        let shell_rust_topology =
+            kernel
+                .context()
+                .ported_topology(shell_shape)?
+                .ok_or_else(|| {
+                    std::io::Error::other(format!("expected Rust topology for {shell_label}"))
+                })?;
+        assert_topology_matches(
+            &format!("{shell_label} topology"),
+            &shell_rust_topology,
+            &public_shell_topology,
+        )?;
+        assert_root_shell_public_inventory(
+            kernel,
+            &shell_label,
+            shell_shape,
+            &shell_rust_topology,
+        )?;
+    }
+
+    let face_shapes = kernel.context().subshapes(shape, ShapeKind::Face)?;
+    if face_shapes.len() != topology.faces.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root solid face handle mismatch: public={} topology={}",
+            face_shapes.len(),
+            topology.faces.len()
+        ))
+        .into());
+    }
+    for (index, face_shape) in face_shapes.iter().enumerate() {
+        let indexed_face = kernel.context().subshape(shape, ShapeKind::Face, index)?;
+        let public_face_topology = kernel.context().topology_occt(face_shape)?;
+        let indexed_face_topology = kernel.context().topology_occt(&indexed_face)?;
+        assert_topology_matches(
+            &format!("{label} public root solid face {index} handle"),
+            &public_face_topology,
+            &indexed_face_topology,
+        )?;
+        if public_face_topology.faces.len() != 1 {
+            return Err(std::io::Error::other(format!(
+                "{label} root solid face {index} expected isolated face topology, found {} faces",
+                public_face_topology.faces.len()
+            ))
+            .into());
+        }
+    }
+
+    let wire_shapes = kernel.context().subshapes(shape, ShapeKind::Wire)?;
+    if wire_shapes.len() != topology.wires.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root solid wire handle mismatch: public={} topology={}",
+            wire_shapes.len(),
+            topology.wires.len()
+        ))
+        .into());
+    }
+    for (index, wire_shape) in wire_shapes.iter().enumerate() {
+        let indexed_wire = kernel.context().subshape(shape, ShapeKind::Wire, index)?;
+        let public_wire_topology = kernel.context().topology_occt(wire_shape)?;
+        let indexed_wire_topology = kernel.context().topology_occt(&indexed_wire)?;
+        assert_topology_matches(
+            &format!("{label} public root solid wire {index} handle"),
+            &public_wire_topology,
+            &indexed_wire_topology,
+        )?;
+        if public_wire_topology.faces.len() != 0 || public_wire_topology.wires.len() != 1 {
+            return Err(std::io::Error::other(format!(
+                "{label} root solid wire {index} expected isolated wire topology, found wires={} faces={}",
+                public_wire_topology.wires.len(),
+                public_wire_topology.faces.len()
+            ))
+            .into());
+        }
+    }
+
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != topology.edges.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root solid edge handle mismatch: public={} topology={}",
+            edge_shapes.len(),
+            topology.edges.len()
+        ))
+        .into());
+    }
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let indexed_edge = kernel.context().subshape(shape, ShapeKind::Edge, index)?;
+        let public_edge_topology = kernel.context().topology_occt(edge_shape)?;
+        let indexed_edge_topology = kernel.context().topology_occt(&indexed_edge)?;
+        assert_topology_matches(
+            &format!("{label} public root solid edge {index} handle"),
+            &public_edge_topology,
+            &indexed_edge_topology,
+        )?;
+        let expected_length = match kernel.context().ported_edge_length(edge_shape)? {
+            Some(length) => length,
+            None => edge_shape.linear_length(),
+        };
+        let topology_length = topology
+            .edges
+            .get(index)
+            .map(|edge| edge.length)
+            .ok_or_else(|| {
+                std::io::Error::other(format!("{label} missing topology edge {index}"))
+            })?;
+        if (topology_length - expected_length).abs() > 1.0e-9 {
+            return Err(std::io::Error::other(format!(
+                "{label} root solid edge {index} length mismatch: topology={topology_length} public={expected_length}"
+            ))
+            .into());
+        }
+    }
+
+    let vertex_shapes = kernel.context().subshapes(shape, ShapeKind::Vertex)?;
+    if vertex_shapes.len() != topology.vertex_positions.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root solid vertex handle mismatch: public={} topology={}",
+            vertex_shapes.len(),
+            topology.vertex_positions.len()
+        ))
+        .into());
+    }
+    for (index, vertex_shape) in vertex_shapes.iter().enumerate() {
+        let indexed_vertex = kernel.context().subshape(shape, ShapeKind::Vertex, index)?;
+        let public_vertex_topology = kernel.context().topology_occt(vertex_shape)?;
+        let indexed_vertex_topology = kernel.context().topology_occt(&indexed_vertex)?;
+        assert_topology_matches(
+            &format!("{label} public root solid vertex {index} handle"),
+            &public_vertex_topology,
+            &indexed_vertex_topology,
+        )?;
+        let point = kernel.context().vertex_point(vertex_shape)?;
+        assert_vec3_close(
+            point,
+            topology.vertex_positions[index],
+            1.0e-8,
+            &format!("{label} root solid vertex {index} public point"),
+        )?;
+    }
+
+    Ok(())
+}
+
 #[test]
 fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2749,6 +2923,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_edges_match_public_queries(&kernel, label, shape, &rust_topology, true)?;
+        assert_root_solid_public_inventory(&kernel, label, shape, &rust_topology)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;

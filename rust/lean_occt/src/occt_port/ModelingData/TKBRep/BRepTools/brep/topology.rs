@@ -67,6 +67,9 @@ fn load_root_topology_snapshot(
     if root_shell_topology_inventory_required(context, shape)? {
         return load_root_shell_topology_snapshot(context, shape);
     }
+    if root_solid_topology_inventory_required(context, shape)? {
+        return load_root_solid_topology_snapshot(context, shape);
+    }
 
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
     let vertex_positions = vertex_shapes
@@ -576,6 +579,150 @@ fn load_root_shell_topology_snapshot(
         },
         shell_shape,
     }];
+
+    Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
+        vertex_positions,
+        edge_shapes,
+        wire_shapes,
+        prepared_shell_shapes,
+        face_shapes,
+        prepared_face_shapes,
+        edges,
+        root_edges,
+        root_wires,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    }))
+}
+
+fn root_solid_topology_inventory_required(context: &Context, shape: &Shape) -> Result<bool, Error> {
+    let summary = context.describe_shape_occt(shape)?;
+    Ok(summary.root_kind == ShapeKind::Solid
+        && summary.solid_count == 1
+        && summary.compsolid_count == 0
+        && summary.compound_count == 0
+        && summary.shell_count > 0
+        && summary.face_count > 0)
+}
+
+fn load_root_solid_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    let solid_shape = context.duplicate_shape_occt(shape)?;
+    let face_shapes = match context.root_solid_face_shapes_occt(&solid_shape) {
+        Ok(face_shapes) => attach_offset_result_face_metadata(context, shape, face_shapes)?,
+        Err(_) => return Ok(None),
+    };
+    if face_shapes.is_empty() {
+        return Ok(None);
+    }
+
+    let vertex_shapes = match context.root_solid_vertex_shapes_occt(&solid_shape) {
+        Ok(vertex_shapes) => vertex_shapes,
+        Err(_) => return Ok(None),
+    };
+    let vertex_positions = vertex_shapes
+        .iter()
+        .map(|vertex_shape| context.root_vertex_point_seed_occt(vertex_shape))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let edge_shapes = match context.root_solid_edge_shapes_occt(&solid_shape) {
+        Ok(edge_shapes) => edge_shapes,
+        Err(_) => return Ok(None),
+    };
+    let root_edges = edge_shapes
+        .iter()
+        .map(|edge_shape| root_edge_topology(context, edge_shape, &vertex_positions))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let root_solid_wire_shapes = match context.root_solid_wire_shapes_occt(&solid_shape) {
+        Ok(wire_shapes) => wire_shapes,
+        Err(_) => return Ok(None),
+    };
+    let mut prepared_wire_shapes = Vec::with_capacity(root_solid_wire_shapes.len());
+    for wire_shape in root_solid_wire_shapes {
+        let Some(prepared_wire_shape) = prepare_root_wire_shape(context, wire_shape)? else {
+            return Ok(None);
+        };
+        prepared_wire_shapes.push(prepared_wire_shape);
+    }
+    let wire_shapes = duplicate_prepared_wire_shapes(context, &prepared_wire_shapes)?;
+
+    let edges = root_edges
+        .iter()
+        .map(|edge| crate::TopologyEdge {
+            start_vertex: edge.start_vertex,
+            end_vertex: edge.end_vertex,
+            length: edge.length,
+        })
+        .collect::<Vec<_>>();
+
+    let mut root_wires = Vec::with_capacity(prepared_wire_shapes.len());
+    for prepared_wire_shape in &prepared_wire_shapes {
+        let Some(root_wire) = root_wire_topology(
+            context,
+            prepared_wire_shape,
+            &vertex_positions,
+            &edge_shapes,
+            &root_edges,
+        )?
+        else {
+            return Ok(None);
+        };
+        root_wires.push(root_wire);
+    }
+    let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
+        pack_wire_topology(&root_wires);
+
+    let mut prepared_face_shapes = Vec::with_capacity(face_shapes.len());
+    for (face_index, face_shape) in face_shapes.iter().enumerate() {
+        let Some(face_wire_shapes) = prepare_root_face_wire_shapes(context, face_shape)? else {
+            return Ok(None);
+        };
+        prepared_face_shapes.push(PreparedFaceShape {
+            face_index,
+            face_wire_shapes,
+        });
+    }
+
+    let root_solid_shell_shapes = match context.root_solid_shell_shapes_occt(&solid_shape) {
+        Ok(shell_shapes) => shell_shapes,
+        Err(_) => return Ok(None),
+    };
+    if root_solid_shell_shapes.is_empty() {
+        return Ok(None);
+    }
+    let multi_face_offset_metadata = shape
+        .multi_face_offset_result_metadata()
+        .map(|metadata| metadata.to_vec());
+    let mut prepared_shell_shapes = Vec::with_capacity(root_solid_shell_shapes.len());
+    for shell_shape in root_solid_shell_shapes {
+        let shell_shape = match &multi_face_offset_metadata {
+            Some(metadata) => shell_shape.with_multi_face_offset_result_metadata(metadata.clone()),
+            None => shell_shape,
+        };
+        let shell_vertex_shapes = match context.root_shell_vertex_shapes_occt(&shell_shape) {
+            Ok(vertex_shapes) => vertex_shapes,
+            Err(_) => return Ok(None),
+        };
+        let shell_edge_shapes = match context.root_shell_edge_shapes_occt(&shell_shape) {
+            Ok(edge_shapes) => edge_shapes,
+            Err(_) => return Ok(None),
+        };
+        let shell_face_shapes = match context.root_shell_face_shapes_occt(&shell_shape) {
+            Ok(face_shapes) => attach_offset_result_face_metadata(context, shape, face_shapes)?,
+            Err(_) => return Ok(None),
+        };
+        prepared_shell_shapes.push(PreparedShellShape {
+            shell_shape,
+            shell_vertex_shapes,
+            shell_edge_shapes,
+            shell_face_shapes,
+        });
+    }
 
     Ok(Some(TopologySnapshotRootFields {
         vertex_shapes,

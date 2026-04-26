@@ -863,6 +863,56 @@ mod ffi {
             shape: *const LeanOcctShape,
             index: usize,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_solid_shell_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_solid_shell(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_solid_face_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_solid_face(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_solid_wire_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_solid_wire(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_solid_edge_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_solid_edge(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_solid_vertex_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_solid_vertex(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_wire_edge_occurrence_count(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -3751,6 +3801,156 @@ impl Context {
                 ffi::lean_occt_shape_root_shell_vertex(
                     self.raw.as_ptr(),
                     shell_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_solid_shell_shapes_occt(
+        &self,
+        solid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_solid_shell_count(
+                self.raw.as_ptr(),
+                solid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_solid_shell(
+                    self.raw.as_ptr(),
+                    solid_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_solid_face_shapes_occt(
+        &self,
+        solid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_solid_face_count(
+                self.raw.as_ptr(),
+                solid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_solid_face(
+                    self.raw.as_ptr(),
+                    solid_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_solid_wire_shapes_occt(
+        &self,
+        solid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_solid_wire_count(
+                self.raw.as_ptr(),
+                solid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_solid_wire(
+                    self.raw.as_ptr(),
+                    solid_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_solid_edge_shapes_occt(
+        &self,
+        solid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_solid_edge_count(
+                self.raw.as_ptr(),
+                solid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_solid_edge(
+                    self.raw.as_ptr(),
+                    solid_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_solid_vertex_shapes_occt(
+        &self,
+        solid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_solid_vertex_count(
+                self.raw.as_ptr(),
+                solid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_solid_vertex(
+                    self.raw.as_ptr(),
+                    solid_shape.raw.as_ptr(),
                     index,
                 )
             };
