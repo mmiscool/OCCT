@@ -304,6 +304,94 @@ fn pack_ported_face_snapshot(
     }))
 }
 
+fn single_wire_face_snapshot_from_root_wire(
+    context: &Context,
+    prepared_face_shapes: &[PreparedFaceShape],
+    root_wires: &[RootWireTopology],
+    edge_count: usize,
+) -> Result<Option<TopologySnapshotFaceFields>, Error> {
+    let [prepared_face_shape] = prepared_face_shapes else {
+        return Ok(None);
+    };
+    if prepared_face_shape.face_index != 0 {
+        return Ok(None);
+    }
+    let [face_wire_shape] = prepared_face_shape.face_wire_shapes.as_slice() else {
+        return Ok(None);
+    };
+    let [root_wire] = root_wires else {
+        return Ok(None);
+    };
+
+    let mut edge_face_lists = vec![Vec::new(); edge_count];
+    let mut used_edges = BTreeSet::new();
+    used_edges.extend(root_wire.edge_indices.iter().copied());
+    for edge_index in used_edges {
+        let Some(edge_faces) = edge_face_lists.get_mut(edge_index) else {
+            return Ok(None);
+        };
+        edge_faces.push(0);
+    }
+
+    let total_edge_face_count = edge_face_lists.iter().map(Vec::len).sum();
+    let mut edge_faces = Vec::with_capacity(edge_face_lists.len());
+    let mut edge_face_indices = Vec::with_capacity(total_edge_face_count);
+    for face_indices in edge_face_lists {
+        edge_faces.push(crate::TopologyRange {
+            offset: edge_face_indices.len(),
+            count: face_indices.len(),
+        });
+        edge_face_indices.extend(face_indices);
+    }
+
+    Ok(Some(TopologySnapshotFaceFields {
+        edge_faces,
+        edge_face_indices,
+        faces: vec![crate::TopologyRange {
+            offset: 0,
+            count: 1,
+        }],
+        face_wire_indices: vec![0],
+        face_wire_orientations: vec![context.shape_orientation(&face_wire_shape.wire_shape)?],
+        face_wire_roles: vec![LoopRole::Outer],
+    }))
+}
+
+fn zero_wire_face_snapshot(
+    prepared_face_shapes: &[PreparedFaceShape],
+    root_wires: &[RootWireTopology],
+    edge_count: usize,
+) -> Option<TopologySnapshotFaceFields> {
+    let [prepared_face_shape] = prepared_face_shapes else {
+        return None;
+    };
+    if prepared_face_shape.face_index != 0
+        || !prepared_face_shape.face_wire_shapes.is_empty()
+        || !root_wires.is_empty()
+        || edge_count != 0
+    {
+        return None;
+    }
+
+    Some(TopologySnapshotFaceFields {
+        edge_faces: vec![
+            crate::TopologyRange {
+                offset: 0,
+                count: 0,
+            };
+            edge_count
+        ],
+        edge_face_indices: Vec::new(),
+        faces: vec![crate::TopologyRange {
+            offset: 0,
+            count: 0,
+        }],
+        face_wire_indices: Vec::new(),
+        face_wire_orientations: Vec::new(),
+        face_wire_roles: Vec::new(),
+    })
+}
+
 pub(super) fn load_ported_face_snapshot(
     context: &Context,
     prepared_face_shapes: &[PreparedFaceShape],
@@ -330,7 +418,7 @@ pub(super) fn load_ported_face_snapshot(
         }
     }
 
-    pack_ported_face_snapshot(
+    let packed = pack_ported_face_snapshot(
         context,
         prepared_face_shapes,
         face_shapes,
@@ -339,5 +427,14 @@ pub(super) fn load_ported_face_snapshot(
         edge_shapes,
         vertex_positions,
         edge_count,
-    )
+    )?;
+    if packed.is_some() {
+        return Ok(packed);
+    }
+
+    if let Some(snapshot) = zero_wire_face_snapshot(prepared_face_shapes, root_wires, edge_count) {
+        return Ok(Some(snapshot));
+    }
+
+    single_wire_face_snapshot_from_root_wire(context, prepared_face_shapes, root_wires, edge_count)
 }

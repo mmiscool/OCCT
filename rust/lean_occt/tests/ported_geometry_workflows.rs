@@ -1494,6 +1494,17 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             &format!("{label} context UV sample normal"),
         )?;
         if label.starts_with("offset") {
+            let topology = kernel.context().ported_topology(&face)?.ok_or_else(|| {
+                std::io::Error::other(format!("expected ported {label} topology"))
+            })?;
+            assert_eq!(topology.faces.len(), 1);
+            if label == "offset-extrusion" {
+                assert!(
+                    topology.wires.is_empty() && topology.edges.is_empty(),
+                    "offset-extrusion should exercise the Rust zero-wire single-face topology path"
+                );
+            }
+
             let rust_area = kernel
                 .context()
                 .ported_face_area(&face)?

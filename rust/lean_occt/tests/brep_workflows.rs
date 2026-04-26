@@ -957,6 +957,31 @@ fn assert_topology_edges_match_public_queries(
     Ok(())
 }
 
+fn assert_single_face_ported_area_matches_brep(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    brep: &lean_occt::BrepShape,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ported_area = kernel
+        .context()
+        .ported_face_area(shape)?
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing public ported area")))?;
+    let brep_face = brep
+        .faces
+        .first()
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing BRep face")))?;
+    if (brep_face.area - ported_area).abs() > 1.0e-8 {
+        return Err(std::io::Error::other(format!(
+            "{label} single-face public area mismatch: brep={} public={ported_area}",
+            brep_face.area
+        ))
+        .into());
+    }
+
+    Ok(())
+}
+
 fn assert_summary_backed_subshape_counts_match(
     kernel: &ModelKernel,
     label: &str,
@@ -2008,6 +2033,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
         assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
+        assert_single_face_ported_area_matches_brep(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
         assert!(
             matches!(

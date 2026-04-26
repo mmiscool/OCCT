@@ -1,4 +1,5 @@
 use super::brep_materialize::{ported_brep_edge_geometry_and_curve, ported_brep_wires};
+use super::topology::load_ported_topology;
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -14,18 +15,24 @@ pub(super) struct SingleFaceTopology {
     pub(super) edge_shapes: Vec<Shape>,
 }
 
+struct SingleFaceTopologySnapshot {
+    topology: TopologySnapshot,
+    edge_shapes: Vec<Shape>,
+}
+
 pub(super) fn single_face_topology_with_route(
     context: &Context,
     face_shape: &Shape,
     route: FaceSurfaceRoute,
 ) -> Result<Option<SingleFaceTopology>, Error> {
-    let topology = match single_face_topology_snapshot(context, face_shape)? {
-        Some(topology) => topology,
+    let snapshot = match single_face_topology_snapshot(context, face_shape)? {
+        Some(snapshot) => snapshot,
         None => return Ok(None),
     };
 
+    let topology = snapshot.topology;
     let wires = ported_brep_wires(&topology);
-    let edge_shapes = context.subshapes_occt(face_shape, ShapeKind::Edge)?;
+    let edge_shapes = snapshot.edge_shapes;
     let edges = edge_shapes
         .iter()
         .enumerate()
@@ -43,15 +50,18 @@ pub(super) fn single_face_topology_with_route(
 fn single_face_topology_snapshot(
     context: &Context,
     face_shape: &Shape,
-) -> Result<Option<TopologySnapshot>, Error> {
-    let topology = match context.ported_topology(face_shape)? {
-        Some(topology) => topology,
-        None => context.topology_occt(face_shape)?,
+) -> Result<Option<SingleFaceTopologySnapshot>, Error> {
+    let loaded = match load_ported_topology(context, face_shape)? {
+        Some(loaded) => loaded,
+        None => return Ok(None),
     };
-    if topology.faces.len() != 1 {
+    if loaded.topology.faces.len() != 1 {
         return Ok(None);
     }
-    Ok(Some(topology))
+    Ok(Some(SingleFaceTopologySnapshot {
+        topology: loaded.topology,
+        edge_shapes: loaded.edge_shapes,
+    }))
 }
 
 fn single_face_edge_with_route(
