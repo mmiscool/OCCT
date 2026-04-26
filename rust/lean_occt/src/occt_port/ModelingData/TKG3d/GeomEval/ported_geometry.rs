@@ -92,17 +92,6 @@ const ANALYTIC_SURFACE_KINDS: [SurfaceKind; 5] = [
     SurfaceKind::Torus,
 ];
 
-fn is_analytic_surface_kind(kind: SurfaceKind) -> bool {
-    matches!(
-        kind,
-        SurfaceKind::Plane
-            | SurfaceKind::Cylinder
-            | SurfaceKind::Cone
-            | SurfaceKind::Sphere
-            | SurfaceKind::Torus
-    )
-}
-
 fn ported_analytic_surface_kind(surface: PortedSurface) -> SurfaceKind {
     match surface {
         PortedSurface::Plane(_) => SurfaceKind::Plane,
@@ -783,37 +772,16 @@ impl Context {
             return Ok(Some(geometry));
         }
 
-        let raw_geometry = self.face_geometry_occt(shape)?;
-
-        if matches!(
-            raw_geometry.kind,
-            SurfaceKind::Revolution | SurfaceKind::Extrusion
-        ) {
-            let descriptor = ported_face_surface_descriptor_value(self, shape, raw_geometry)?;
-            return match (raw_geometry.kind, descriptor) {
-                (
-                    SurfaceKind::Revolution,
-                    Some(PortedFaceSurface::Swept(PortedSweptSurface::Revolution { .. })),
-                )
-                | (
-                    SurfaceKind::Extrusion,
-                    Some(PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { .. })),
-                ) => Ok(Some(raw_geometry)),
-                _ => Ok(None),
-            };
-        }
-
         let bounds = self.face_uv_bounds_occt(shape)?;
-        if is_analytic_surface_kind(raw_geometry.kind) {
-            return ported_analytic_face_geometry_candidate(self, shape, raw_geometry.kind, bounds);
-        }
-
         for candidate_kind in ANALYTIC_SURFACE_KINDS {
             if let Some(geometry) =
                 ported_analytic_face_geometry_candidate(self, shape, candidate_kind, bounds)?
             {
                 return Ok(Some(geometry));
             }
+        }
+        if let Some(geometry) = ported_swept_face_geometry_candidate(self, shape, bounds)? {
+            return Ok(Some(geometry));
         }
 
         Ok(None)
@@ -991,6 +959,86 @@ pub(crate) fn ported_swept_face_surface_from_samples(
     geometry: FaceGeometry,
 ) -> Result<Option<PortedSweptSurface>, Error> {
     ported_offset_basis_swept_surface_payload(context, shape, 0.0, geometry)
+}
+
+fn ported_swept_face_geometry_candidate(
+    context: &Context,
+    shape: &Shape,
+    bounds: FaceUvBounds,
+) -> Result<Option<FaceGeometry>, Error> {
+    for candidate_kind in [SurfaceKind::Extrusion, SurfaceKind::Revolution] {
+        let seed_geometry = ported_swept_face_geometry_seed(candidate_kind, bounds);
+        let Some(surface) = ported_swept_face_surface_from_samples(context, shape, seed_geometry)?
+        else {
+            continue;
+        };
+        if ported_swept_surface_kind(surface) != candidate_kind {
+            continue;
+        }
+        return Ok(Some(ported_swept_face_geometry_from_surface(
+            seed_geometry,
+            surface,
+        )));
+    }
+
+    Ok(None)
+}
+
+fn ported_swept_face_geometry_seed(kind: SurfaceKind, bounds: FaceUvBounds) -> FaceGeometry {
+    FaceGeometry {
+        kind,
+        u_min: bounds.u_min,
+        u_max: bounds.u_max,
+        v_min: bounds.v_min,
+        v_max: bounds.v_max,
+        is_u_closed: false,
+        is_v_closed: false,
+        is_u_periodic: false,
+        is_v_periodic: false,
+        u_period: 0.0,
+        v_period: 0.0,
+    }
+}
+
+fn ported_swept_face_geometry_from_surface(
+    mut geometry: FaceGeometry,
+    surface: PortedSweptSurface,
+) -> FaceGeometry {
+    let basis_geometry = match surface {
+        PortedSweptSurface::Revolution { basis_geometry, .. }
+        | PortedSweptSurface::Extrusion { basis_geometry, .. } => basis_geometry,
+    };
+    let basis_on_u = basis_parameter_on_u(geometry, basis_geometry);
+    let (sweep_closed, sweep_periodic, sweep_period) = match surface {
+        PortedSweptSurface::Revolution { .. } => (false, true, TAU),
+        PortedSweptSurface::Extrusion { .. } => (false, false, 0.0),
+    };
+
+    if basis_on_u {
+        geometry.is_u_closed = basis_geometry.is_closed;
+        geometry.is_u_periodic = basis_geometry.is_periodic;
+        geometry.u_period = if basis_geometry.is_periodic {
+            basis_geometry.period
+        } else {
+            0.0
+        };
+        geometry.is_v_closed = sweep_closed;
+        geometry.is_v_periodic = sweep_periodic;
+        geometry.v_period = sweep_period;
+    } else {
+        geometry.is_u_closed = sweep_closed;
+        geometry.is_u_periodic = sweep_periodic;
+        geometry.u_period = sweep_period;
+        geometry.is_v_closed = basis_geometry.is_closed;
+        geometry.is_v_periodic = basis_geometry.is_periodic;
+        geometry.v_period = if basis_geometry.is_periodic {
+            basis_geometry.period
+        } else {
+            0.0
+        };
+    }
+
+    geometry
 }
 
 fn ported_offset_surface_from_metadata_face_geometry(

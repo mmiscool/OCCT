@@ -3860,6 +3860,38 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn ported_face_geometry_classifies_swept_before_raw_geometry() {
+    let source = include_str!("../src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs");
+    let function = source
+        .split("    pub fn ported_face_geometry")
+        .nth(1)
+        .expect("ported_face_geometry source should be present")
+        .split("    pub fn ported_edge_curve")
+        .next()
+        .expect("ported_face_geometry source should end before ported_edge_curve");
+    assert!(
+        function.contains("ported_swept_face_geometry_candidate(self, shape, bounds)?"),
+        "ported_face_geometry should try Rust swept geometry"
+    );
+    assert!(
+        !function.contains("face_geometry_occt(shape)"),
+        "ported_face_geometry must not call the raw face-geometry classifier"
+    );
+    assert!(
+        !function.contains("SurfaceKind::Revolution | SurfaceKind::Extrusion"),
+        "raw geometry must not classify supported swept faces"
+    );
+    assert!(
+        !function.contains("PortedFaceSurface::Swept"),
+        "raw geometry must not dispatch through the swept descriptor"
+    );
+    assert!(
+        !function.contains("ported_face_surface_descriptor_value"),
+        "raw geometry must not own swept descriptor validation"
+    );
+}
+
+#[test]
 fn ported_offset_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
