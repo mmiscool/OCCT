@@ -1,3 +1,4 @@
+use std::f64::consts::TAU;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::c_char;
@@ -1585,6 +1586,7 @@ impl Context {
     }
 
     pub fn make_cylinder(&self, params: CylinderParams) -> Result<Shape, Error> {
+        let rust_metadata = cylinder_analytic_result_metadata(params);
         let raw_params = ffi::LeanOcctCylinderParams {
             x: params.origin[0],
             y: params.origin[1],
@@ -1597,7 +1599,7 @@ impl Context {
         };
 
         let raw = unsafe { ffi::lean_occt_shape_make_cylinder(self.raw.as_ptr(), &raw_params) };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_cone(&self, params: ConeParams) -> Result<Shape, Error> {
@@ -4646,6 +4648,69 @@ fn box_analytic_face_metadata_inventory(
 
 fn box_size_component_supported(value: f64) -> bool {
     value.is_finite() && value > 1.0e-12
+}
+
+fn cylinder_analytic_result_metadata(params: CylinderParams) -> ShapeRustMetadata {
+    match cylinder_analytic_face_metadata_inventory(params) {
+        Some(inventory) if !inventory.is_empty() => {
+            ShapeRustMetadata::MultiFaceAnalyticResult(inventory)
+        }
+        _ => ShapeRustMetadata::None,
+    }
+}
+
+fn cylinder_analytic_face_metadata_inventory(
+    params: CylinderParams,
+) -> Option<Vec<AnalyticSurfaceFaceMetadata>> {
+    if !params.origin.iter().all(|value| value.is_finite())
+        || !params.axis.iter().all(|value| value.is_finite())
+        || vector_norm3(params.axis) <= 1.0e-12
+        || !cylinder_size_component_supported(params.radius)
+        || !cylinder_size_component_supported(params.height)
+    {
+        return None;
+    }
+
+    let mut inventory = Vec::new();
+    push_unique_analytic_face_metadata(
+        &mut inventory,
+        AnalyticSurfaceFaceMetadata {
+            geometry_seed: cylinder_face_geometry_seed(0.0, TAU, 0.0, params.height),
+        },
+    );
+    push_unique_analytic_face_metadata(
+        &mut inventory,
+        AnalyticSurfaceFaceMetadata {
+            geometry_seed: plane_face_geometry_seed(
+                -params.radius,
+                params.radius,
+                -params.radius,
+                params.radius,
+            ),
+        },
+    );
+
+    Some(inventory)
+}
+
+fn cylinder_size_component_supported(value: f64) -> bool {
+    value.is_finite() && value > 1.0e-12
+}
+
+fn cylinder_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
+    FaceGeometry {
+        kind: SurfaceKind::Cylinder,
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+        is_u_closed: true,
+        is_v_closed: false,
+        is_u_periodic: true,
+        is_v_periodic: false,
+        u_period: TAU,
+        v_period: 0.0,
+    }
 }
 
 fn plane_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {

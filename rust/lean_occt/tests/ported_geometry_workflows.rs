@@ -2428,6 +2428,117 @@ fn ported_box_plane_faces_use_rust_analytic_seed_metadata() -> Result<(), Box<dy
 }
 
 #[test]
+fn ported_cylinder_faces_use_rust_analytic_seed_metadata() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let context = kernel.context();
+
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [3.0, -5.0, 7.0],
+        axis: [0.0, 0.0, 2.0],
+        radius: 4.5,
+        height: 17.25,
+    })?;
+    assert_eq!(cylinder.rust_multi_face_analytic_source_count(), Some(2));
+
+    let faces = context.subshapes(&cylinder, ShapeKind::Face)?;
+    assert_eq!(faces.len(), 3);
+
+    let mut cylinder_face_count = 0;
+    let mut cap_face_count = 0;
+    for (face_index, face) in faces.iter().enumerate() {
+        assert!(
+            face.has_rust_analytic_surface_face_metadata(),
+            "cylinder face {face_index} should carry Rust analytic seed metadata"
+        );
+
+        let geometry = context.face_geometry(face)?;
+        let ported_geometry = context
+            .ported_face_geometry(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust cylinder analytic geometry"))?;
+        let occt_geometry = context.face_geometry_occt(face)?;
+        match geometry.kind {
+            SurfaceKind::Cylinder => cylinder_face_count += 1,
+            SurfaceKind::Plane => cap_face_count += 1,
+            kind => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected cylinder constructor face kind {kind:?}"
+                ))
+                .into())
+            }
+        }
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("cylinder face {face_index} ported geometry"),
+        )?;
+        assert_face_geometry_close(
+            ported_geometry,
+            occt_geometry,
+            1.0e-12,
+            &format!("cylinder face {face_index} OCCT geometry"),
+        )?;
+
+        let descriptor = context
+            .ported_face_surface_descriptor(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust cylinder analytic descriptor"))?;
+        match descriptor {
+            PortedFaceSurface::Analytic(surface) => {
+                assert_eq!(ported_surface_kind(surface), geometry.kind);
+            }
+            descriptor => {
+                return Err(std::io::Error::other(format!(
+                    "cylinder face {face_index} should classify as analytic, got {descriptor:?}"
+                ))
+                .into())
+            }
+        }
+
+        let orientation = context.shape_orientation(face)?;
+        for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+            let rust_sample =
+                descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+            let context_sample = context
+                .ported_face_sample_normalized(face, uv_t)?
+                .ok_or_else(|| std::io::Error::other("expected Rust cylinder analytic sample"))?;
+            let occt_sample = context.face_sample_normalized_occt(face, uv_t)?;
+
+            assert_vec3_close(
+                rust_sample.position,
+                occt_sample.position,
+                1.0e-6,
+                &format!("cylinder face {face_index} descriptor sample position"),
+            )?;
+            assert_vec3_close(
+                rust_sample.normal,
+                occt_sample.normal,
+                1.0e-6,
+                &format!("cylinder face {face_index} descriptor sample normal"),
+            )?;
+            assert_vec3_close(
+                context_sample.position,
+                rust_sample.position,
+                1.0e-12,
+                &format!("cylinder face {face_index} context sample position"),
+            )?;
+            assert_vec3_close(
+                context_sample.normal,
+                rust_sample.normal,
+                1.0e-12,
+                &format!("cylinder face {face_index} context sample normal"),
+            )?;
+        }
+    }
+
+    assert_eq!(cylinder_face_count, 1);
+    assert_eq!(cap_face_count, 2);
+
+    Ok(())
+}
+
+#[test]
 fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
