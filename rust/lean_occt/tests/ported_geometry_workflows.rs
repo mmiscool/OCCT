@@ -1096,11 +1096,26 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             angle_radians: PI,
         },
     )?;
+    let extrusion_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
     let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
     let offset_face_shape = kernel.make_offset(
         &revolution_face,
         OffsetParams {
             offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let extrusion_offset_face = kernel.context().make_offset_surface_face(
+        &extrusion_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let revolution_offset_face = kernel.context().make_offset_surface_face(
+        &revolution_face,
+        OffsetParams {
+            offset: 1.25,
             tolerance: 1.0e-4,
         },
     )?;
@@ -1151,12 +1166,14 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
             find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?,
             [0.5, 0.5],
         ),
+        ("extrusion", extrusion_face, [0.2, 0.7]),
+        ("revolution", revolution_face, [0.2, 0.7]),
+        ("offset-extrusion", extrusion_offset_face, [0.2, 0.7]),
         (
-            "extrusion",
-            find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?,
+            "offset-revolution-direct",
+            revolution_offset_face,
             [0.2, 0.7],
         ),
-        ("revolution", revolution_face, [0.2, 0.7]),
         (
             "offset-revolution",
             find_first_face_by_kind(&kernel, &offset_face_shape, SurfaceKind::Offset)?,
@@ -1200,7 +1217,17 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
                 assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
                 assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
             }
-            ("offset-revolution", PortedFaceSurface::Offset(surface)) => {
+            ("offset-extrusion", PortedFaceSurface::Offset(surface)) => {
+                assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Extrusion);
+                assert!(matches!(
+                    surface.basis,
+                    PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { .. })
+                ));
+            }
+            (
+                "offset-revolution" | "offset-revolution-direct",
+                PortedFaceSurface::Offset(surface),
+            ) => {
                 assert_eq!(surface.payload.basis_surface_kind, SurfaceKind::Revolution);
                 assert!(matches!(
                     surface.basis,
@@ -1864,6 +1891,13 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
         },
     )?;
     let extrusion_source_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let extrusion_direct_offset_face = context.make_offset_surface_face(
+        &extrusion_source_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
     let extrusion_offset_shape = kernel.make_offset(
         &extrusion_source_face,
         OffsetParams {
@@ -1873,6 +1907,13 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
     )?;
     let revolution_source_face =
         find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let revolution_direct_offset_face = context.make_offset_surface_face(
+        &revolution_source_face,
+        OffsetParams {
+            offset: 1.25,
+            tolerance: 1.0e-4,
+        },
+    )?;
     let revolution_offset_shape = kernel.make_offset(
         &revolution_source_face,
         OffsetParams {
@@ -1893,9 +1934,19 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             find_first_face_by_kind(&kernel, &extrusion_offset_shape, SurfaceKind::Offset)?,
         ),
         (
+            "extrusion-direct",
+            SurfaceKind::Extrusion,
+            extrusion_direct_offset_face,
+        ),
+        (
             "revolution",
             SurfaceKind::Revolution,
             find_first_face_by_kind(&kernel, &revolution_offset_shape, SurfaceKind::Offset)?,
+        ),
+        (
+            "revolution-direct",
+            SurfaceKind::Revolution,
+            revolution_direct_offset_face,
         ),
     ] {
         let offset_payload = context.face_offset_payload(&offset_face)?;

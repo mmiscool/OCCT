@@ -2,13 +2,16 @@ use std::f64::consts::TAU;
 
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry,
-    EllipsePayload, Error, FaceGeometry, FaceSample, FaceUvBounds, LinePayload, Orientation,
-    PlanePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
+    EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample, FaceUvBounds,
+    LinePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape, SpherePayload,
+    SurfaceKind, TorusPayload,
 };
 
 use super::{
-    add3, cross3, dot3, norm3, normalize3, sample_circle, sample_cone, sample_cylinder,
-    sample_ellipse, sample_sphere, sample_torus, scale3, subtract3, Atan2Components, PortedSurface,
+    add3, cross3, dot3, norm3, normalize3, rotate_point_about_axis, sample_circle, sample_cone,
+    sample_cylinder, sample_ellipse, sample_extrusion_surface_normalized, sample_line,
+    sample_revolution_surface_normalized, sample_sphere, sample_torus, scale3, subtract3,
+    Atan2Components, PortedCurve, PortedSurface, PortedSweptSurface,
 };
 
 pub(super) fn ported_line_geometry(
@@ -224,6 +227,25 @@ pub(super) fn ported_circle_payload(
         return Ok(None);
     }
 
+    let mut sample_position = |parameter| {
+        Ok(context
+            .edge_sample_at_parameter_occt(shape, parameter)?
+            .position)
+    };
+    ported_circle_payload_from_position_samples(geometry, &mut sample_position)
+}
+
+fn ported_circle_payload_from_position_samples<F>(
+    geometry: EdgeGeometry,
+    mut sample_position: F,
+) -> Result<Option<CirclePayload>, Error>
+where
+    F: FnMut(f64) -> Result<[f64; 3], Error>,
+{
+    if geometry.kind != CurveKind::Circle {
+        return Ok(None);
+    }
+
     let parameters =
         trigonometric_curve_probe_parameters(geometry.start_parameter, geometry.end_parameter);
     let [parameter0, parameter1, parameter2] =
@@ -232,12 +254,13 @@ pub(super) fn ported_circle_payload(
             None => return Ok(None),
         };
 
-    let sample0 = context.edge_sample_at_parameter_occt(shape, parameter0)?;
-    let sample1 = context.edge_sample_at_parameter_occt(shape, parameter1)?;
-    let sample2 = context.edge_sample_at_parameter_occt(shape, parameter2)?;
     let (center, x_component, y_component) = match solve_trigonometric_curve_components(
         [parameter0, parameter1, parameter2],
-        [sample0.position, sample1.position, sample2.position],
+        [
+            sample_position(parameter0)?,
+            sample_position(parameter1)?,
+            sample_position(parameter2)?,
+        ],
     ) {
         Some(value) => value,
         None => return Ok(None),
@@ -266,10 +289,9 @@ pub(super) fn ported_circle_payload(
     };
 
     for parameter in parameters {
-        let sample = context.edge_sample_at_parameter_occt(shape, parameter)?;
         if !approx_points_eq(
             sample_circle(payload, parameter).position,
-            sample.position,
+            sample_position(parameter)?,
             1.0e-7,
         ) {
             return Ok(None);
@@ -288,6 +310,25 @@ pub(super) fn ported_ellipse_payload(
         return Ok(None);
     }
 
+    let mut sample_position = |parameter| {
+        Ok(context
+            .edge_sample_at_parameter_occt(shape, parameter)?
+            .position)
+    };
+    ported_ellipse_payload_from_position_samples(geometry, &mut sample_position)
+}
+
+fn ported_ellipse_payload_from_position_samples<F>(
+    geometry: EdgeGeometry,
+    mut sample_position: F,
+) -> Result<Option<EllipsePayload>, Error>
+where
+    F: FnMut(f64) -> Result<[f64; 3], Error>,
+{
+    if geometry.kind != CurveKind::Ellipse {
+        return Ok(None);
+    }
+
     let parameters =
         trigonometric_curve_probe_parameters(geometry.start_parameter, geometry.end_parameter);
     let [parameter0, parameter1, parameter2] =
@@ -296,12 +337,13 @@ pub(super) fn ported_ellipse_payload(
             None => return Ok(None),
         };
 
-    let sample0 = context.edge_sample_at_parameter_occt(shape, parameter0)?;
-    let sample1 = context.edge_sample_at_parameter_occt(shape, parameter1)?;
-    let sample2 = context.edge_sample_at_parameter_occt(shape, parameter2)?;
     let (center, x_component, y_component) = match solve_trigonometric_curve_components(
         [parameter0, parameter1, parameter2],
-        [sample0.position, sample1.position, sample2.position],
+        [
+            sample_position(parameter0)?,
+            sample_position(parameter1)?,
+            sample_position(parameter2)?,
+        ],
     ) {
         Some(value) => value,
         None => return Ok(None),
@@ -330,10 +372,9 @@ pub(super) fn ported_ellipse_payload(
     };
 
     for parameter in parameters {
-        let sample = context.edge_sample_at_parameter_occt(shape, parameter)?;
         if !approx_points_eq(
             sample_ellipse(payload, parameter).position,
-            sample.position,
+            sample_position(parameter)?,
             1.0e-7,
         ) {
             return Ok(None);
@@ -1036,6 +1077,488 @@ pub(super) fn ported_offset_basis_surface_payload(
             )
         }
         _ => Ok(None),
+    }
+}
+
+pub(super) fn ported_offset_basis_swept_surface_payload(
+    context: &Context,
+    shape: &Shape,
+    offset: f64,
+    basis_geometry: FaceGeometry,
+) -> Result<Option<PortedSweptSurface>, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    let natural_normal_sign = if matches!(orientation, Orientation::Reversed) {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut sample_basis = |uv| {
+        let offset_sample = context.face_sample_occt(shape, uv)?;
+        let natural_normal = scale3(offset_sample.normal, natural_normal_sign);
+        Ok(FaceSample {
+            position: subtract3(offset_sample.position, scale3(natural_normal, offset)),
+            normal: natural_normal,
+        })
+    };
+
+    match basis_geometry.kind {
+        SurfaceKind::Extrusion => {
+            ported_offset_basis_extrusion_payload_from_samples(basis_geometry, &mut sample_basis)
+        }
+        SurfaceKind::Revolution => {
+            ported_offset_basis_revolution_payload_from_samples(basis_geometry, &mut sample_basis)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn ported_offset_basis_extrusion_payload_from_samples<F>(
+    basis_geometry: FaceGeometry,
+    sample_basis: &mut F,
+) -> Result<Option<PortedSweptSurface>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    for curve_on_u in [true, false] {
+        let direction =
+            match extrusion_direction_from_samples(basis_geometry, curve_on_u, sample_basis)? {
+                Some(direction) => direction,
+                None => continue,
+            };
+        let (sweep_start, sweep_end) = sweep_parameter_range(basis_geometry, curve_on_u);
+        let reference_sweep = reference_sweep_parameter(sweep_start, sweep_end);
+        let mut sample_curve_position = |parameter| {
+            let uv = swept_uv(curve_on_u, parameter, reference_sweep);
+            let sample = sample_basis(uv)?;
+            Ok(subtract3(
+                sample.position,
+                scale3(direction, reference_sweep),
+            ))
+        };
+        let (basis_curve, basis_curve_geometry) =
+            match ported_swept_basis_curve_from_position_samples(
+                basis_geometry,
+                curve_on_u,
+                &mut sample_curve_position,
+            )? {
+                Some(value) => value,
+                None => continue,
+            };
+        let payload = ExtrusionSurfacePayload {
+            direction,
+            basis_curve_kind: ported_curve_kind(basis_curve),
+        };
+
+        if validates_extrusion_basis_surface(
+            basis_geometry,
+            payload,
+            basis_curve,
+            basis_curve_geometry,
+            sample_basis,
+        )? {
+            return Ok(Some(PortedSweptSurface::Extrusion {
+                payload,
+                basis_curve,
+                basis_geometry: basis_curve_geometry,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+fn ported_offset_basis_revolution_payload_from_samples<F>(
+    basis_geometry: FaceGeometry,
+    sample_basis: &mut F,
+) -> Result<Option<PortedSweptSurface>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    for curve_on_u in [true, false] {
+        let (axis_origin, axis_direction) =
+            match revolution_axis_from_samples(basis_geometry, curve_on_u, sample_basis)? {
+                Some(axis) => axis,
+                None => continue,
+            };
+        let (sweep_start, sweep_end) = sweep_parameter_range(basis_geometry, curve_on_u);
+        let reference_sweep = reference_sweep_parameter(sweep_start, sweep_end);
+        let mut sample_curve_position = |parameter| {
+            let uv = swept_uv(curve_on_u, parameter, reference_sweep);
+            let sample = sample_basis(uv)?;
+            Ok(rotate_point_about_axis(
+                sample.position,
+                axis_origin,
+                axis_direction,
+                -reference_sweep,
+            ))
+        };
+        let (basis_curve, basis_curve_geometry) =
+            match ported_swept_basis_curve_from_position_samples(
+                basis_geometry,
+                curve_on_u,
+                &mut sample_curve_position,
+            )? {
+                Some(value) => value,
+                None => continue,
+            };
+        let payload = RevolutionSurfacePayload {
+            axis_origin,
+            axis_direction,
+            basis_curve_kind: ported_curve_kind(basis_curve),
+        };
+
+        if validates_revolution_basis_surface(
+            basis_geometry,
+            payload,
+            basis_curve,
+            basis_curve_geometry,
+            sample_basis,
+        )? {
+            return Ok(Some(PortedSweptSurface::Revolution {
+                payload,
+                basis_curve,
+                basis_geometry: basis_curve_geometry,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+fn extrusion_direction_from_samples<F>(
+    geometry: FaceGeometry,
+    curve_on_u: bool,
+    sample_basis: &mut F,
+) -> Result<Option<[f64; 3]>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    let (curve_start, curve_end) = curve_parameter_range(geometry, curve_on_u);
+    let curve_mid = 0.5 * (curve_start + curve_end);
+    let (sweep_start, sweep_end) = sweep_parameter_range(geometry, curve_on_u);
+    let sweep_span = sweep_end - sweep_start;
+    if sweep_span.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let derivative_at_curve = |sample_basis: &mut F, curve_parameter| -> Result<[f64; 3], Error> {
+        let start = sample_basis(swept_uv(curve_on_u, curve_parameter, sweep_start))?;
+        let end = sample_basis(swept_uv(curve_on_u, curve_parameter, sweep_end))?;
+        Ok(scale3(
+            subtract3(end.position, start.position),
+            1.0 / sweep_span,
+        ))
+    };
+
+    let derivative0 = derivative_at_curve(sample_basis, curve_start)?;
+    let derivative1 = derivative_at_curve(sample_basis, curve_mid)?;
+    let direction0 = normalize3(derivative0);
+    let direction1 = normalize3(derivative1);
+    if norm3(direction0) <= 1.0e-12 || norm3(direction1) <= 1.0e-12 {
+        return Ok(None);
+    }
+    if dot3(direction0, direction1) < 1.0 - 1.0e-7 {
+        return Ok(None);
+    }
+
+    let direction = normalize3(add3(direction0, direction1));
+    if norm3(direction) <= 1.0e-12 {
+        return Ok(None);
+    }
+    Ok(Some(direction))
+}
+
+fn revolution_axis_from_samples<F>(
+    geometry: FaceGeometry,
+    curve_on_u: bool,
+    sample_basis: &mut F,
+) -> Result<Option<([f64; 3], [f64; 3])>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    let (curve_start, curve_end) = curve_parameter_range(geometry, curve_on_u);
+    let curve_probe = 0.5 * (curve_start + curve_end);
+    let (sweep_start, sweep_end) = sweep_parameter_range(geometry, curve_on_u);
+    let sweep_parameters = trigonometric_curve_probe_parameters(sweep_start, sweep_end);
+    let sweep_parameters = match select_trigonometric_curve_parameters(sweep_parameters) {
+        Some(parameters) => parameters,
+        None => return Ok(None),
+    };
+
+    let (origin, axis_direction) = match revolution_axis_components_at_curve_parameter(
+        curve_on_u,
+        curve_start,
+        sweep_parameters,
+        sample_basis,
+    )? {
+        Some(axis) => axis,
+        None => return Ok(None),
+    };
+    let (probe_origin, probe_axis_direction) = match revolution_axis_components_at_curve_parameter(
+        curve_on_u,
+        curve_probe,
+        sweep_parameters,
+        sample_basis,
+    )? {
+        Some(axis) => axis,
+        None => return Ok(None),
+    };
+
+    if dot3(axis_direction, probe_axis_direction) < 1.0 - 1.0e-7 {
+        return Ok(None);
+    }
+    let center_delta = subtract3(probe_origin, origin);
+    if norm3(center_delta) > 1.0e-8
+        && norm3(cross3(center_delta, axis_direction)) > 1.0e-6 * norm3(center_delta)
+    {
+        return Ok(None);
+    }
+
+    Ok(Some((origin, axis_direction)))
+}
+
+fn revolution_axis_components_at_curve_parameter<F>(
+    curve_on_u: bool,
+    curve_parameter: f64,
+    sweep_parameters: [f64; 3],
+    sample_basis: &mut F,
+) -> Result<Option<([f64; 3], [f64; 3])>, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    let positions = [
+        sample_basis(swept_uv(curve_on_u, curve_parameter, sweep_parameters[0]))?.position,
+        sample_basis(swept_uv(curve_on_u, curve_parameter, sweep_parameters[1]))?.position,
+        sample_basis(swept_uv(curve_on_u, curve_parameter, sweep_parameters[2]))?.position,
+    ];
+    let (center, x_component, y_component) =
+        match solve_trigonometric_curve_components(sweep_parameters, positions) {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+    let axis_direction = normalize3(cross3(x_component, y_component));
+    if norm3(axis_direction) <= 1.0e-12
+        || norm3(x_component) <= 1.0e-12
+        || norm3(y_component) <= 1.0e-12
+    {
+        return Ok(None);
+    }
+    Ok(Some((center, axis_direction)))
+}
+
+fn ported_swept_basis_curve_from_position_samples<F>(
+    basis_geometry: FaceGeometry,
+    curve_on_u: bool,
+    sample_position: &mut F,
+) -> Result<Option<(PortedCurve, EdgeGeometry)>, Error>
+where
+    F: FnMut(f64) -> Result<[f64; 3], Error>,
+{
+    let closed = {
+        let (start, end) = curve_parameter_range(basis_geometry, curve_on_u);
+        approx_points_eq(sample_position(start)?, sample_position(end)?, 1.0e-7)
+    };
+
+    let line_geometry =
+        swept_basis_curve_geometry(basis_geometry, curve_on_u, CurveKind::Line, closed);
+    if let Some(payload) =
+        ported_line_payload_from_position_samples(line_geometry, &mut *sample_position)?
+    {
+        return Ok(Some((PortedCurve::Line(payload), line_geometry)));
+    }
+
+    let circle_geometry =
+        swept_basis_curve_geometry(basis_geometry, curve_on_u, CurveKind::Circle, closed);
+    if let Some(payload) =
+        ported_circle_payload_from_position_samples(circle_geometry, &mut *sample_position)?
+    {
+        return Ok(Some((PortedCurve::Circle(payload), circle_geometry)));
+    }
+
+    let ellipse_geometry =
+        swept_basis_curve_geometry(basis_geometry, curve_on_u, CurveKind::Ellipse, closed);
+    if let Some(payload) =
+        ported_ellipse_payload_from_position_samples(ellipse_geometry, &mut *sample_position)?
+    {
+        return Ok(Some((PortedCurve::Ellipse(payload), ellipse_geometry)));
+    }
+
+    Ok(None)
+}
+
+fn ported_line_payload_from_position_samples<F>(
+    geometry: EdgeGeometry,
+    mut sample_position: F,
+) -> Result<Option<LinePayload>, Error>
+where
+    F: FnMut(f64) -> Result<[f64; 3], Error>,
+{
+    if geometry.kind != CurveKind::Line {
+        return Ok(None);
+    }
+
+    let endpoints = EdgeEndpoints {
+        start: sample_position(geometry.start_parameter)?,
+        end: sample_position(geometry.end_parameter)?,
+    };
+    let payload = match ported_line_payload_from_endpoints(geometry, endpoints) {
+        Some(payload) => payload,
+        None => return Ok(None),
+    };
+
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let parameter = geometry.start_parameter
+            + (geometry.end_parameter - geometry.start_parameter) * fraction;
+        if !approx_points_eq(
+            sample_line(payload, parameter).position,
+            sample_position(parameter)?,
+            1.0e-7,
+        ) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(payload))
+}
+
+fn validates_extrusion_basis_surface<F>(
+    face_geometry: FaceGeometry,
+    payload: ExtrusionSurfacePayload,
+    basis_curve: PortedCurve,
+    basis_geometry: EdgeGeometry,
+    sample_basis: &mut F,
+) -> Result<bool, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    for uv_t in [
+        [0.0, 0.0],
+        [0.25, 0.75],
+        [0.5, 0.5],
+        [0.75, 0.25],
+        [1.0, 1.0],
+    ] {
+        let uv = normalized_uv_to_uv(face_geometry, uv_t);
+        let actual = sample_basis(uv)?;
+        let expected = sample_extrusion_surface_normalized(
+            basis_curve,
+            face_geometry,
+            basis_geometry,
+            uv_t,
+            payload.direction,
+            Orientation::Forward,
+        );
+        if !approx_points_eq(expected.position, actual.position, 1.0e-6)
+            || !approx_points_eq(expected.normal, actual.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validates_revolution_basis_surface<F>(
+    face_geometry: FaceGeometry,
+    payload: RevolutionSurfacePayload,
+    basis_curve: PortedCurve,
+    basis_geometry: EdgeGeometry,
+    sample_basis: &mut F,
+) -> Result<bool, Error>
+where
+    F: FnMut([f64; 2]) -> Result<FaceSample, Error>,
+{
+    for uv_t in [
+        [0.0, 0.0],
+        [0.25, 0.75],
+        [0.5, 0.5],
+        [0.75, 0.25],
+        [1.0, 1.0],
+    ] {
+        let uv = normalized_uv_to_uv(face_geometry, uv_t);
+        let actual = sample_basis(uv)?;
+        let expected = sample_revolution_surface_normalized(
+            basis_curve,
+            face_geometry,
+            basis_geometry,
+            uv_t,
+            payload.axis_origin,
+            payload.axis_direction,
+            Orientation::Forward,
+        );
+        if !approx_points_eq(expected.position, actual.position, 1.0e-6)
+            || !approx_points_eq(expected.normal, actual.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn swept_basis_curve_geometry(
+    face_geometry: FaceGeometry,
+    curve_on_u: bool,
+    kind: CurveKind,
+    is_closed: bool,
+) -> EdgeGeometry {
+    let (start_parameter, end_parameter) = curve_parameter_range(face_geometry, curve_on_u);
+    EdgeGeometry {
+        kind,
+        start_parameter,
+        end_parameter,
+        is_closed,
+        is_periodic: matches!(kind, CurveKind::Circle | CurveKind::Ellipse),
+        period: if matches!(kind, CurveKind::Circle | CurveKind::Ellipse) {
+            TAU
+        } else {
+            0.0
+        },
+    }
+}
+
+fn curve_parameter_range(face_geometry: FaceGeometry, curve_on_u: bool) -> (f64, f64) {
+    if curve_on_u {
+        (face_geometry.u_min, face_geometry.u_max)
+    } else {
+        (face_geometry.v_min, face_geometry.v_max)
+    }
+}
+
+fn sweep_parameter_range(face_geometry: FaceGeometry, curve_on_u: bool) -> (f64, f64) {
+    if curve_on_u {
+        (face_geometry.v_min, face_geometry.v_max)
+    } else {
+        (face_geometry.u_min, face_geometry.u_max)
+    }
+}
+
+fn swept_uv(curve_on_u: bool, curve_parameter: f64, sweep_parameter: f64) -> [f64; 2] {
+    if curve_on_u {
+        [curve_parameter, sweep_parameter]
+    } else {
+        [sweep_parameter, curve_parameter]
+    }
+}
+
+fn reference_sweep_parameter(start: f64, end: f64) -> f64 {
+    if start <= 0.0 && 0.0 <= end {
+        0.0
+    } else {
+        start
+    }
+}
+
+fn normalized_uv_to_uv(geometry: FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
+    [
+        geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
+        geometry.v_min + (geometry.v_max - geometry.v_min) * uv_t[1],
+    ]
+}
+
+fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
+    match curve {
+        PortedCurve::Line(_) => CurveKind::Line,
+        PortedCurve::Circle(_) => CurveKind::Circle,
+        PortedCurve::Ellipse(_) => CurveKind::Ellipse,
     }
 }
 

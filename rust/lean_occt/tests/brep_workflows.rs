@@ -501,7 +501,7 @@ fn assert_brep_analytic_faces_use_rust_surface_route(
     Ok(())
 }
 
-fn assert_analytic_offset_brep_uses_rust_basis(
+fn assert_offset_brep_uses_rust_basis(
     kernel: &ModelKernel,
     label: &str,
     source: &Shape,
@@ -2040,6 +2040,12 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
         major_radius: 10.0,
         minor_radius: 6.0,
     })?;
+    let prism = kernel.make_prism(
+        &ellipse,
+        PrismParams {
+            direction: [0.0, 24.0, 0.0],
+        },
+    )?;
     let revolution = kernel.make_revolution(
         &ellipse,
         RevolutionParams {
@@ -2185,8 +2191,10 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
         ("cone", &cone, SurfaceKind::Cone),
         ("sphere", &sphere, SurfaceKind::Sphere),
         ("torus", &torus, SurfaceKind::Torus),
+        ("extrusion", &prism, SurfaceKind::Extrusion),
+        ("revolution", &revolution, SurfaceKind::Revolution),
     ] {
-        assert_analytic_offset_brep_uses_rust_basis(&kernel, label, source, expected_kind)?;
+        assert_offset_brep_uses_rust_basis(&kernel, label, source, expected_kind)?;
     }
 
     Ok(())

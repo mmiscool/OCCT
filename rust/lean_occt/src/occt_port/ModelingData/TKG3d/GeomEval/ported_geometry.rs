@@ -872,46 +872,30 @@ impl Context {
                 None => return Ok(None),
             },
             SurfaceKind::Revolution => {
-                let payload = self.face_offset_basis_revolution_payload_occt(shape)?;
-                let basis_geometry = self.face_offset_basis_curve_geometry_occt(shape)?;
-                let basis_curve = match payload.basis_curve_kind {
-                    CurveKind::Line => {
-                        PortedCurve::Line(self.face_offset_basis_curve_line_payload_occt(shape)?)
-                    }
-                    CurveKind::Circle => PortedCurve::Circle(
-                        self.face_offset_basis_curve_circle_payload_occt(shape)?,
-                    ),
-                    CurveKind::Ellipse => PortedCurve::Ellipse(
-                        self.face_offset_basis_curve_ellipse_payload_occt(shape)?,
-                    ),
-                    _ => return Ok(None),
-                };
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    payload,
-                    basis_curve,
+                match ported_offset_basis_swept_surface_payload(
+                    self,
+                    shape,
+                    payload.offset_value,
                     basis_geometry,
-                })
+                )? {
+                    Some(surface @ PortedSweptSurface::Revolution { .. }) => {
+                        PortedOffsetBasisSurface::Swept(surface)
+                    }
+                    _ => return Ok(None),
+                }
             }
             SurfaceKind::Extrusion => {
-                let payload = self.face_offset_basis_extrusion_payload_occt(shape)?;
-                let basis_geometry = self.face_offset_basis_curve_geometry_occt(shape)?;
-                let basis_curve = match payload.basis_curve_kind {
-                    CurveKind::Line => {
-                        PortedCurve::Line(self.face_offset_basis_curve_line_payload_occt(shape)?)
-                    }
-                    CurveKind::Circle => PortedCurve::Circle(
-                        self.face_offset_basis_curve_circle_payload_occt(shape)?,
-                    ),
-                    CurveKind::Ellipse => PortedCurve::Ellipse(
-                        self.face_offset_basis_curve_ellipse_payload_occt(shape)?,
-                    ),
-                    _ => return Ok(None),
-                };
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    payload,
-                    basis_curve,
+                match ported_offset_basis_swept_surface_payload(
+                    self,
+                    shape,
+                    payload.offset_value,
                     basis_geometry,
-                })
+                )? {
+                    Some(surface @ PortedSweptSurface::Extrusion { .. }) => {
+                        PortedOffsetBasisSurface::Swept(surface)
+                    }
+                    _ => return Ok(None),
+                }
             }
             _ => return Ok(None),
         };
