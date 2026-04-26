@@ -2356,6 +2356,12 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
     assert!(error
         .to_string()
         .contains("requested Revolution payload for ported Extrusion face"));
+    let error = context
+        .face_plane_payload(&extrusion_face)
+        .expect_err("extrusion face should reject analytic plane payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Plane payload for ported Extrusion face"));
 
     let revolution = kernel.make_revolution(
         &ellipse_edge,

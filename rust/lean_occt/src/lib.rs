@@ -2405,7 +2405,12 @@ impl Context {
             return Ok(surface);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
+        let Some(geometry) = self.ported_face_geometry(shape)? else {
+            return Err(unsupported_ported_surface_payload_error(
+                expected,
+                SurfaceKind::Unknown,
+            ));
+        };
         if geometry.kind != expected {
             return Err(mismatched_ported_surface_payload_error(
                 expected,
@@ -2413,7 +2418,7 @@ impl Context {
             ));
         }
 
-        PortedSurface::from_context_with_geometry(self, shape, geometry)?
+        PortedSurface::from_context_with_ported_payloads(self, shape, geometry)?
             .ok_or_else(|| unsupported_ported_surface_payload_error(expected, geometry.kind))
     }
 
@@ -2426,7 +2431,12 @@ impl Context {
             return Ok(surface);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
+        let Some(geometry) = self.ported_face_geometry(shape)? else {
+            return Err(unsupported_ported_surface_payload_error(
+                expected,
+                SurfaceKind::Unknown,
+            ));
+        };
         if geometry.kind != expected {
             return Err(mismatched_ported_surface_payload_error(
                 expected,

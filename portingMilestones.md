@@ -15,19 +15,18 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: `M42. Rust-Owned Strict BRep Face Inventory Support Gate` is complete. `strict_brep_face_inventory_requires_ported_topology()` now uses the crate-internal `rust_owned_face_query_required_kind()` descriptor-backed classifier for every enumerated face instead of calling `context.face_geometry_occt(&face_shape)?` as a support classifier. The old duplicated strict surface-kind matcher was removed, face-count mismatch and unsupported-inventory behavior are unchanged, and the new private regression covers analytic multi-face, swept extrusion, direct offset surface, and count-mismatch cases. The strict inventory source guard is clean, the focused BRep/ported-geometry workflows are green, and the full Rust crate test suite is green.
-- Active milestone: `M43. Rust-Owned Public Face Payload Mismatch Gates`.
-- Next bounded cut: replace the remaining direct `face_geometry_occt()` support/mismatch classifiers in `Context::ported_analytic_face_surface_payload()` and `Context::ported_swept_face_surface_payload()` with descriptor-backed Rust support/kind decisions, preserving explicit mismatch errors and unsupported raw oracle APIs while keeping public analytic and swept payload behavior covered by workflow tests plus source guards.
+- Completed evidence: `M43. Rust-Owned Public Face Payload Mismatch Gates` is complete. `Context::ported_analytic_face_surface_payload()` and `Context::ported_swept_face_surface_payload()` no longer call `face_geometry_occt()` after a Rust descriptor miss; both helpers now classify the remaining branch through `ported_face_geometry()` and Rust payload/descriptor reconstruction, preserving explicit mismatch errors for supported wrong-kind faces. The public swept/offset workflow now forces a swept extrusion face through an analytic plane payload request, covering the branch that previously asked the raw classifier for the mismatch. Both helper source guards are clean, the focused public payload workflows are green, the full Rust crate test suite is green, and `git diff --check` is clean.
+- Active milestone: `M44. Rust-Owned Offset Metadata Basis Support Gate`.
+- Next bounded cut: replace the direct `face_geometry_occt()` support classifier in `Context::offset_surface_face_metadata_candidate()` with Rust-owned ported face-geometry/descriptor classification, so direct offset construction metadata for analytic and swept bases no longer depends on raw OCCT face kind reads while unsupported bases continue to return `None`.
 - Verification:
   - `(cd rust/lean_occt && cargo fmt)`
   - `cmake --build build --target LeanOcctCAPI`
   - `(cd rust/lean_occt && cargo check)`
-  - `(cd rust/lean_occt && cargo test strict_brep_face_inventory_gate_uses_rust_face_support --lib -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture)`
-  - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_offset_surface_sampling_matches_occt -- --nocapture)`
+  - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture)`
   - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture)`
-  - `! awk '/fn strict_brep_face_inventory_requires_ported_topology/,/^}/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs | rg -n 'face_geometry_occt\('`
+  - `! awk '/fn offset_surface_face_metadata_candidate/,/^    }/' rust/lean_occt/src/lib.rs | rg -n 'face_geometry_occt\('`
   - `(cd rust/lean_occt && cargo test)`
   - `git diff --check`
 
@@ -539,10 +538,22 @@ Verification: `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target 
 
 Outcome: public analytic and swept face payload helper paths stop using direct `face_geometry_occt()` reads after a Rust descriptor miss merely to decide kind mismatch or support.
 
-Status: active, not started. After M42, the strict BRep inventory gate is clean, but `Context::ported_analytic_face_surface_payload()` and `Context::ported_swept_face_surface_payload()` in `rust/lean_occt/src/lib.rs` still call `self.face_geometry_occt(shape)?` after `ported_face_surface()` or `ported_face_surface_descriptor()` returns `None`. Those calls are support/mismatch classifiers for public plane/cylinder/cone/sphere/torus and revolution/extrusion payload queries, not explicit raw oracle APIs.
+Status: complete on 2026-04-26. `Context::ported_analytic_face_surface_payload()` and `Context::ported_swept_face_surface_payload()` now use `Context::ported_face_geometry()` after Rust descriptor misses instead of direct `self.face_geometry_occt(shape)?` support/mismatch reads. The analytic helper reconstructs supported payloads through `PortedSurface::from_context_with_ported_payloads()`, the swept helper reconstructs descriptors through the BRep descriptor path, and both helpers preserve explicit mismatch errors for supported wrong-kind faces while returning an unsupported Rust payload error for unsupported families.
 
 Definition of done: no direct `face_geometry_occt()` call remains in `ported_analytic_face_surface_payload()` or `ported_swept_face_surface_payload()`; supported analytic and swept payload queries still require Rust-owned surface/face descriptors; kind mismatches still produce explicit mismatch errors; unsupported families remain outside the Rust-required public payload family unless they are ported in the same cut; and regression/source guards cover both helper bodies.
 
-Bounded tasks: replace the two raw geometry reads with descriptor-backed Rust support/kind decisions without routing through recursive public face-geometry gates, preserve existing public mismatch/error semantics where possible, keep explicit `*_payload_occt()` APIs available for raw oracle use, strengthen analytic/swept public payload workflow coverage if needed, and add source guards over both helper bodies.
+Bounded tasks: complete. The two raw geometry reads were replaced with ported face-geometry decisions, explicit raw `*_payload_occt()` APIs remain available for oracle use, the public swept/offset workflow now covers a swept extrusion face rejecting an analytic plane payload through the Rust-owned mismatch path, and both helper source guards prove no direct `face_geometry_occt()` call remains.
 
 Verification: `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture)`, `! awk '/fn ported_analytic_face_surface_payload/,/^    }/' rust/lean_occt/src/lib.rs | rg -n 'face_geometry_occt\('`, `! awk '/fn ported_swept_face_surface_payload/,/^    }/' rust/lean_occt/src/lib.rs | rg -n 'face_geometry_occt\('`, `(cd rust/lean_occt && cargo test)`, `git diff --check`.
+
+## M44. Rust-Owned Offset Metadata Basis Support Gate
+
+Outcome: direct offset construction metadata stops using a direct raw face-geometry read merely to decide whether the basis face is in the Rust-owned analytic or swept family.
+
+Status: active, not started. After M43, the public payload mismatch gates are clean, but `Context::offset_surface_face_metadata_candidate()` in `rust/lean_occt/src/lib.rs` still calls `self.face_geometry_occt(basis_face)` before constructing direct offset metadata. That raw read is a support classifier for analytic and swept basis metadata, not an explicit raw oracle API.
+
+Definition of done: no direct `face_geometry_occt()` call remains in `offset_surface_face_metadata_candidate()`; direct `make_offset_surface_face()` and multi-face offset metadata still attach Rust-owned metadata for supported analytic, extrusion, and revolution bases; unsupported basis families still return `Ok(None)` without widening Rust-required support; and offset basis, offset sampling, BRep offset-area, and source-guard coverage remain green.
+
+Bounded tasks: replace the raw basis kind read with `ported_face_geometry()` plus Rust-owned payload/descriptor validation, use the ported geometry kind for analytic and swept metadata decisions, preserve explicit mismatch/unsupported errors for supported descriptors, keep raw offset oracle APIs unchanged, and add a source guard over `offset_surface_face_metadata_candidate()`.
+
+Verification: `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_offset_surface_sampling_matches_occt -- --nocapture)`, `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture)`, `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture)`, `! awk '/fn offset_surface_face_metadata_candidate/,/^    }/' rust/lean_occt/src/lib.rs | rg -n 'face_geometry_occt\('`, `(cd rust/lean_occt && cargo test)`, `git diff --check`.
