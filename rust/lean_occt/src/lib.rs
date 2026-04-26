@@ -2430,10 +2430,9 @@ impl Context {
     }
 
     pub fn face_offset_basis_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => Ok(surface.basis_geometry),
-            None => self.face_offset_basis_geometry_occt(shape),
-        }
+        Ok(self
+            .ported_offset_face_surface_payload(shape)?
+            .basis_geometry)
     }
 
     pub fn face_offset_basis_geometry_occt(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
@@ -2477,15 +2476,12 @@ impl Context {
     }
 
     pub fn face_offset_basis_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Plane,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_plane_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)) => Ok(payload),
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Plane,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2522,15 +2518,12 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<CylinderPayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(payload)) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Cylinder,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_cylinder_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(payload)) => Ok(payload),
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Cylinder,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2566,15 +2559,12 @@ impl Context {
     }
 
     pub fn face_offset_basis_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(payload)) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Cone,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_cone_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(payload)) => Ok(payload),
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Cone,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2609,15 +2599,12 @@ impl Context {
     }
 
     pub fn face_offset_basis_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(payload)) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Sphere,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_sphere_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(payload)) => Ok(payload),
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Sphere,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2653,15 +2640,12 @@ impl Context {
     }
 
     pub fn face_offset_basis_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(payload)) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Torus,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_torus_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(payload)) => Ok(payload),
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Torus,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2702,17 +2686,14 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<RevolutionSurfacePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    payload, ..
-                }) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Revolution,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_revolution_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { payload, .. }) => {
+                Ok(payload)
+            }
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Revolution,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2747,17 +2728,14 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<ExtrusionSurfacePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    payload, ..
-                }) => Ok(payload),
-                basis => Err(mismatched_ported_offset_basis_payload_error(
-                    SurfaceKind::Extrusion,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_extrusion_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { payload, .. }) => {
+                Ok(payload)
+            }
+            basis => Err(mismatched_ported_offset_basis_payload_error(
+                SurfaceKind::Extrusion,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
