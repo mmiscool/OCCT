@@ -140,18 +140,33 @@ pub(super) fn ported_shape_summary(
     let contains_offset_faces = faces
         .iter()
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
+    let has_loaded_supported_face_inventory = loaded_supported_face_inventory(faces, face_shapes);
+    let loaded_supported_closed_solid_inventory =
+        has_loaded_supported_face_inventory && has_solid_root(counts) && closed_volume_topology;
     let supports_rust_owned_offset_solid_volume =
         supports_rust_owned_offset_solid_volume(faces, face_shapes, counts);
     let supports_rust_owned_swept_solid_volume =
         supports_rust_owned_swept_solid_volume(faces, face_shapes, counts);
-    let requires_rust_owned_volume =
-        supports_rust_owned_offset_solid_volume || supports_rust_owned_swept_solid_volume;
+    let requires_rust_owned_volume = exact_primitive.is_some()
+        || supports_rust_owned_offset_solid_volume
+        || supports_rust_owned_swept_solid_volume
+        || loaded_supported_closed_solid_inventory;
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
     let supports_rust_owned_offset_root_bbox = contains_offset_faces && !face_shapes.is_empty();
     let requires_rust_owned_bbox = exact_primitive_bbox.is_some()
         || ported_topological_bbox.is_some()
-        || supports_rust_owned_offset_root_bbox;
+        || supports_rust_owned_offset_root_bbox
+        || has_loaded_supported_face_inventory;
+    let allow_occt_bbox_fallback =
+        unsupported_bbox_summary_fallback_allowed(requires_rust_owned_bbox, faces, face_shapes);
+    let allow_occt_volume_fallback = unsupported_volume_summary_fallback_allowed(
+        requires_rust_owned_volume,
+        counts,
+        closed_volume_topology,
+        faces,
+        face_shapes,
+    );
     let offset_margin = offset_face_margin(faces);
     let offset_face_bbox_resolution = if offset_non_solid {
         offset_faces_bbox(context, shape, offset_margin, vertices, edges, face_shapes)
@@ -190,20 +205,20 @@ pub(super) fn ported_shape_summary(
             }
         })
         .or_else(|| {
-            if requires_rust_owned_bbox {
-                None
-            } else {
+            if allow_occt_bbox_fallback {
                 fallback_summary().map(|summary| {
                     (
                         (summary.bbox_min, summary.bbox_max),
                         SummaryBboxSource::OcctFallback,
                     )
                 })
+            } else {
+                None
             }
         });
     let ((bbox_min, bbox_max), bbox_source) = match bbox_resolution {
         Some(resolution) => resolution,
-        None if requires_rust_owned_bbox => {
+        None if !allow_occt_bbox_fallback => {
             return Err(Error::new(
                 "failed to derive a Rust-owned bbox for a supported shape summary",
             ));
@@ -231,16 +246,16 @@ pub(super) fn ported_shape_summary(
             whole_shape_mesh_volume.map(|volume| (volume, SummaryVolumeSource::WholeShapeMesh))
         })
         .or_else(|| {
-            if requires_rust_owned_volume {
-                None
-            } else {
+            if allow_occt_volume_fallback {
                 fallback_summary()
                     .map(|summary| (summary.volume, SummaryVolumeSource::OcctFallback))
+            } else {
+                None
             }
         });
     let (volume, volume_source) = match volume_resolution {
         Some(resolution) => resolution,
-        None if requires_rust_owned_volume => {
+        None if !allow_occt_volume_fallback => {
             return Err(Error::new(
                 "failed to derive a Rust-owned volume for a supported solid summary",
             ));
@@ -395,13 +410,52 @@ fn resolved_offset_solid_face_volume(
     }
 }
 
+fn loaded_supported_face_inventory(faces: &[BrepFace], face_shapes: &[Shape]) -> bool {
+    !faces.is_empty()
+        && face_shapes.len() == faces.len()
+        && faces.iter().all(|face| {
+            matches!(
+                face.ported_face_surface,
+                Some(
+                    PortedFaceSurface::Analytic(_)
+                        | PortedFaceSurface::Swept(_)
+                        | PortedFaceSurface::Offset(_)
+                )
+            )
+        })
+}
+
+fn has_solid_root(counts: ShapeCounts) -> bool {
+    counts.solid_count > 0 || counts.compsolid_count > 0
+}
+
+fn unsupported_bbox_summary_fallback_allowed(
+    requires_rust_owned_bbox: bool,
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+) -> bool {
+    !requires_rust_owned_bbox && !loaded_supported_face_inventory(faces, face_shapes)
+}
+
+fn unsupported_volume_summary_fallback_allowed(
+    requires_rust_owned_volume: bool,
+    counts: ShapeCounts,
+    closed_volume_topology: bool,
+    faces: &[BrepFace],
+    face_shapes: &[Shape],
+) -> bool {
+    !requires_rust_owned_volume
+        && !(has_solid_root(counts)
+            && closed_volume_topology
+            && loaded_supported_face_inventory(faces, face_shapes))
+}
+
 fn supports_rust_owned_offset_solid_volume(
     faces: &[BrepFace],
     face_shapes: &[Shape],
     counts: ShapeCounts,
 ) -> bool {
-    if face_shapes.len() != faces.len() || (counts.solid_count == 0 && counts.compsolid_count == 0)
-    {
+    if face_shapes.len() != faces.len() || !has_solid_root(counts) {
         return false;
     }
 
@@ -419,8 +473,7 @@ fn supports_rust_owned_swept_solid_volume(
     face_shapes: &[Shape],
     counts: ShapeCounts,
 ) -> bool {
-    if face_shapes.len() != faces.len() || (counts.solid_count == 0 && counts.compsolid_count == 0)
-    {
+    if face_shapes.len() != faces.len() || !has_solid_root(counts) {
         return false;
     }
 

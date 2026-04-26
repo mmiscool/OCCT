@@ -1,46 +1,40 @@
 # Next Task
 
-Current milestone: `M2. Whole-Shape Summary Fallback Reduction` from `portingMilestones.md`.
+Current milestone: `M3. Rust-Backed Traversal for Documents and Selectors` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs` no longer exposes `SummaryBboxSource::OffsetOcctSubshapeUnion`, so callers cannot observe the offset-specific OCCT subshape-union bbox as a normal summary winner.
-- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs` deleted `offset_shape_bbox_occt()` and the `union_shape_bboxes_occt()` helper. Loaded offset-face inventories now set `requires_rust_owned_bbox`, forcing supported offset roots through `offset_faces_bbox()`, offset validated mesh, or offset solid shell unions.
-- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs` and `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` no longer carry the root `vertex_shapes` payload or perform the fallback root vertex walk that only fed the deleted OCCT bbox branch. Shell-local prepared vertex inventories remain in place for shell bbox validation.
-- The exercised single-face offset shell remains pinned to `Some(OffsetFaceBboxSource::ValidatedMesh)`, and each exercised multi-face offset-solid shell remains pinned to `Some(OffsetFaceBboxSource::SummaryFaceBrep)`.
-- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --exact`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml`.
-- The remaining `M2` fallback inventory is now just the generic `fallback_summary()` bbox branch and the generic `fallback_summary()` volume branch in `ported_shape_summary()`.
+- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs` now promotes fully loaded analytic, swept, and offset face inventories into the Rust-owned summary requirement set. Supported bbox summaries must resolve through exact primitive, ported topology, offset, or mesh candidates before failing; supported closed-solid volumes must resolve through exact primitive formulas, face contributions, or whole-shape mesh before failing.
+- The surviving generic `fallback_summary()` bbox and volume branches are no longer normal continuation paths. They are gated by `unsupported_bbox_summary_fallback_allowed()` and `unsupported_volume_summary_fallback_allowed()`, so only explicitly unsupported or unclassified shapes can still reach `SummaryBboxSource::OcctFallback` or `SummaryVolumeSource::OcctFallback`.
+- `rust/lean_occt/tests/brep_workflows.rs` now asserts exact primitive bbox and volume sources are `SummaryBboxSource::ExactPrimitive` and `SummaryVolumeSource::ExactPrimitive`, supported single-face analytic bboxes stay Rust-owned, and supported multi-face analytic solid bbox/volume summaries do not slide to `OcctFallback`. The through-hole boolean volume remains an explicit unsupported fallback case because that shape is not a fully loaded supported face inventory.
+- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --exact`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml`.
+- `M2. Whole-Shape Summary Fallback Reduction` is complete. The remaining active work has moved to `M3`.
 
 ## Target
 
-Narrow the remaining generic `fallback_summary()` bbox and volume branches behind explicit unsupported-shape guards, without regressing the now-green single-face offset `ValidatedMesh` path, multi-face offset `SummaryFaceBrep` path, offset-solid root path, swept roots, exact-primitive roots, or topology-owned bbox paths.
+Replace or strictly narrow the remaining OCCT-backed face/edge traversal boundary used by public shape queries, while keeping `ModelDocument`, selectors, and high-level reports backed by `BrepShape`/`TopologySnapshot` for supported shapes.
 
 ## Next Bounded Cut
 
-1. In `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs`, make the generic bbox fallback conditional on a named unsupported-shape predicate, and promote any loaded analytic, swept, or offset face inventory already covered by Rust bbox candidates into `requires_rust_owned_bbox`.
-2. Do the same for the generic volume fallback: keep it only for explicitly unsupported open or unclassified shapes, while supported offset solids and swept solids continue to require `SummaryVolumeSource::FaceContributions`.
-3. If tightening those guards exposes a supported fixture that still reaches `OcctFallback`, implement the Rust-owned bbox or volume candidate in the same turn instead of weakening the guard.
-4. Keep the existing source assertions for exact primitives, exact curves, swept solids, single-face offsets, and multi-face offset-solid shells green; add a targeted assertion if a newly guarded supported family was previously unobserved.
+1. In `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs`, change `ported_subshape()` and `ported_subshapes()` so the supported path is keyed off `Context::ported_topology(shape)?` rather than `Context::topology(shape)?`; do not let the ported query path silently inherit OCCT topology fallback.
+2. Keep returning real `Shape` handles where the public API requires handles, but isolate that OCCT handle materialization behind an explicit supported-topology validation step and return `Ok(None)` for unsupported topology so the outer fallback is visible and bounded.
+3. Strengthen `document_workflows` and/or `selector_workflows` around face/edge selector behavior that is already descriptor-backed through `BrepShape`, so regressions toward raw `subshapes_occt()` traversal have a user-visible test.
+4. If this tightening exposes a supported selector/report path that still depends on raw OCCT face/edge enumeration, replace that path with `BrepShape` descriptors in the same turn instead of weakening the guard.
 
 ## Guardrails
 
-- Keep loader-owned `PreparedShellShape` inventories.
-- Do not reintroduce raw `subshapes_occt()` shell traversal beyond the existing prepared-shell loading path.
-- Keep validating accepted Rust-owned shell bbox candidates against OCCT shell bboxes while the explicit per-face guard remains in place.
-- Keep the root bbox probe, root volume probe, and shell probe observable until the remaining whole-shape fallback branches are narrowed behind explicit unsupported-case guards.
+- Read `portingMilestones.md` and `nextStep.md` at the start of the next turn before editing.
 - Do not reintroduce `face_bboxes_occt()`, `OffsetFaceBboxSource::OcctFaceUnion`, `offset_shape_bbox_occt()`, or `SummaryBboxSource::OffsetOcctSubshapeUnion`.
-- Do not spend the next turn reshuffling summary helpers unless it narrows one of the two generic `fallback_summary()` branches or lands a regression that proves a supported branch is off an OCCT fallback.
-- Do not stop after adding another probe. The next productive cut should either make a supported family require Rust-owned bbox/volume behavior or put the generic fallback behind an explicit unsupported-shape guard, then keep the focused regressions green in the same turn.
-- Prefer one coherent multi-file porting change over several tiny preparatory edits if the Rust-owned path needs data model, summary, and test updates together.
-- Keep the exercised single-face offset shell on `OffsetFaceBboxSource::ValidatedMesh`; do not let it slide to any OCCT bbox source.
-- Keep the rotated torus on `SummaryBboxSource::ExactPrimitive`; do not let it fall back to the generic mesh bbox path just to match OCCT's looser torus envelope.
+- Do not weaken the new `unsupported_bbox_summary_fallback_allowed()` or `unsupported_volume_summary_fallback_allowed()` guards unless the same turn lands a Rust-owned replacement that keeps supported summaries off `OcctFallback`.
+- Keep `ModelDocument::edges()`, `ModelDocument::faces()`, `select_edge()`, and `select_face()` centered on `BrepShape`; do not route selectors through `Context::subshapes()` just to get handles.
+- Preserve OCCT `Shape` handle materialization only for APIs that must return or consume handles; traversal decisions and counts for supported face/edge families should come from Rust topology.
 
 ## Verification
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-- `cmake --build build --target LeanOcctCAPI`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --exact`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --exact`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test recipe_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`

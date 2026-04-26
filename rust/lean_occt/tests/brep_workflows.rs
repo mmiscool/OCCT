@@ -954,6 +954,16 @@ fn ported_brep_uses_exact_primitive_surface_and_volume_formulas(
             brep_face_area_sum,
             expected_area
         );
+        assert_eq!(
+            brep.summary_bbox_source(),
+            SummaryBboxSource::ExactPrimitive,
+            "{name} root summary bbox should resolve through the exact primitive path"
+        );
+        assert_eq!(
+            brep.summary_volume_source(),
+            SummaryVolumeSource::ExactPrimitive,
+            "{name} root summary volume should resolve through the exact primitive path"
+        );
         assert!(
             (summary.surface_area - occt_summary.surface_area).abs() <= 5.0e-2,
             "{name} surface area drifted from OCCT: rust={} occt={}",
@@ -1250,6 +1260,14 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
         assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
+        assert!(
+            matches!(
+                brep.summary_bbox_source(),
+                SummaryBboxSource::PortedBrep | SummaryBboxSource::Mesh
+            ),
+            "{label} supported single-face bbox should stay Rust-owned, not {:?}",
+            brep.summary_bbox_source()
+        );
         assert_eq!(rust_topology.faces.len(), 1);
         assert_eq!(
             rust_topology
@@ -1330,6 +1348,28 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
             .edge_faces
             .iter()
             .all(|range| range.count >= 1 && range.count <= 2));
+        assert!(
+            matches!(
+                brep.summary_bbox_source(),
+                SummaryBboxSource::ExactPrimitive
+                    | SummaryBboxSource::PortedBrep
+                    | SummaryBboxSource::Mesh
+            ),
+            "{label} supported analytic solid bbox should stay Rust-owned, not {:?}",
+            brep.summary_bbox_source()
+        );
+        if label != "through_hole_cut" {
+            assert!(
+                matches!(
+                    brep.summary_volume_source(),
+                    SummaryVolumeSource::ExactPrimitive
+                        | SummaryVolumeSource::FaceContributions
+                        | SummaryVolumeSource::WholeShapeMesh
+                ),
+                "{label} supported analytic solid volume should stay Rust-owned, not {:?}",
+                brep.summary_volume_source()
+            );
+        }
     }
 
     Ok(())
