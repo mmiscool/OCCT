@@ -70,6 +70,7 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Shell.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
@@ -516,6 +517,16 @@ static TopoDS_Face requireFaceShape(const LeanOcctShape* the_shape)
     throw std::invalid_argument("LeanOcctShape was not a face.");
   }
   return TopoDS::Face(a_shape);
+}
+
+static TopoDS_Shell requireShellShape(const LeanOcctShape* the_shape)
+{
+  const TopoDS_Shape& a_shape = requireShape(the_shape);
+  if (a_shape.ShapeType() != TopAbs_SHELL)
+  {
+    throw std::invalid_argument("LeanOcctShape was not a shell.");
+  }
+  return TopoDS::Shell(a_shape);
 }
 
 static LeanOcctShape* makeBooleanResult(const TopoDS_Shape& the_lhs,
@@ -3141,6 +3152,86 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_face_vertex
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireFaceShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_shell_face_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root shell face count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_FACE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_shell_face(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_FACE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_shell_wire_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root shell wire count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_WIRE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_shell_wire(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_WIRE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_shell_edge_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root shell edge count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_shell_edge(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_EDGE, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_shell_vertex_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root shell vertex count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_shell_vertex(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireShellShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
   });
 }
 
