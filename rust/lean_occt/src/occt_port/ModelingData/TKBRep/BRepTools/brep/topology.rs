@@ -64,6 +64,16 @@ enum RootAssemblyTopologyInventory {
 
 const ROOT_ASSEMBLY_MAX_DEPTH: usize = 16;
 
+pub(super) fn root_assembly_requires_ported_topology(
+    context: &Context,
+    shape: &Shape,
+) -> Result<bool, Error> {
+    Ok(matches!(
+        root_assembly_topology_inventory_required(context, shape)?,
+        RootAssemblyTopologyInventory::Supported(_)
+    ))
+}
+
 fn load_root_topology_snapshot(
     context: &Context,
     shape: &Shape,

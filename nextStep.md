@@ -1,48 +1,50 @@
 # Next Task
 
-Current milestone: `M32. Strict Rust-Owned BRep Requirement for Supported Face-Free Assemblies` from `portingMilestones.md`.
+Current milestone: `M33. Rust-Owned Public Root Edge Endpoint Queries` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `M31. Rust-Owned Face-Free Compound Assembly Topology Inventory` is complete for supported shell-free root `Compound` assemblies with direct or nested `Face`, face-free `Wire`, `Edge`, and `Vertex` leaves.
-- `root_assembly_topology_inventory_required()` no longer rejects every root `Compound` solely because `summary.face_count == 0` or `summary.shell_count == 0`; strict shell/face requirements remain for `CompSolid`.
-- `root_assembly_child_topology_supported()` accepts `ShapeKind::Face`, `ShapeKind::Wire`, `ShapeKind::Edge`, and `ShapeKind::Vertex` leaf roots only when the existing root-specific Rust topology guards/loaders succeed.
-- `load_root_assembly_topology_snapshot()` no longer returns `None` solely because `face_shapes` or `root_assembly_shell_shapes` is empty, allowing shell-free assemblies to populate face/wire/edge/vertex inventories with empty shell/solid inventories.
-- `ported_brep_uses_rust_owned_topology_for_root_compound_faces` exercises `Compound -> [Face, Face]` and verifies direct child kinds, Rust topology, public face handles, child face topology, BRep topology, and summary parity.
-- `ported_brep_uses_rust_owned_topology_for_nested_root_compound_face_free_wires` exercises `Compound -> Compound -> [Wire, Wire]` and verifies the zero-face recursive assembly path, public wire handles, child wire topology, BRep topology, and summary parity.
-- `ported_brep_uses_rust_owned_topology_for_root_compound_edges_and_vertices` exercises `Compound -> [Edge, Edge]` and `Compound -> [Vertex, Vertex]`, verifying public edge/vertex handles, child topology, BRep topology, and summary parity.
-- Source guards prove the old compound-level `face_count == 0 || shell_count == 0` rejection, the loader's empty face/shell inventory exits, and raw root-level `subshapes_occt()`, `vertex_point_occt()`, and `topology_occt()` calls remain absent from `load_root_assembly_topology_snapshot()`.
+- `M32. Strict Rust-Owned BRep Requirement for Supported Face-Free Assemblies` is complete.
+- `root_assembly_requires_ported_topology()` now reuses the root-assembly topology classifier and reports true only for supported recursive assembly roots.
+- `strict_brep_requires_ported_topology()` checks `ShapeKind::Compound` with the assembly classifier before the `summary.face_count == 0` short-circuit, so supported direct, nested, and mixed face-free compounds must load Rust topology before BRep materialization can continue.
+- Unsupported and non-assembly zero-face compounds still return `Ok(false)` from the strict gate after classifier rejection, preserving explicit raw/oracle behavior for imported or unsupported assemblies.
+- `strict_brep_requires_ported_topology_for_supported_face_free_compounds` covers nested `Compound -> Compound -> [Wire, Wire]`, `Compound -> [Edge, Edge]`, `Compound -> [Vertex, Vertex]`, and mixed `Compound -> [Wire, Edge, Vertex]` roots.
+- Existing workflow regressions still cover BRep materialization for `Compound -> [Face, Face]`, nested face-free wire compounds, and direct edge/vertex compounds.
+- Source guards prove the strict `Compound` branch calls `root_assembly_requires_ported_topology()` before the zero-face exit and that the helper is wired to `RootAssemblyTopologyInventory::Supported`.
 
 ## Target
 
-Narrow the remaining raw BRep fallback for supported shell-free assemblies:
+Remove the public endpoint-query raw seed for supported root edges:
 
-`ported_brep() -> supported recursive face-free Compound -> must use Rust topology or error`
+`Context::edge_endpoints() -> ported_edge_endpoints() -> supported root line/circle/ellipse edge -> loaded Rust topology endpoint vertices`
 
-M31 gives these assemblies Rust-owned topology, but `strict_brep_requires_ported_topology()` still treats every `Compound` with `summary.face_count == 0` as not requiring ported topology. That leaves a raw `topology_occt()`/`subshapes_occt()` fallback path open if the new face-free assembly loader regresses.
+The root-edge topology bootstrap still has a narrow raw endpoint seed, but `ported_edge_endpoints()` currently calls `root_edge_endpoints_from_raw_endpoint_seed()` before trying `context.ported_topology(shape)?`. That leaves the public Rust endpoint query backed by direct `edge_endpoints_occt(shape)?` for supported root line, circle, and ellipse edges even when the completed root-edge topology path can provide endpoint vertices.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Expose or reuse the root-assembly support classifier from the topology loader for strict BRep fallback decisions.
-3. Update `strict_brep_requires_ported_topology()` so supported direct or nested face-free `Compound` assemblies require Rust topology even when `face_count == 0`.
-4. Keep unsupported/imported assemblies out of the strict requirement so explicit raw/oracle paths remain available.
-5. Strengthen workflow/source coverage around wire/edge/vertex compound BRep materialization and add a guard proving the strict BRep branch no longer short-circuits all `Compound` roots on `face_count == 0`.
-6. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
+2. Split the root-edge bootstrap endpoint seed away from the public `ported_edge_endpoints()` path.
+3. Update `ported_edge_endpoints()` so supported root line/circle/ellipse edges load ported topology and derive `EdgeEndpoints` from the single topology edge's start/end vertex positions.
+4. Keep unsupported root edge kinds returning `Ok(None)` from the Rust path so explicit OCCT oracle APIs remain available.
+5. Preserve non-root-edge behavior and avoid broadening generic raw topology or subshape fallbacks.
+6. Strengthen endpoint workflow coverage and add a source guard proving `ported_edge_endpoints()` no longer directly calls `edge_endpoints_occt()`.
+7. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
-- Do not weaken or reorder the completed M23-M31 root edge, vertex, wire, face, shell, solid, direct-child assembly, nested assembly, or face-free assembly branches.
-- Keep explicit `*_occt()` helpers available as oracle APIs for tests and unsupported/imported shapes.
-- Do not broaden the generic raw root inventory fallback while narrowing strict BRep fallback behavior.
-- If a recursive assembly classifier reports unsupported, keep the raw fallback decision explicit instead of forcing every `Compound` to require ported topology.
+- Do not remove the bootstrap seed unless the same turn provides an equivalent Rust-owned root-edge topology construction path; narrowing the public endpoint query is the bounded target.
+- Keep explicit `edge_endpoints_occt()` available as an oracle API for tests and unsupported/imported shapes.
+- Do not weaken the completed root edge, vertex, wire, face, shell, solid, or assembly topology guards.
+- If `load_ported_topology()` returns `None` for an unsupported root edge, keep the public Rust endpoint query explicit about returning `None`.
 
 ## Verification
 
 - `(cd rust/lean_occt && cargo fmt)`
 - `cmake --build build --target LeanOcctCAPI`
 - `(cd rust/lean_occt && cargo check)`
-- Focused strict-BRep workflow regressions for supported face-free compound assemblies.
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_root_edge_endpoints_are_topology_backed -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture)`
+- `! perl -0ne 'print $1 if /(pub\(super\) fn ported_edge_endpoints[\s\S]*?)\nenum RootEdgeEndpointSeed/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs | rg -n 'edge_endpoints_occt\('`
+- `perl -0ne 'print $1 if /(pub\(super\) fn ported_edge_endpoints[\s\S]*?)\nenum RootEdgeEndpointSeed/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs | rg -n 'load_ported_topology|optional_vertex_position'`
 - `(cd rust/lean_occt && cargo test)`
-- Source guards for strict face-free compound BRep fallback narrowing and unsupported assembly preservation.
 - `git diff --check`

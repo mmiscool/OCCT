@@ -32,7 +32,10 @@ use self::shape_queries::{
     ported_vertex_point,
 };
 use self::summary::{ported_offset_shell_bbox_sources, ported_shape_summary};
-use self::topology::{load_ported_topology, ported_topology_snapshot, PreparedShellShape};
+use self::topology::{
+    load_ported_topology, ported_topology_snapshot, root_assembly_requires_ported_topology,
+    PreparedShellShape,
+};
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
@@ -193,11 +196,20 @@ fn strict_brep_requires_ported_topology(context: &Context, shape: &Shape) -> Res
     match summary.root_kind {
         ShapeKind::Edge => strict_brep_root_edge_requires_ported_topology(context, shape),
         ShapeKind::Wire => Ok(summary.face_count == 0 && summary.edge_count > 0),
-        ShapeKind::Face
-        | ShapeKind::Shell
-        | ShapeKind::Solid
-        | ShapeKind::CompSolid
-        | ShapeKind::Compound => {
+        ShapeKind::Compound => {
+            if root_assembly_requires_ported_topology(context, shape)? {
+                Ok(true)
+            } else if summary.face_count == 0 {
+                Ok(false)
+            } else {
+                strict_brep_face_inventory_requires_ported_topology(
+                    context,
+                    shape,
+                    summary.face_count,
+                )
+            }
+        }
+        ShapeKind::Face | ShapeKind::Shell | ShapeKind::Solid | ShapeKind::CompSolid => {
             if summary.face_count == 0 {
                 Ok(false)
             } else {
@@ -396,5 +408,95 @@ impl Context {
         kind: ShapeKind,
     ) -> Result<Option<Vec<Shape>>, Error> {
         ported_subshapes(self, shape, kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EllipseEdgeParams, HelixParams};
+    use std::sync::Mutex;
+
+    static STRICT_BREP_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn strict_brep_requires_ported_topology_for_supported_face_free_compounds() -> Result<(), Error>
+    {
+        let _guard = STRICT_BREP_TEST_LOCK.lock().unwrap();
+        let context = Context::new()?;
+
+        let lhs_wire = context.make_helix(HelixParams {
+            origin: [-15.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            x_direction: [1.0, 0.0, 0.0],
+            radius: 6.0,
+            height: 18.0,
+            pitch: 6.0,
+        })?;
+        let rhs_wire = context.make_helix(HelixParams {
+            origin: [15.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            x_direction: [1.0, 0.0, 0.0],
+            radius: 5.0,
+            height: 20.0,
+            pitch: 5.0,
+        })?;
+        let child_wire_compound = context.make_compound(&[lhs_wire, rhs_wire])?;
+        let root_wire_compound = context.make_compound(&[child_wire_compound])?;
+        assert!(strict_brep_requires_ported_topology(
+            &context,
+            &root_wire_compound
+        )?);
+
+        let lhs_edge = context.make_ellipse_edge(EllipseEdgeParams {
+            origin: [-18.0, 0.0, 0.0],
+            axis: [0.0, 1.0, 0.0],
+            x_direction: [1.0, 0.0, 0.0],
+            major_radius: 5.0,
+            minor_radius: 3.0,
+        })?;
+        let rhs_edge = context.make_ellipse_edge(EllipseEdgeParams {
+            origin: [18.0, 0.0, 0.0],
+            axis: [0.0, 1.0, 0.0],
+            x_direction: [1.0, 0.0, 0.0],
+            major_radius: 6.0,
+            minor_radius: 2.5,
+        })?;
+        let lhs_vertex = context.subshape(&lhs_edge, ShapeKind::Vertex, 0)?;
+        let rhs_vertex = context.subshape(&rhs_edge, ShapeKind::Vertex, 0)?;
+        let edge_compound = context.make_compound(&[lhs_edge, rhs_edge])?;
+        let vertex_compound = context.make_compound(&[lhs_vertex, rhs_vertex])?;
+        assert!(strict_brep_requires_ported_topology(
+            &context,
+            &edge_compound
+        )?);
+        assert!(strict_brep_requires_ported_topology(
+            &context,
+            &vertex_compound
+        )?);
+
+        let mixed_wire = context.make_helix(HelixParams {
+            origin: [0.0, -15.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            x_direction: [1.0, 0.0, 0.0],
+            radius: 4.0,
+            height: 12.0,
+            pitch: 4.0,
+        })?;
+        let mixed_edge = context.make_ellipse_edge(EllipseEdgeParams {
+            origin: [0.0, 15.0, 0.0],
+            axis: [0.0, 1.0, 0.0],
+            x_direction: [1.0, 0.0, 0.0],
+            major_radius: 4.0,
+            minor_radius: 2.0,
+        })?;
+        let mixed_vertex = context.subshape(&mixed_edge, ShapeKind::Vertex, 0)?;
+        let mixed_compound = context.make_compound(&[mixed_wire, mixed_edge, mixed_vertex])?;
+        assert!(strict_brep_requires_ported_topology(
+            &context,
+            &mixed_compound
+        )?);
+
+        Ok(())
     }
 }
