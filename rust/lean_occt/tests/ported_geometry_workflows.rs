@@ -964,6 +964,101 @@ fn revolved_ellipse_area(
 }
 
 #[test]
+fn public_root_edge_endpoints_are_topology_backed() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+
+    for (label, expected_kind, edge) in [
+        (
+            "line",
+            CurveKind::Line,
+            find_first_edge_by_kind(&kernel, &cut, CurveKind::Line)?,
+        ),
+        (
+            "circle",
+            CurveKind::Circle,
+            find_first_edge_by_kind(&kernel, &cut, CurveKind::Circle)?,
+        ),
+        ("ellipse", CurveKind::Ellipse, ellipse_edge),
+    ] {
+        let summary = kernel.context().describe_shape_occt(&edge)?;
+        assert_eq!(
+            summary.root_kind,
+            ShapeKind::Edge,
+            "{label} fixture should be a root edge"
+        );
+        assert_eq!(
+            kernel.context().edge_geometry(&edge)?.kind,
+            expected_kind,
+            "{label} fixture geometry kind changed"
+        );
+
+        let topology = kernel
+            .context()
+            .ported_topology(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported topology")))?;
+        let [topology_edge] = topology.edges.as_slice() else {
+            return Err(std::io::Error::other(format!(
+                "{label} expected exactly one topology edge, found {}",
+                topology.edges.len()
+            ))
+            .into());
+        };
+        let start_index = topology_edge.start_vertex.ok_or_else(|| {
+            std::io::Error::other(format!("{label} missing topology start vertex"))
+        })?;
+        let end_index = topology_edge
+            .end_vertex
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing topology end vertex")))?;
+        let topology_start = topology
+            .vertex_positions
+            .get(start_index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other(format!("{label} bad start vertex index")))?;
+        let topology_end = topology
+            .vertex_positions
+            .get(end_index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other(format!("{label} bad end vertex index")))?;
+
+        let ported_endpoints = kernel
+            .context()
+            .ported_edge_endpoints(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported endpoints")))?;
+        let public_endpoints = kernel.context().edge_endpoints(&edge)?;
+        let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
+        for (actual, expected, description) in [
+            (
+                ported_endpoints.start,
+                topology_start,
+                "ported/topology start",
+            ),
+            (ported_endpoints.end, topology_end, "ported/topology end"),
+            (
+                public_endpoints.start,
+                topology_start,
+                "public/topology start",
+            ),
+            (public_endpoints.end, topology_end, "public/topology end"),
+            (occt_endpoints.start, topology_start, "occt/topology start"),
+            (occt_endpoints.end, topology_end, "occt/topology end"),
+        ] {
+            assert_vec3_close(actual, expected, 1.0e-12, &format!("{label} {description}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;

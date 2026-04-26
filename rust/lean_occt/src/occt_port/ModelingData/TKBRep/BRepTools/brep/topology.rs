@@ -275,21 +275,14 @@ fn load_root_edge_topology_snapshot(
         return Ok(None);
     }
 
-    let Some(endpoints) = ported_edge_endpoints(context, shape)? else {
+    let Some((geometry, endpoints)) = root_edge_topology_bootstrap_seed(context, shape)? else {
         return Ok(None);
     };
-    let geometry = context.edge_geometry(shape)?;
-    if !matches!(
-        geometry.kind,
-        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
-    ) {
-        return Ok(None);
-    }
 
     let (vertex_shapes, vertex_positions, start_vertex, end_vertex) =
         root_edge_vertices_from_ported_seed(context, shape, endpoints)?;
     let edge_shape = context.duplicate_shape_occt(shape)?;
-    let length = topology_edge_length(context, shape, geometry)?;
+    let length = root_edge_topology_bootstrap_length(context, shape, geometry, endpoints)?;
     let root_edges = vec![RootEdgeTopology {
         geometry,
         start_vertex,
@@ -320,6 +313,33 @@ fn load_root_edge_topology_snapshot(
         wire_vertices: Vec::new(),
         wire_vertex_indices: Vec::new(),
     }))
+}
+
+fn root_edge_topology_bootstrap_seed(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<(EdgeGeometry, EdgeEndpoints)>, Error> {
+    let geometry = context.edge_geometry_occt(shape)?;
+    if !matches!(
+        geometry.kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    ) {
+        return Ok(None);
+    }
+    let endpoints = context.edge_endpoints_occt(shape)?;
+    Ok(Some((geometry, endpoints)))
+}
+
+fn root_edge_topology_bootstrap_length(
+    context: &Context,
+    shape: &Shape,
+    geometry: EdgeGeometry,
+    endpoints: EdgeEndpoints,
+) -> Result<f64, Error> {
+    if geometry.kind == CurveKind::Line {
+        return Ok(norm3(subtract3(endpoints.end, endpoints.start)));
+    }
+    topology_edge_length(context, shape, geometry)
 }
 
 fn root_edge_vertices_from_ported_seed(
