@@ -58,21 +58,10 @@ impl PreparedFaceTopologyBuilder {
         let planar_face = if face_wire_shapes.len() <= 1 {
             None
         } else {
-            let face_geometry = match context.face_geometry(face_shape) {
-                Ok(geometry) => geometry,
-                Err(_) => context.face_geometry_occt(face_shape)?,
-            };
-            if face_geometry.kind != crate::SurfaceKind::Plane {
+            let Some(plane) = ported_snapshot_plane_payload(context, face_shape)? else {
                 return Ok(None);
-            }
-            let plane = match context.face_plane_payload(face_shape) {
-                Ok(payload) => payload,
-                Err(_) => match context.face_plane_payload_occt(face_shape) {
-                    Ok(payload) => payload,
-                    Err(_) => return Ok(None),
-                },
             };
-            Some((plane, face_geometry))
+            Some(plane)
         };
         let mut builder = Self {
             used_root_wire_indices: BTreeSet::new(),
@@ -206,6 +195,21 @@ impl PreparedFaceTopologyBuilder {
     }
 }
 
+fn ported_snapshot_plane_payload(
+    context: &Context,
+    face_shape: &Shape,
+) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
+    let face_geometry = context.face_geometry_occt(face_shape)?;
+    if face_geometry.kind != crate::SurfaceKind::Plane {
+        return Ok(None);
+    }
+
+    match PortedSurface::from_context_with_ported_payloads(context, face_shape, face_geometry)? {
+        Some(PortedSurface::Plane(plane)) => Ok(Some((plane, face_geometry))),
+        Some(_) | None => Ok(None),
+    }
+}
+
 struct FaceSnapshotAccumulator {
     edge_face_lists: Vec<Vec<usize>>,
     faces: Vec<crate::TopologyRange>,
@@ -320,16 +324,7 @@ pub(super) fn load_ported_face_snapshot(
                         prepared_face_shape.face_index
                     ))
                 })?;
-            let geometry = match context.face_geometry(face_shape) {
-                Ok(geometry) => geometry,
-                Err(_) => context.face_geometry_occt(face_shape)?,
-            };
-            if geometry.kind != crate::SurfaceKind::Plane {
-                return Ok(None);
-            }
-            if context.face_plane_payload(face_shape).is_err()
-                && context.face_plane_payload_occt(face_shape).is_err()
-            {
+            if ported_snapshot_plane_payload(context, face_shape)?.is_none() {
                 return Ok(None);
             }
         }

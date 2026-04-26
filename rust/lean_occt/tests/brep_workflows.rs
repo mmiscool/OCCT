@@ -1828,6 +1828,33 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
                     "holed planar face area should come from reconstructed Rust loops: brep={} expected={expected_holed_area}",
                     face.area
                 );
+                let raw_geometry = kernel.context().face_geometry_occt(shape)?;
+                assert_eq!(raw_geometry.kind, SurfaceKind::Plane);
+                let rust_plane_surface = PortedSurface::from_context_with_geometry(
+                    kernel.context(),
+                    shape,
+                    raw_geometry,
+                )?
+                .ok_or_else(|| {
+                    std::io::Error::other(
+                        "holed planar face raw geometry route returned no Rust plane payload",
+                    )
+                })?;
+                assert_ported_surface_kind(
+                    rust_plane_surface,
+                    SurfaceKind::Plane,
+                    "holed planar face snapshot plane payload",
+                )?;
+                let brep_plane_surface = face.ported_surface.ok_or_else(|| {
+                    std::io::Error::other(
+                        "holed planar BRep face did not retain the Rust plane payload",
+                    )
+                })?;
+                assert_same_variant(
+                    &rust_plane_surface,
+                    &brep_plane_surface,
+                    "holed planar face snapshot plane route",
+                )?;
                 assert_eq!(face.loops.len(), rust_topology.wires.len());
 
                 let mut analytic_loop_edges = 0usize;
