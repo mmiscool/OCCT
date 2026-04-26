@@ -1,4 +1,4 @@
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::c_char;
@@ -1624,6 +1624,7 @@ impl Context {
     }
 
     pub fn make_sphere(&self, params: SphereParams) -> Result<Shape, Error> {
+        let rust_metadata = sphere_analytic_result_metadata(params);
         let raw_params = ffi::LeanOcctSphereParams {
             x: params.origin[0],
             y: params.origin[1],
@@ -1638,7 +1639,7 @@ impl Context {
         };
 
         let raw = unsafe { ffi::lean_occt_shape_make_sphere(self.raw.as_ptr(), &raw_params) };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_torus(&self, params: TorusParams) -> Result<Shape, Error> {
@@ -4791,6 +4792,53 @@ fn push_cone_cap_analytic_face_metadata(
 fn cone_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
     FaceGeometry {
         kind: SurfaceKind::Cone,
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+        is_u_closed: true,
+        is_v_closed: false,
+        is_u_periodic: true,
+        is_v_periodic: false,
+        u_period: TAU,
+        v_period: 0.0,
+    }
+}
+
+fn sphere_analytic_result_metadata(params: SphereParams) -> ShapeRustMetadata {
+    match sphere_analytic_face_metadata_inventory(params) {
+        Some(inventory) if !inventory.is_empty() => {
+            ShapeRustMetadata::MultiFaceAnalyticResult(inventory)
+        }
+        _ => ShapeRustMetadata::None,
+    }
+}
+
+fn sphere_analytic_face_metadata_inventory(
+    params: SphereParams,
+) -> Option<Vec<AnalyticSurfaceFaceMetadata>> {
+    if !params.origin.iter().all(|value| value.is_finite())
+        || !params.axis.iter().all(|value| value.is_finite())
+        || !params.x_direction.iter().all(|value| value.is_finite())
+        || vector_norm3(params.axis) <= 1.0e-12
+        || vector_norm3(params.x_direction) <= 1.0e-12
+        || !sphere_radius_supported(params.radius)
+    {
+        return None;
+    }
+
+    Some(vec![AnalyticSurfaceFaceMetadata {
+        geometry_seed: sphere_face_geometry_seed(0.0, TAU, -FRAC_PI_2, FRAC_PI_2),
+    }])
+}
+
+fn sphere_radius_supported(value: f64) -> bool {
+    value.is_finite() && value > 1.0e-12
+}
+
+fn sphere_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
+    FaceGeometry {
+        kind: SurfaceKind::Sphere,
         u_min,
         u_max,
         v_min,
