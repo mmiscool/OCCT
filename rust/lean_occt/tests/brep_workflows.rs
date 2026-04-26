@@ -3116,6 +3116,459 @@ fn ported_brep_uses_rust_owned_topology_for_root_compound_solids(
     Ok(())
 }
 
+fn assert_root_compound_child_kinds(
+    kernel: &ModelKernel,
+    label: &str,
+    compound: &Shape,
+    expected_kinds: &[ShapeKind],
+) -> Result<Vec<Shape>, Box<dyn std::error::Error>> {
+    let child_shapes = kernel.context().root_compound_child_shapes_occt(compound)?;
+    let actual_kinds = child_shapes
+        .iter()
+        .map(|child_shape| {
+            kernel
+                .context()
+                .describe_shape_occt(child_shape)
+                .map(|summary| summary.root_kind)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual_kinds != expected_kinds {
+        return Err(std::io::Error::other(format!(
+            "{label} direct child kind mismatch: actual={actual_kinds:?} expected={expected_kinds:?}"
+        ))
+        .into());
+    }
+    Ok(child_shapes)
+}
+
+fn assert_ported_root_assembly_solids(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    expected_root_kind: ShapeKind,
+    expected_compound_count: usize,
+    expected_compsolid_count: usize,
+    expected_solid_count: usize,
+    expected_shell_count: usize,
+    expected_face_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let occt_summary = kernel.context().describe_shape_occt(shape)?;
+    assert_eq!(occt_summary.root_kind, expected_root_kind);
+    assert_eq!(occt_summary.compound_count, expected_compound_count);
+    assert_eq!(occt_summary.compsolid_count, expected_compsolid_count);
+    assert_eq!(occt_summary.solid_count, expected_solid_count);
+    assert_eq!(occt_summary.shell_count, expected_shell_count);
+    assert_eq!(occt_summary.face_count, expected_face_count);
+
+    let rust_topology = kernel
+        .context()
+        .ported_topology(shape)?
+        .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+    let occt_topology = kernel.context().topology_occt(shape)?;
+    let brep = kernel.brep(shape)?;
+
+    assert_topology_matches(label, &rust_topology, &occt_topology)?;
+    assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+    assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
+    assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
+    assert_topology_matches(
+        &format!("{label} BRep topology"),
+        &brep.topology,
+        &rust_topology,
+    )?;
+    assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
+    assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
+    assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
+
+    let solid_shapes = kernel.context().subshapes(shape, ShapeKind::Solid)?;
+    let occt_solid_shapes = kernel.context().subshapes_occt(shape, ShapeKind::Solid)?;
+    if solid_shapes.len() != occt_summary.solid_count
+        || solid_shapes.len() != occt_solid_shapes.len()
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} solid inventory mismatch: public={} summary={} occt={}",
+            solid_shapes.len(),
+            occt_summary.solid_count,
+            occt_solid_shapes.len()
+        ))
+        .into());
+    }
+    for (index, (solid_shape, occt_solid_shape)) in
+        solid_shapes.iter().zip(&occt_solid_shapes).enumerate()
+    {
+        let indexed_solid = kernel.context().subshape(shape, ShapeKind::Solid, index)?;
+        let public_solid_topology = kernel.context().topology_occt(solid_shape)?;
+        let indexed_solid_topology = kernel.context().topology_occt(&indexed_solid)?;
+        let occt_solid_topology = kernel.context().topology_occt(occt_solid_shape)?;
+        assert_topology_matches(
+            &format!("{label} public solid {index} handle"),
+            &public_solid_topology,
+            &occt_solid_topology,
+        )?;
+        assert_topology_matches(
+            &format!("{label} indexed solid {index} handle"),
+            &indexed_solid_topology,
+            &occt_solid_topology,
+        )?;
+        let solid_rust_topology =
+            kernel
+                .context()
+                .ported_topology(solid_shape)?
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "expected Rust topology for {label} solid {index}"
+                    ))
+                })?;
+        assert_topology_matches(
+            &format!("{label} solid {index} topology"),
+            &solid_rust_topology,
+            &occt_solid_topology,
+        )?;
+        assert_root_solid_public_inventory(
+            &kernel,
+            &format!("{label} solid {index}"),
+            solid_shape,
+            &solid_rust_topology,
+        )?;
+    }
+
+    let rust_summary = kernel.context().describe_shape(shape)?;
+    assert_eq!(rust_summary.root_kind, expected_root_kind);
+    assert_eq!(rust_summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(rust_summary.solid_count, occt_summary.solid_count);
+    assert_eq!(rust_summary.shell_count, occt_summary.shell_count);
+    assert_eq!(rust_summary.face_count, rust_topology.faces.len());
+    assert_eq!(rust_summary.edge_count, rust_topology.edges.len());
+    assert_eq!(
+        rust_summary.vertex_count,
+        rust_topology.vertex_positions.len()
+    );
+    assert!(
+        (rust_summary.surface_area - occt_summary.surface_area).abs() <= 1.0e-8,
+        "{label} surface area mismatch: rust={} occt={}",
+        rust_summary.surface_area,
+        occt_summary.surface_area
+    );
+    assert!(
+        (rust_summary.volume - occt_summary.volume).abs() <= 1.0e-8,
+        "{label} volume mismatch: rust={} occt={}",
+        rust_summary.volume,
+        occt_summary.volume
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_root_compsolid_solids(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let solids = vec![lhs, rhs];
+    let compsolid = kernel.make_compsolid(&solids)?;
+
+    assert_ported_root_assembly_solids(
+        &kernel,
+        "root compsolid",
+        &compsolid,
+        ShapeKind::CompSolid,
+        0,
+        1,
+        2,
+        2,
+        12,
+    )
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_nested_root_compound_solids(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-30.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [-10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let child_compound = kernel.make_compound(&[lhs, rhs])?;
+    let root_compound = kernel.make_compound(&[child_compound])?;
+    let root_children = assert_root_compound_child_kinds(
+        &kernel,
+        "nested root compound solids",
+        &root_compound,
+        &[ShapeKind::Compound],
+    )?;
+    assert_root_compound_child_kinds(
+        &kernel,
+        "nested root compound solids child",
+        &root_children[0],
+        &[ShapeKind::Solid, ShapeKind::Solid],
+    )?;
+
+    assert_ported_root_assembly_solids(
+        &kernel,
+        "nested root compound solids",
+        &root_compound,
+        ShapeKind::Compound,
+        1,
+        0,
+        2,
+        2,
+        12,
+    )
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_nested_root_compound_compsolid(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let compsolid = kernel.make_compsolid(&[lhs, rhs])?;
+    let root_compound = kernel.make_compound(&[compsolid])?;
+    let root_children = assert_root_compound_child_kinds(
+        &kernel,
+        "nested root compound compsolid",
+        &root_compound,
+        &[ShapeKind::CompSolid],
+    )?;
+    let compsolid_children = kernel
+        .context()
+        .root_compsolid_child_shapes_occt(&root_children[0])?;
+    let compsolid_child_kinds = compsolid_children
+        .iter()
+        .map(|child_shape| {
+            kernel
+                .context()
+                .describe_shape_occt(child_shape)
+                .map(|summary| summary.root_kind)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        compsolid_child_kinds,
+        vec![ShapeKind::Solid, ShapeKind::Solid]
+    );
+
+    assert_ported_root_assembly_solids(
+        &kernel,
+        "nested root compound compsolid",
+        &root_compound,
+        ShapeKind::Compound,
+        1,
+        1,
+        2,
+        2,
+        12,
+    )
+}
+
+fn assert_ported_root_assembly_shells(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    expected_root_kind: ShapeKind,
+    expected_compound_count: usize,
+    expected_compsolid_count: usize,
+    expected_shell_count: usize,
+    expected_face_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let occt_summary = kernel.context().describe_shape_occt(shape)?;
+    assert_eq!(occt_summary.root_kind, expected_root_kind);
+    assert_eq!(occt_summary.compound_count, expected_compound_count);
+    assert_eq!(occt_summary.compsolid_count, expected_compsolid_count);
+    assert_eq!(occt_summary.solid_count, 0);
+    assert_eq!(occt_summary.shell_count, expected_shell_count);
+    assert_eq!(occt_summary.face_count, expected_face_count);
+
+    let rust_topology = kernel
+        .context()
+        .ported_topology(shape)?
+        .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+    let occt_topology = kernel.context().topology_occt(shape)?;
+    let brep = kernel.brep(shape)?;
+
+    assert_topology_matches(label, &rust_topology, &occt_topology)?;
+    assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
+    assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
+    assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
+    assert_topology_matches(
+        &format!("{label} BRep topology"),
+        &brep.topology,
+        &rust_topology,
+    )?;
+    assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
+    assert_brep_faces_match_public(&kernel, label, shape, &brep)?;
+    assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
+
+    let solid_shapes = kernel.context().subshapes(shape, ShapeKind::Solid)?;
+    if !solid_shapes.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "{label} expected no public solids, found {}",
+            solid_shapes.len()
+        ))
+        .into());
+    }
+    let shell_shapes = kernel.context().subshapes(shape, ShapeKind::Shell)?;
+    let occt_shell_shapes = kernel.context().subshapes_occt(shape, ShapeKind::Shell)?;
+    if shell_shapes.len() != occt_summary.shell_count
+        || shell_shapes.len() != occt_shell_shapes.len()
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} shell inventory mismatch: public={} summary={} occt={}",
+            shell_shapes.len(),
+            occt_summary.shell_count,
+            occt_shell_shapes.len()
+        ))
+        .into());
+    }
+    for (index, (shell_shape, occt_shell_shape)) in
+        shell_shapes.iter().zip(&occt_shell_shapes).enumerate()
+    {
+        let indexed_shell = kernel.context().subshape(shape, ShapeKind::Shell, index)?;
+        let public_shell_topology = kernel.context().topology_occt(shell_shape)?;
+        let indexed_shell_topology = kernel.context().topology_occt(&indexed_shell)?;
+        let occt_shell_topology = kernel.context().topology_occt(occt_shell_shape)?;
+        assert_topology_matches(
+            &format!("{label} public shell {index} handle"),
+            &public_shell_topology,
+            &occt_shell_topology,
+        )?;
+        assert_topology_matches(
+            &format!("{label} indexed shell {index} handle"),
+            &indexed_shell_topology,
+            &occt_shell_topology,
+        )?;
+        let shell_rust_topology =
+            kernel
+                .context()
+                .ported_topology(shell_shape)?
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "expected Rust topology for {label} shell {index}"
+                    ))
+                })?;
+        assert_topology_matches(
+            &format!("{label} shell {index} topology"),
+            &shell_rust_topology,
+            &occt_shell_topology,
+        )?;
+        assert_root_shell_public_inventory(
+            &kernel,
+            &format!("{label} shell {index}"),
+            shell_shape,
+            &shell_rust_topology,
+        )?;
+    }
+
+    let rust_summary = kernel.context().describe_shape(shape)?;
+    assert_eq!(rust_summary.root_kind, expected_root_kind);
+    assert_eq!(rust_summary.primary_kind, ShapeKind::Shell);
+    assert_eq!(rust_summary.solid_count, 0);
+    assert_eq!(rust_summary.shell_count, occt_summary.shell_count);
+    assert_eq!(rust_summary.face_count, rust_topology.faces.len());
+    assert_eq!(rust_summary.edge_count, rust_topology.edges.len());
+    assert_eq!(
+        rust_summary.vertex_count,
+        rust_topology.vertex_positions.len()
+    );
+    assert!(
+        (rust_summary.surface_area - occt_summary.surface_area).abs() <= 1.0e-8,
+        "{label} surface area mismatch: rust={} occt={}",
+        rust_summary.surface_area,
+        occt_summary.surface_area
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_root_compound_shells(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-20.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let lhs_shell = kernel.context().subshape(&lhs, ShapeKind::Shell, 0)?;
+    let rhs_shell = kernel.context().subshape(&rhs, ShapeKind::Shell, 0)?;
+    let compound = kernel.fuse(&lhs_shell, &rhs_shell)?;
+    assert_ported_root_assembly_shells(
+        &kernel,
+        "root shell compound",
+        &compound,
+        ShapeKind::Compound,
+        1,
+        0,
+        2,
+        12,
+    )
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_nested_root_compound_shells(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-20.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let lhs_shell = kernel.context().subshape(&lhs, ShapeKind::Shell, 0)?;
+    let rhs_shell = kernel.context().subshape(&rhs, ShapeKind::Shell, 0)?;
+    let child_compound = kernel.make_compound(&[lhs_shell, rhs_shell])?;
+    let root_compound = kernel.make_compound(&[child_compound])?;
+    let root_children = assert_root_compound_child_kinds(
+        &kernel,
+        "nested root shell compound",
+        &root_compound,
+        &[ShapeKind::Compound],
+    )?;
+    assert_root_compound_child_kinds(
+        &kernel,
+        "nested root shell compound child",
+        &root_children[0],
+        &[ShapeKind::Shell, ShapeKind::Shell],
+    )?;
+
+    assert_ported_root_assembly_shells(
+        &kernel,
+        "nested root shell compound",
+        &root_compound,
+        ShapeKind::Compound,
+        1,
+        0,
+        2,
+        12,
+    )
+}
+
 #[test]
 fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dyn std::error::Error>>
 {

@@ -106,6 +106,14 @@ impl ModelKernel {
         self.context.make_revolution(shape, params)
     }
 
+    pub fn make_compound(&self, shapes: &[Shape]) -> Result<Shape, Error> {
+        self.context.make_compound(shapes)
+    }
+
+    pub fn make_compsolid(&self, solids: &[Shape]) -> Result<Shape, Error> {
+        self.context.make_compsolid(solids)
+    }
+
     pub fn cut(&self, lhs: &Shape, rhs: &Shape) -> Result<Shape, Error> {
         self.context.cut(lhs, rhs)
     }

@@ -71,6 +71,7 @@
 #include <TopoDS_CompSolid.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
@@ -674,6 +675,30 @@ static TopoDS_Shape indexedSubshape(const TopoDS_Shape& the_shape,
   }
 
   return a_map.FindKey(static_cast<int>(the_index + 1));
+}
+
+static std::size_t countDirectChildren(const TopoDS_Shape& the_shape)
+{
+  std::size_t a_count = 0;
+  for (TopoDS_Iterator an_it(the_shape); an_it.More(); an_it.Next())
+  {
+    ++a_count;
+  }
+  return a_count;
+}
+
+static TopoDS_Shape indexedDirectChild(const TopoDS_Shape& the_shape, std::size_t the_index)
+{
+  std::size_t a_current_index = 0;
+  for (TopoDS_Iterator an_it(the_shape); an_it.More(); an_it.Next(), ++a_current_index)
+  {
+    if (a_current_index == the_index)
+    {
+      return an_it.Value();
+    }
+  }
+
+  throw std::out_of_range("Requested direct child index was out of range.");
 }
 
 static std::size_t countWireEdgeOccurrences(const TopoDS_Wire& the_wire)
@@ -2340,6 +2365,54 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_revolution(
   });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_compound(
+  LeanOcctContext*            the_context,
+  const LeanOcctShape* const* the_shapes,
+  size_t                      the_count)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    const LeanOcctShape* const* a_shapes =
+      requirePointer(the_shapes, "LeanOcctShape array was null.");
+    if (the_count == 0)
+    {
+      throw std::invalid_argument("Compound requires at least one child shape.");
+    }
+
+    BRep_Builder a_builder;
+    TopoDS_Compound a_compound;
+    a_builder.MakeCompound(a_compound);
+    for (size_t an_index = 0; an_index < the_count; ++an_index)
+    {
+      a_builder.Add(a_compound, requireShape(a_shapes[an_index]));
+    }
+    return a_compound;
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_make_compsolid(
+  LeanOcctContext*           the_context,
+  const LeanOcctShape* const* the_shapes,
+  size_t                     the_count)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    const LeanOcctShape* const* a_shapes =
+      requirePointer(the_shapes, "LeanOcctShape array was null.");
+    if (the_count == 0)
+    {
+      throw std::invalid_argument("CompSolid requires at least one solid.");
+    }
+
+    BRep_Builder a_builder;
+    TopoDS_CompSolid a_compsolid;
+    a_builder.MakeCompSolid(a_compsolid);
+    for (size_t an_index = 0; an_index < the_count; ++an_index)
+    {
+      a_builder.Add(a_compsolid, requireSolidShape(a_shapes[an_index]));
+    }
+    return a_compsolid;
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_boolean_cut(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_lhs,
@@ -3390,6 +3463,26 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compound_su
   });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compound_child_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root compound child count output pointer was null.", [&](size_t& the_result) {
+    the_result = countDirectChildren(requireCompoundShape(the_shape));
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compound_child(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedDirectChild(requireCompoundShape(the_shape), the_index);
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compsolid_subshape_count(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
@@ -3409,6 +3502,26 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compsolid_s
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireCompSolidShape(the_shape), the_kind, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compsolid_child_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root compsolid child count output pointer was null.", [&](size_t& the_result) {
+    the_result = countDirectChildren(requireCompSolidShape(the_shape));
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compsolid_child(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedDirectChild(requireCompSolidShape(the_shape), the_index);
   });
 }
 

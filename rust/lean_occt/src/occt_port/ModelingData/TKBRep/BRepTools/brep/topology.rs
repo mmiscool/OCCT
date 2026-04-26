@@ -56,6 +56,14 @@ enum RootAssemblyKind {
     CompSolid,
 }
 
+enum RootAssemblyTopologyInventory {
+    Supported(RootAssemblyKind),
+    Unsupported,
+    NotAssembly,
+}
+
+const ROOT_ASSEMBLY_MAX_DEPTH: usize = 16;
+
 fn load_root_topology_snapshot(
     context: &Context,
     shape: &Shape,
@@ -78,8 +86,12 @@ fn load_root_topology_snapshot(
     if root_solid_topology_inventory_required(context, shape)? {
         return load_root_solid_topology_snapshot(context, shape);
     }
-    if let Some(root_assembly_kind) = root_assembly_topology_inventory_required(context, shape)? {
-        return load_root_assembly_topology_snapshot(context, shape, root_assembly_kind);
+    match root_assembly_topology_inventory_required(context, shape)? {
+        RootAssemblyTopologyInventory::Supported(root_assembly_kind) => {
+            return load_root_assembly_topology_snapshot(context, shape, root_assembly_kind);
+        }
+        RootAssemblyTopologyInventory::Unsupported => return Ok(None),
+        RootAssemblyTopologyInventory::NotAssembly => {}
     }
 
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
@@ -769,26 +781,109 @@ fn load_root_solid_topology_snapshot(
 fn root_assembly_topology_inventory_required(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<RootAssemblyKind>, Error> {
+) -> Result<RootAssemblyTopologyInventory, Error> {
     let summary = context.describe_shape_occt(shape)?;
     if summary.face_count == 0 || summary.shell_count == 0 {
-        return Ok(None);
+        return Ok(RootAssemblyTopologyInventory::NotAssembly);
     }
 
-    if summary.root_kind == ShapeKind::Compound
-        && summary.compound_count == 1
-        && summary.compsolid_count == 0
-    {
-        return Ok(Some(RootAssemblyKind::Compound));
+    match summary.root_kind {
+        ShapeKind::Compound => root_compound_topology_inventory_required(context, shape, 0),
+        ShapeKind::CompSolid => {
+            if summary.compsolid_count != 1
+                || summary.compound_count != 0
+                || summary.solid_count == 0
+            {
+                return Ok(RootAssemblyTopologyInventory::Unsupported);
+            }
+            root_compsolid_topology_inventory_required(context, shape, 0)
+        }
+        _ => Ok(RootAssemblyTopologyInventory::NotAssembly),
     }
-    if summary.root_kind == ShapeKind::CompSolid
-        && summary.compsolid_count == 1
-        && summary.compound_count == 0
-        && summary.solid_count > 0
-    {
-        return Ok(Some(RootAssemblyKind::CompSolid));
+}
+
+fn root_compound_topology_inventory_required(
+    context: &Context,
+    shape: &Shape,
+    depth: usize,
+) -> Result<RootAssemblyTopologyInventory, Error> {
+    if depth >= ROOT_ASSEMBLY_MAX_DEPTH {
+        return Ok(RootAssemblyTopologyInventory::Unsupported);
     }
-    Ok(None)
+    let child_shapes = match context.root_compound_child_shapes_occt(shape) {
+        Ok(child_shapes) => child_shapes,
+        Err(_) => return Ok(RootAssemblyTopologyInventory::Unsupported),
+    };
+    if child_shapes.is_empty() {
+        return Ok(RootAssemblyTopologyInventory::Unsupported);
+    }
+
+    for child_shape in &child_shapes {
+        if !root_assembly_child_topology_supported(context, child_shape, depth)? {
+            return Ok(RootAssemblyTopologyInventory::Unsupported);
+        }
+    }
+
+    Ok(RootAssemblyTopologyInventory::Supported(
+        RootAssemblyKind::Compound,
+    ))
+}
+
+fn root_compsolid_topology_inventory_required(
+    context: &Context,
+    shape: &Shape,
+    depth: usize,
+) -> Result<RootAssemblyTopologyInventory, Error> {
+    if depth >= ROOT_ASSEMBLY_MAX_DEPTH {
+        return Ok(RootAssemblyTopologyInventory::Unsupported);
+    }
+    let child_shapes = match context.root_compsolid_child_shapes_occt(shape) {
+        Ok(child_shapes) => child_shapes,
+        Err(_) => return Ok(RootAssemblyTopologyInventory::Unsupported),
+    };
+    if child_shapes.is_empty() {
+        return Ok(RootAssemblyTopologyInventory::Unsupported);
+    }
+
+    for child_shape in &child_shapes {
+        let child_summary = context.describe_shape_occt(child_shape)?;
+        if child_summary.root_kind != ShapeKind::Solid
+            || child_summary.solid_count != 1
+            || child_summary.shell_count == 0
+            || child_summary.face_count == 0
+        {
+            return Ok(RootAssemblyTopologyInventory::Unsupported);
+        }
+    }
+
+    Ok(RootAssemblyTopologyInventory::Supported(
+        RootAssemblyKind::CompSolid,
+    ))
+}
+
+fn root_assembly_child_topology_supported(
+    context: &Context,
+    child_shape: &Shape,
+    depth: usize,
+) -> Result<bool, Error> {
+    let child_summary = context.describe_shape_occt(child_shape)?;
+    match child_summary.root_kind {
+        ShapeKind::Solid => Ok(child_summary.solid_count == 1
+            && child_summary.shell_count > 0
+            && child_summary.face_count > 0),
+        ShapeKind::Shell => Ok(child_summary.solid_count == 0
+            && child_summary.shell_count >= 1
+            && child_summary.face_count > 0),
+        ShapeKind::Compound => Ok(matches!(
+            root_compound_topology_inventory_required(context, child_shape, depth + 1)?,
+            RootAssemblyTopologyInventory::Supported(RootAssemblyKind::Compound)
+        )),
+        ShapeKind::CompSolid => Ok(matches!(
+            root_compsolid_topology_inventory_required(context, child_shape, depth + 1)?,
+            RootAssemblyTopologyInventory::Supported(RootAssemblyKind::CompSolid)
+        )),
+        _ => Ok(false),
+    }
 }
 
 fn load_root_assembly_topology_snapshot(

@@ -539,6 +539,16 @@ mod ffi {
             shape: *const LeanOcctShape,
             params: *const LeanOcctRevolutionParams,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_make_compound(
+            context: *mut LeanOcctContext,
+            shapes: *const *const LeanOcctShape,
+            count: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_make_compsolid(
+            context: *mut LeanOcctContext,
+            shapes: *const *const LeanOcctShape,
+            count: usize,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_boolean_cut(
             context: *mut LeanOcctContext,
             lhs: *const LeanOcctShape,
@@ -925,6 +935,16 @@ mod ffi {
             kind: LeanOcctShapeKind,
             index: usize,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_compound_child_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_compound_child(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            index: usize,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_root_compsolid_subshape_count(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -935,6 +955,16 @@ mod ffi {
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
             kind: LeanOcctShapeKind,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_compsolid_child_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_compsolid_child(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
             index: usize,
         ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_wire_edge_occurrence_count(
@@ -1748,6 +1778,36 @@ impl Context {
 
         let raw = unsafe {
             ffi::lean_occt_shape_make_revolution(self.raw.as_ptr(), shape.raw.as_ptr(), &raw_params)
+        };
+        self.wrap_shape(raw)
+    }
+
+    pub fn make_compound(&self, shapes: &[Shape]) -> Result<Shape, Error> {
+        let raw_shapes = shapes
+            .iter()
+            .map(|shape| shape.raw.as_ptr() as *const ffi::LeanOcctShape)
+            .collect::<Vec<_>>();
+        let raw = unsafe {
+            ffi::lean_occt_shape_make_compound(
+                self.raw.as_ptr(),
+                raw_shapes.as_ptr(),
+                raw_shapes.len(),
+            )
+        };
+        self.wrap_shape(raw)
+    }
+
+    pub fn make_compsolid(&self, solids: &[Shape]) -> Result<Shape, Error> {
+        let raw_solids = solids
+            .iter()
+            .map(|solid| solid.raw.as_ptr() as *const ffi::LeanOcctShape)
+            .collect::<Vec<_>>();
+        let raw = unsafe {
+            ffi::lean_occt_shape_make_compsolid(
+                self.raw.as_ptr(),
+                raw_solids.as_ptr(),
+                raw_solids.len(),
+            )
         };
         self.wrap_shape(raw)
     }
@@ -4016,6 +4076,36 @@ impl Context {
         Ok(shapes)
     }
 
+    pub fn root_compound_child_shapes_occt(
+        &self,
+        compound_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_compound_child_count(
+                self.raw.as_ptr(),
+                compound_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_compound_child(
+                    self.raw.as_ptr(),
+                    compound_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
     pub(crate) fn root_compsolid_subshapes_occt(
         &self,
         compsolid_shape: &Shape,
@@ -4041,6 +4131,36 @@ impl Context {
                     self.raw.as_ptr(),
                     compsolid_shape.raw.as_ptr(),
                     kind.to_ffi(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub fn root_compsolid_child_shapes_occt(
+        &self,
+        compsolid_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_compsolid_child_count(
+                self.raw.as_ptr(),
+                compsolid_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_compsolid_child(
+                    self.raw.as_ptr(),
+                    compsolid_shape.raw.as_ptr(),
                     index,
                 )
             };
