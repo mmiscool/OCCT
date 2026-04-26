@@ -750,6 +750,16 @@ fn assert_swept_offset_basis_mirrors_source(
     )?;
 
     let source_geometry = context.face_geometry(source_face)?;
+    let source_ported_geometry = context
+        .ported_face_geometry(source_face)?
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust basis geometry")))?;
+    assert_eq!(source_ported_geometry.kind, basis_kind);
+    assert_face_geometry_close(
+        source_geometry,
+        source_ported_geometry,
+        1.0e-12,
+        &format!("{label} swept source basis geometry"),
+    )?;
     assert_face_geometry_close(
         context.face_offset_basis_geometry(offset_face)?,
         source_geometry,
@@ -3064,9 +3074,21 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             "{label} direct analytic offset value mismatch"
         );
 
+        let basis_geometry = context.face_geometry(basis_face)?;
+        let ported_basis_geometry = context
+            .ported_face_geometry(basis_face)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust basis geometry")))?;
+        assert_eq!(ported_basis_geometry.kind, basis_kind);
+        assert_face_geometry_close(
+            basis_geometry,
+            ported_basis_geometry,
+            1.0e-12,
+            &format!("{label} direct analytic Rust basis geometry"),
+        )?;
+
         assert_face_geometry_close(
             context.face_offset_basis_geometry(offset_face)?,
-            context.face_geometry(basis_face)?,
+            basis_geometry,
             1.0e-12,
             &format!("{label} direct analytic offset basis geometry"),
         )?;
@@ -3164,6 +3186,16 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
         );
 
         let source_geometry = context.face_geometry(source_face)?;
+        let source_ported_geometry = context
+            .ported_face_geometry(source_face)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust basis geometry")))?;
+        assert_eq!(source_ported_geometry.kind, basis_kind);
+        assert_face_geometry_close(
+            source_geometry,
+            source_ported_geometry,
+            1.0e-12,
+            &format!("{label} direct swept Rust basis geometry"),
+        )?;
         assert_face_geometry_close(
             context.face_offset_basis_geometry(offset_face)?,
             source_geometry,

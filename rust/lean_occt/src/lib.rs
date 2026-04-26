@@ -4293,16 +4293,18 @@ impl Context {
         basis_face: &Shape,
         offset_value: f64,
     ) -> Result<Option<OffsetSurfaceFaceMetadata>, Error> {
-        let raw_basis_geometry = match self.face_geometry_occt(basis_face) {
-            Ok(geometry) => geometry,
-            Err(_) => return Ok(None),
+        let basis_geometry = match self.ported_face_geometry(basis_face) {
+            Ok(Some(geometry)) => geometry,
+            Ok(None) => return Ok(None),
+            Err(error) if error.to_string().contains("not a face") => return Ok(None),
+            Err(error) => return Err(error),
         };
-        if !offset_surface_face_metadata_supports_basis(raw_basis_geometry.kind) {
+
+        if !offset_surface_face_metadata_supports_basis(basis_geometry.kind) {
             return Ok(None);
         }
 
-        let basis_geometry = self.face_geometry(basis_face)?;
-        let basis = match raw_basis_geometry.kind {
+        let basis = match basis_geometry.kind {
             SurfaceKind::Plane
             | SurfaceKind::Cylinder
             | SurfaceKind::Cone
@@ -4315,14 +4317,14 @@ impl Context {
                 )?
                 else {
                     return Err(unsupported_ported_surface_payload_error(
-                        raw_basis_geometry.kind,
+                        basis_geometry.kind,
                         basis_geometry.kind,
                     ));
                 };
                 let actual = ported_surface_kind(surface);
-                if actual != raw_basis_geometry.kind {
+                if actual != basis_geometry.kind {
                     return Err(mismatched_ported_surface_payload_error(
-                        raw_basis_geometry.kind,
+                        basis_geometry.kind,
                         actual,
                     ));
                 }
@@ -4331,19 +4333,19 @@ impl Context {
             SurfaceKind::Revolution | SurfaceKind::Extrusion => {
                 match brep::ported_face_surface_descriptor(self, basis_face, basis_geometry)? {
                     Some(PortedFaceSurface::Swept(surface))
-                        if ported_swept_surface_kind(surface) == raw_basis_geometry.kind =>
+                        if ported_swept_surface_kind(surface) == basis_geometry.kind =>
                     {
                         PortedOffsetBasisSurface::Swept(surface)
                     }
                     Some(surface) => {
                         return Err(mismatched_ported_surface_payload_error(
-                            raw_basis_geometry.kind,
+                            basis_geometry.kind,
                             ported_face_surface_descriptor_kind(surface),
                         ));
                     }
                     None => {
                         return Err(unsupported_ported_surface_payload_error(
-                            raw_basis_geometry.kind,
+                            basis_geometry.kind,
                             basis_geometry.kind,
                         ));
                     }
