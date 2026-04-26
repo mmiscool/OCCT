@@ -1,8 +1,12 @@
-use super::edge_topology::{root_edge_topology, topology_edge_length, RootEdgeTopology};
+use super::edge_topology::{
+    root_edge_topology, topology_edge_length, topology_edge_query, RootEdgeTopology,
+};
 use super::face_snapshot::{
     load_ported_face_snapshot, PreparedFaceShape, TopologySnapshotFaceFields,
 };
-use super::wire_topology::{pack_wire_topology, root_wire_topology, PreparedRootWireShape};
+use super::wire_topology::{
+    match_vertex_index, pack_wire_topology, root_wire_topology, PreparedRootWireShape,
+};
 use super::*;
 use crate::{OffsetSurfaceFaceMetadata, OffsetSurfacePayload};
 
@@ -50,6 +54,9 @@ fn load_root_topology_snapshot(
 ) -> Result<Option<TopologySnapshotRootFields>, Error> {
     if let Some(root_edge_fields) = load_root_edge_topology_snapshot(context, shape)? {
         return Ok(Some(root_edge_fields));
+    }
+    if root_wire_topology_inventory_required(context, shape)? {
+        return load_root_wire_topology_snapshot(context, shape);
     }
 
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
@@ -244,6 +251,157 @@ fn root_edge_vertices_from_ported_seed(
         Some(0),
         Some(1),
     ))
+}
+
+fn root_wire_topology_inventory_required(context: &Context, shape: &Shape) -> Result<bool, Error> {
+    let summary = context.describe_shape_occt(shape)?;
+    Ok(summary.root_kind == ShapeKind::Wire && summary.face_count == 0 && summary.edge_count > 0)
+}
+
+fn load_root_wire_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    let wire_shape = context.duplicate_shape_occt(shape)?;
+    let wire_edge_occurrence_shapes = context.wire_edge_occurrences_occt(&wire_shape)?;
+    if wire_edge_occurrence_shapes.len() != wire_shape.edge_count() {
+        return Ok(None);
+    }
+
+    let mut vertex_shapes = Vec::new();
+    let mut vertex_positions = Vec::new();
+    let mut edge_shapes = Vec::new();
+    let mut root_edges = Vec::new();
+
+    for edge_shape in &wire_edge_occurrence_shapes {
+        let query = topology_edge_query(context, edge_shape)?;
+        let Some(start_vertex) = root_wire_vertex_index_from_ported_seed(
+            context,
+            edge_shape,
+            0,
+            query.endpoints.start,
+            &mut vertex_shapes,
+            &mut vertex_positions,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(end_vertex) = root_wire_vertex_index_from_ported_seed(
+            context,
+            edge_shape,
+            1,
+            query.endpoints.end,
+            &mut vertex_shapes,
+            &mut vertex_positions,
+        )?
+        else {
+            return Ok(None);
+        };
+        let length = topology_edge_length(context, edge_shape, query.geometry)?;
+        if root_wire_existing_edge_index(context, edge_shape, &edge_shapes)?.is_none() {
+            edge_shapes.push(context.duplicate_shape_occt(edge_shape)?);
+            root_edges.push(RootEdgeTopology {
+                geometry: query.geometry,
+                start_vertex: Some(start_vertex),
+                end_vertex: Some(end_vertex),
+                length,
+            });
+        }
+    }
+
+    let edges = root_edges
+        .iter()
+        .map(|edge| crate::TopologyEdge {
+            start_vertex: edge.start_vertex,
+            end_vertex: edge.end_vertex,
+            length: edge.length,
+        })
+        .collect::<Vec<_>>();
+
+    let prepared_wire_shape = PreparedRootWireShape {
+        wire_shape,
+        wire_edge_occurrence_shapes,
+    };
+    let Some(root_wire) = root_wire_topology(
+        context,
+        &prepared_wire_shape,
+        &vertex_positions,
+        &edge_shapes,
+        &root_edges,
+    )?
+    else {
+        return Ok(None);
+    };
+    let root_wires = vec![root_wire];
+    let (wires, wire_edge_indices, wire_edge_orientations, wire_vertices, wire_vertex_indices) =
+        pack_wire_topology(&root_wires);
+    let wire_shapes = vec![prepared_wire_shape.wire_shape];
+
+    Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
+        vertex_positions,
+        edge_shapes,
+        wire_shapes,
+        prepared_shell_shapes: Vec::new(),
+        face_shapes: Vec::new(),
+        prepared_face_shapes: Vec::new(),
+        edges,
+        root_edges,
+        root_wires,
+        wires,
+        wire_edge_indices,
+        wire_edge_orientations,
+        wire_vertices,
+        wire_vertex_indices,
+    }))
+}
+
+fn root_wire_vertex_index_from_ported_seed(
+    context: &Context,
+    edge_shape: &Shape,
+    endpoint_index: usize,
+    endpoint: [f64; 3],
+    vertex_shapes: &mut Vec<Shape>,
+    vertex_positions: &mut Vec<[f64; 3]>,
+) -> Result<Option<usize>, Error> {
+    let vertex_shape = match context.root_edge_vertex_shape_occt(edge_shape, endpoint_index) {
+        Ok(vertex_shape) => vertex_shape,
+        Err(_) => return Ok(None),
+    };
+    for (index, existing_shape) in vertex_shapes.iter().enumerate() {
+        if context.shape_is_same_occt(&vertex_shape, existing_shape)? {
+            if root_wire_endpoint_matches_position(vertex_positions[index], endpoint) {
+                return Ok(Some(index));
+            }
+            return Ok(None);
+        }
+    }
+    if match_vertex_index(vertex_positions, endpoint).is_some() {
+        return Ok(None);
+    }
+
+    vertex_shapes.push(vertex_shape);
+    vertex_positions.push(endpoint);
+    Ok(Some(vertex_positions.len() - 1))
+}
+
+fn root_wire_existing_edge_index(
+    context: &Context,
+    edge_shape: &Shape,
+    edge_shapes: &[Shape],
+) -> Result<Option<usize>, Error> {
+    for (index, existing_shape) in edge_shapes.iter().enumerate() {
+        if context.shape_is_same_occt(edge_shape, existing_shape)? {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
+fn root_wire_endpoint_matches_position(lhs: [f64; 3], rhs: [f64; 3]) -> bool {
+    (lhs[0] - rhs[0]).abs() <= 1.0e-7
+        && (lhs[1] - rhs[1]).abs() <= 1.0e-7
+        && (lhs[2] - rhs[2]).abs() <= 1.0e-7
 }
 
 fn attach_offset_result_face_metadata(

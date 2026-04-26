@@ -2084,6 +2084,9 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
             &rust_topology,
             label != "helix",
         )?;
+        if label == "helix" {
+            assert_face_free_root_wire_public_inventory(&kernel, label, shape, &rust_topology)?;
+        }
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
@@ -2092,6 +2095,106 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
     }
 
     assert!(kernel.context().ported_topology(&cut)?.is_some());
+
+    Ok(())
+}
+
+fn assert_face_free_root_wire_public_inventory(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !topology.faces.is_empty() || topology.wires.len() != 1 {
+        return Err(std::io::Error::other(format!(
+            "{label} expected one face-free root wire, found wires={} faces={}",
+            topology.wires.len(),
+            topology.faces.len()
+        ))
+        .into());
+    }
+
+    let wire_shapes = kernel.context().subshapes(shape, ShapeKind::Wire)?;
+    if wire_shapes.len() != 1 {
+        return Err(std::io::Error::other(format!(
+            "{label} root wire inventory mismatch: public={} topology=1",
+            wire_shapes.len()
+        ))
+        .into());
+    }
+    let indexed_wire = kernel.context().subshape(shape, ShapeKind::Wire, 0)?;
+    let public_wire_topology = kernel.context().topology_occt(&wire_shapes[0])?;
+    let indexed_wire_topology = kernel.context().topology_occt(&indexed_wire)?;
+    assert_topology_matches_ignoring_edge_lengths(
+        &format!("{label} public root wire handle"),
+        &public_wire_topology,
+        topology,
+    )?;
+    assert_topology_matches_ignoring_edge_lengths(
+        &format!("{label} indexed root wire handle"),
+        &indexed_wire_topology,
+        topology,
+    )?;
+
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != topology.edges.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root wire edge handle mismatch: public={} topology={}",
+            edge_shapes.len(),
+            topology.edges.len()
+        ))
+        .into());
+    }
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let expected_length = match kernel.context().ported_edge_length(edge_shape)? {
+            Some(length) => length,
+            None => edge_shape.linear_length(),
+        };
+        let topology_length = topology
+            .edges
+            .get(index)
+            .map(|edge| edge.length)
+            .ok_or_else(|| {
+                std::io::Error::other(format!("{label} missing topology edge {index}"))
+            })?;
+        if (topology_length - expected_length).abs() > 1.0e-9 {
+            return Err(std::io::Error::other(format!(
+                "{label} root wire edge {index} length mismatch: topology={topology_length} public={expected_length}"
+            ))
+            .into());
+        }
+    }
+
+    let vertex_shapes = kernel.context().subshapes(shape, ShapeKind::Vertex)?;
+    if vertex_shapes.len() != topology.vertex_positions.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root wire vertex handle mismatch: public={} topology={}",
+            vertex_shapes.len(),
+            topology.vertex_positions.len()
+        ))
+        .into());
+    }
+    for (index, vertex_shape) in vertex_shapes.iter().enumerate() {
+        let point = kernel.context().vertex_point(vertex_shape)?;
+        assert_vec3_close(
+            point,
+            topology.vertex_positions[index],
+            1.0e-8,
+            &format!("{label} root wire vertex {index} public point"),
+        )?;
+    }
+
+    for kind in [ShapeKind::Face, ShapeKind::Shell] {
+        let public_count = kernel.context().subshape_count(shape, kind)?;
+        let public_shapes = kernel.context().subshapes(shape, kind)?;
+        if public_count != 0 || !public_shapes.is_empty() {
+            return Err(std::io::Error::other(format!(
+                "{label} expected empty {kind:?} inventory, count={public_count} handles={}",
+                public_shapes.len()
+            ))
+            .into());
+        }
+    }
 
     Ok(())
 }
