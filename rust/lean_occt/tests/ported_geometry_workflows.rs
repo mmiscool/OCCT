@@ -1357,6 +1357,32 @@ fn unsupported_root_edge_does_not_use_generic_raw_topology_inventory(
 }
 
 #[test]
+fn ported_edge_geometry_returns_none_for_non_edge_shapes() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?;
+    let summary = kernel.context().describe_shape_occt(&face)?;
+    assert_ne!(
+        summary.root_kind,
+        ShapeKind::Edge,
+        "fixture should exercise a non-edge ported geometry query"
+    );
+
+    assert!(
+        kernel.context().ported_edge_geometry(&face)?.is_none(),
+        "ported edge geometry must return None instead of entering a raw edge classifier"
+    );
+    assert!(
+        kernel.context().edge_geometry(&face).is_err(),
+        "public edge geometry should still reject non-edge shapes through the explicit raw API"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn ported_vertex_points_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;

@@ -751,15 +751,6 @@ impl PortedFaceSurface {
     }
 }
 
-fn periodic_edge_direction_preference(geometry: EdgeGeometry) -> Option<f64> {
-    let span = geometry.end_parameter - geometry.start_parameter;
-    if span.abs() > 1.0e-9 {
-        Some(span.signum())
-    } else {
-        None
-    }
-}
-
 impl Context {
     pub(crate) fn ported_root_edge_topology_bootstrap_geometry(
         &self,
@@ -782,68 +773,6 @@ impl Context {
     pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
         if self.describe_shape_occt(shape)?.root_kind == ShapeKind::Edge {
             return ported_root_edge_geometry_value(self, shape);
-        }
-
-        let geometry = self.edge_geometry_occt(shape)?;
-        let endpoints = self.edge_endpoints(shape)?;
-
-        if geometry.kind == CurveKind::Line {
-            if let Some(payload) = ported_line_payload_from_endpoints(geometry, endpoints) {
-                return Ok(ported_line_geometry(payload, endpoints));
-            }
-            return Ok(None);
-        }
-
-        if geometry.kind == CurveKind::Circle {
-            let Some(payload) = ported_circle_payload(self, shape, geometry)? else {
-                return Ok(None);
-            };
-            let edge_length = shape.linear_length();
-            let direction_preference = periodic_edge_direction_preference(geometry);
-            return Ok(ported_periodic_curve_geometry(
-                CurveKind::Circle,
-                endpoints,
-                edge_length,
-                TAU,
-                direction_preference,
-                |point| Some(circle_parameter(payload, point)),
-                |start_parameter, end_parameter| {
-                    PortedCurve::Circle(payload).length_with_geometry(EdgeGeometry {
-                        kind: CurveKind::Circle,
-                        start_parameter,
-                        end_parameter,
-                        is_closed: false,
-                        is_periodic: true,
-                        period: TAU,
-                    })
-                },
-            ));
-        }
-
-        if geometry.kind == CurveKind::Ellipse {
-            let Some(payload) = ported_ellipse_payload(self, shape, geometry)? else {
-                return Ok(None);
-            };
-            let edge_length = shape.linear_length();
-            let direction_preference = periodic_edge_direction_preference(geometry);
-            return Ok(ported_periodic_curve_geometry(
-                CurveKind::Ellipse,
-                endpoints,
-                edge_length,
-                TAU,
-                direction_preference,
-                |point| ellipse_parameter(payload, point),
-                |start_parameter, end_parameter| {
-                    PortedCurve::Ellipse(payload).length_with_geometry(EdgeGeometry {
-                        kind: CurveKind::Ellipse,
-                        start_parameter,
-                        end_parameter,
-                        is_closed: false,
-                        is_periodic: true,
-                        period: TAU,
-                    })
-                },
-            ));
         }
 
         Ok(None)

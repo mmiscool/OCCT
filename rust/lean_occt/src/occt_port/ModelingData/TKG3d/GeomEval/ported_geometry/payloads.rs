@@ -14,151 +14,6 @@ use super::{
     Atan2Components, PortedCurve, PortedSurface, PortedSweptSurface,
 };
 
-pub(super) fn ported_line_geometry(
-    payload: LinePayload,
-    endpoints: EdgeEndpoints,
-) -> Option<EdgeGeometry> {
-    let start_parameter = line_parameter(payload, endpoints.start)?;
-    let end_parameter = line_parameter(payload, endpoints.end)?;
-    Some(EdgeGeometry {
-        kind: CurveKind::Line,
-        start_parameter,
-        end_parameter,
-        is_closed: approx_points_eq(endpoints.start, endpoints.end, 1.0e-7),
-        is_periodic: false,
-        period: 0.0,
-    })
-}
-
-pub(super) fn ported_periodic_curve_geometry<F, H>(
-    kind: CurveKind,
-    endpoints: EdgeEndpoints,
-    edge_length: f64,
-    period: f64,
-    direction_preference: Option<f64>,
-    parameter_at_point: F,
-    length_with_parameters: H,
-) -> Option<EdgeGeometry>
-where
-    F: Fn([f64; 3]) -> Option<f64>,
-    H: Fn(f64, f64) -> f64,
-{
-    let start_parameter = parameter_at_point(endpoints.start)?;
-    let end_parameter_base = parameter_at_point(endpoints.end)?;
-    let closed = approx_points_eq(endpoints.start, endpoints.end, 1.0e-7);
-    let end_parameter = select_periodic_end_parameter(
-        edge_length,
-        period,
-        start_parameter,
-        end_parameter_base,
-        closed,
-        direction_preference,
-        length_with_parameters,
-    )?;
-    let direction_sign = if end_parameter >= start_parameter {
-        1.0
-    } else {
-        -1.0
-    };
-    let (start_parameter, end_parameter) =
-        canonicalize_periodic_parameters(start_parameter, end_parameter, period, direction_sign);
-    Some(EdgeGeometry {
-        kind,
-        start_parameter,
-        end_parameter,
-        is_closed: closed,
-        is_periodic: true,
-        period,
-    })
-}
-
-fn select_periodic_end_parameter<H>(
-    edge_length: f64,
-    period: f64,
-    start_parameter: f64,
-    end_parameter_base: f64,
-    closed: bool,
-    direction_preference: Option<f64>,
-    length_with_parameters: H,
-) -> Option<f64>
-where
-    H: Fn(f64, f64) -> f64,
-{
-    let mut best: Option<(f64, f64, f64)> = None;
-    let normalized_start = normalize_periodic_parameter(start_parameter, period);
-    let normalized_end = normalize_periodic_parameter(end_parameter_base, period);
-    let base_delta = normalized_end - normalized_start;
-    for turn in -2..=2 {
-        let candidate = start_parameter + base_delta + period * f64::from(turn);
-        let delta = candidate - start_parameter;
-        if delta.abs() <= 1.0e-9 && !(closed && edge_length <= 1.0e-9) {
-            continue;
-        }
-        let length_error = (length_with_parameters(start_parameter, candidate) - edge_length).abs();
-        let tie_breaker = periodic_candidate_tie_breaker(delta, direction_preference);
-        let replace = best
-            .map(|(_, best_error, best_tie_breaker)| {
-                length_error < best_error - 1.0e-8
-                    || ((length_error - best_error).abs() <= 1.0e-8
-                        && tie_breaker < best_tie_breaker)
-            })
-            .unwrap_or(true);
-        if replace {
-            best = Some((candidate, length_error, tie_breaker));
-        }
-    }
-    best.map(|(candidate, _, _)| candidate)
-}
-
-fn periodic_candidate_tie_breaker(delta: f64, direction_preference: Option<f64>) -> f64 {
-    let preference_bias = direction_preference
-        .filter(|preference| preference.abs() > 0.0 && delta.abs() > 1.0e-9)
-        .map(|preference| {
-            if delta.signum() == preference.signum() {
-                0.0
-            } else {
-                1.0e-6
-            }
-        })
-        .unwrap_or(0.0);
-    let sign_bias = if delta >= 0.0 { 0.0 } else { 1.0e-12 };
-    preference_bias + delta.abs() + sign_bias
-}
-
-fn canonicalize_periodic_parameters(
-    mut start_parameter: f64,
-    mut end_parameter: f64,
-    period: f64,
-    direction_sign: f64,
-) -> (f64, f64) {
-    let period = period.abs();
-
-    if direction_sign >= 0.0 {
-        while start_parameter < -1.0e-9 {
-            start_parameter += period;
-            end_parameter += period;
-        }
-        while start_parameter >= period - 1.0e-9 && end_parameter >= period + 1.0e-9 {
-            start_parameter -= period;
-            end_parameter -= period;
-        }
-    } else {
-        while end_parameter < -1.0e-9 {
-            start_parameter += period;
-            end_parameter += period;
-        }
-        while end_parameter >= period - 1.0e-9 && start_parameter >= period + 1.0e-9 {
-            start_parameter -= period;
-            end_parameter -= period;
-        }
-    }
-
-    (
-        snap_periodic_parameter(start_parameter, period),
-        snap_periodic_parameter(end_parameter, period),
-    )
-}
-
 pub(super) fn ported_analytic_face_geometry(
     kind: SurfaceKind,
     bounds: FaceUvBounds,
@@ -1567,35 +1422,6 @@ fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
     }
 }
 
-fn normalize_periodic_parameter(value: f64, period: f64) -> f64 {
-    let period = period.abs();
-    if period <= 1.0e-12 {
-        return value;
-    }
-
-    let mut normalized = value % period;
-    if normalized < 0.0 {
-        normalized += period;
-    }
-    if normalized >= period - 1.0e-9 {
-        0.0
-    } else {
-        normalized
-    }
-}
-
-fn snap_periodic_parameter(value: f64, period: f64) -> f64 {
-    if value.abs() <= 1.0e-9 {
-        0.0
-    } else if (value - period).abs() <= 1.0e-9 {
-        period
-    } else if (value + period).abs() <= 1.0e-9 {
-        0.0
-    } else {
-        value
-    }
-}
-
 fn select_periodic_probe_parameter(start: f64, end: f64) -> Option<f64> {
     [0.25, 0.5, 0.75, 1.0]
         .into_iter()
@@ -1696,29 +1522,8 @@ fn trigonometric_curve_determinant(parameters: [f64; 3]) -> f64 {
         - (cosines[2] - cosines[0]) * (sines[1] - sines[0])
 }
 
-fn line_parameter(payload: LinePayload, point: [f64; 3]) -> Option<f64> {
-    let direction_norm_sq = dot3(payload.direction, payload.direction);
-    if direction_norm_sq <= 1.0e-24 {
-        None
-    } else {
-        Some(dot3(subtract3(point, payload.origin), payload.direction) / direction_norm_sq)
-    }
-}
-
 pub(super) fn circle_parameter(payload: CirclePayload, point: [f64; 3]) -> f64 {
     subtract3(point, payload.center).atan2_components(payload.x_direction, payload.y_direction)
-}
-
-pub(super) fn ellipse_parameter(payload: EllipsePayload, point: [f64; 3]) -> Option<f64> {
-    if payload.major_radius.abs() <= 1.0e-12 || payload.minor_radius.abs() <= 1.0e-12 {
-        return None;
-    }
-
-    let relative = subtract3(point, payload.center);
-    Some(
-        (dot3(relative, payload.y_direction) / payload.minor_radius)
-            .atan2(dot3(relative, payload.x_direction) / payload.major_radius),
-    )
 }
 
 fn approx_points_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
