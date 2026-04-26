@@ -1353,6 +1353,41 @@ fn unsupported_root_edge_does_not_use_generic_raw_topology_inventory(
         "unsupported root edge public/occt end",
     )?;
 
+    let public_sample = kernel.context().edge_sample(&edge, 0.5)?;
+    let occt_sample = kernel.context().edge_sample_occt(&edge, 0.5)?;
+    assert_vec3_close(
+        public_sample.position,
+        occt_sample.position,
+        1.0e-12,
+        "unsupported root edge public/occt sampled position",
+    )?;
+    assert_vec3_close(
+        public_sample.tangent,
+        occt_sample.tangent,
+        1.0e-12,
+        "unsupported root edge public/occt sampled tangent",
+    )?;
+
+    let parameter = 0.5 * (geometry.start_parameter + geometry.end_parameter);
+    let public_parameter_sample = kernel
+        .context()
+        .edge_sample_at_parameter(&edge, parameter)?;
+    let occt_parameter_sample = kernel
+        .context()
+        .edge_sample_at_parameter_occt(&edge, parameter)?;
+    assert_vec3_close(
+        public_parameter_sample.position,
+        occt_parameter_sample.position,
+        1.0e-12,
+        "unsupported root edge public/occt parameter-sampled position",
+    )?;
+    assert_vec3_close(
+        public_parameter_sample.tangent,
+        occt_parameter_sample.tangent,
+        1.0e-12,
+        "unsupported root edge public/occt parameter-sampled tangent",
+    )?;
+
     Ok(())
 }
 
