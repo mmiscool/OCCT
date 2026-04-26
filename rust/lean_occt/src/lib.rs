@@ -2107,6 +2107,35 @@ impl Context {
             .ok_or_else(|| unsupported_ported_surface_payload_error(expected, geometry.kind))
     }
 
+    fn ported_offset_face_surface_payload(
+        &self,
+        shape: &Shape,
+    ) -> Result<PortedOffsetSurface, Error> {
+        if let Some(surface) = self.ported_offset_surface(shape)? {
+            return Ok(surface);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if geometry.kind != SurfaceKind::Offset {
+            return Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Offset,
+                geometry.kind,
+            ));
+        }
+
+        match brep::ported_face_surface_descriptor(self, shape, geometry)? {
+            Some(PortedFaceSurface::Offset(surface)) => Ok(surface),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Offset,
+                ported_face_surface_descriptor_kind(surface),
+            )),
+            None => Err(unsupported_ported_surface_payload_error(
+                SurfaceKind::Offset,
+                geometry.kind,
+            )),
+        }
+    }
+
     pub fn face_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
         match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Plane)? {
             PortedSurface::Plane(payload) => Ok(payload),
@@ -2375,10 +2404,7 @@ impl Context {
     }
 
     pub fn face_offset_payload(&self, shape: &Shape) -> Result<OffsetSurfacePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => Ok(surface.payload),
-            None => self.face_offset_payload_occt(shape),
-        }
+        Ok(self.ported_offset_face_surface_payload(shape)?.payload)
     }
 
     pub fn face_offset_payload_occt(&self, shape: &Shape) -> Result<OffsetSurfacePayload, Error> {

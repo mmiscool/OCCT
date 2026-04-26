@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, OffsetParams,
-    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
-    PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut,
-    TorusParams,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedOffsetSurface, PortedSurface,
+    PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind,
+    ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -104,6 +104,22 @@ fn require_ported_swept_face_surface(
         }
         descriptor => Err(std::io::Error::other(format!(
             "{label} expected Rust {expected:?} swept descriptor, got {descriptor:?}"
+        ))
+        .into()),
+    }
+}
+
+fn require_ported_offset_face_surface(
+    surface: Option<PortedFaceSurface>,
+    label: &str,
+) -> Result<PortedOffsetSurface, Box<dyn std::error::Error>> {
+    let surface = surface.ok_or_else(|| {
+        std::io::Error::other(format!("{label} missing Rust offset surface descriptor"))
+    })?;
+    match surface {
+        PortedFaceSurface::Offset(surface) => Ok(surface),
+        descriptor => Err(std::io::Error::other(format!(
+            "{label} expected Rust Offset descriptor, got {descriptor:?}"
         ))
         .into()),
     }
@@ -1496,28 +1512,18 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
         },
     )?;
     let offset_face = find_first_face_by_kind(&kernel, &offset_shape, SurfaceKind::Offset)?;
+    let offset_descriptor = require_ported_offset_face_surface(
+        context.ported_face_surface_descriptor(&offset_face)?,
+        "offset public payload",
+    )?;
     let offset_payload = context.face_offset_payload(&offset_face)?;
     let offset_payload_occt = context.face_offset_payload_occt(&offset_face)?;
-    let offset_descriptor = context
-        .ported_face_surface_descriptor(&offset_face)?
-        .ok_or_else(|| std::io::Error::other("expected ported offset descriptor"))?;
-
-    match offset_descriptor {
-        PortedFaceSurface::Offset(surface) => {
-            assert_offset_payload_close(
-                offset_payload,
-                surface.payload,
-                1.0e-12,
-                "offset public descriptor payload",
-            )?;
-        }
-        descriptor => {
-            return Err(std::io::Error::other(format!(
-                "unexpected offset descriptor: {descriptor:?}"
-            ))
-            .into())
-        }
-    }
+    assert_offset_payload_close(
+        offset_payload,
+        offset_descriptor.payload,
+        1.0e-12,
+        "offset public descriptor payload",
+    )?;
     assert_offset_payload_close(
         offset_payload,
         offset_payload_occt,
@@ -2194,20 +2200,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             revolution_direct_offset_face,
         ),
     ] {
+        let offset_surface = require_ported_offset_face_surface(
+            context.ported_face_surface_descriptor(&offset_face)?,
+            &format!("{label} offset public payload"),
+        )?;
         let offset_payload = context.face_offset_payload(&offset_face)?;
         let offset_payload_occt = context.face_offset_payload_occt(&offset_face)?;
-        let descriptor = context
-            .ported_face_surface_descriptor(&offset_face)?
-            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} offset")))?;
-        let offset_surface = match descriptor {
-            PortedFaceSurface::Offset(surface) => surface,
-            descriptor => {
-                return Err(std::io::Error::other(format!(
-                    "unexpected {label} offset descriptor: {descriptor:?}"
-                ))
-                .into())
-            }
-        };
 
         assert_eq!(offset_payload.basis_surface_kind, basis_kind);
         assert_offset_payload_close(
@@ -2456,11 +2454,9 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                 .into())
             }
         }
-        let geometry = context.face_geometry(&offset_face)?;
         let orientation = context.shape_orientation(&offset_face)?;
         let uv_t = [0.37, 0.61];
-        let rust_sample =
-            descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+        let rust_sample = offset_surface.sample_normalized_with_orientation(uv_t, orientation);
         let occt_sample = context.face_sample_normalized_occt(&offset_face, uv_t)?;
         assert_vec3_close(
             rust_sample.position,
