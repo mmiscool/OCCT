@@ -4474,7 +4474,7 @@ fn unsupported_ported_edge_query_error(operation: &str, kind: CurveKind) -> Erro
     ))
 }
 
-fn rust_owned_face_query_required_kind(
+pub(crate) fn rust_owned_face_query_required_kind(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<SurfaceKind>, Error> {

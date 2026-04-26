@@ -45,10 +45,10 @@ use crate::ported_geometry::{
     PortedOffsetBasisSurface, PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
-    ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error,
-    FaceGeometry, FaceSample, LoopRole, Mesh, MeshParams, Orientation, PlanePayload, PortedCurve,
-    PortedSurface, Shape, ShapeKind, ShapeSummary, SpherePayload, SurfaceKind, TopologySnapshot,
-    TorusPayload,
+    rust_owned_face_query_required_kind, ConePayload, Context, CurveKind, CylinderPayload,
+    EdgeEndpoints, EdgeGeometry, Error, FaceGeometry, FaceSample, LoopRole, Mesh, MeshParams,
+    Orientation, PlanePayload, PortedCurve, PortedSurface, Shape, ShapeKind, ShapeSummary,
+    SpherePayload, TopologySnapshot, TorusPayload,
 };
 
 const SUMMARY_VOLUME_MESH_PARAMS: MeshParams = MeshParams {
@@ -249,27 +249,12 @@ fn strict_brep_face_inventory_requires_ported_topology(
     }
 
     for face_shape in face_shapes {
-        let geometry = context.face_geometry_occt(&face_shape)?;
-        if !strict_brep_supported_surface_kind(geometry.kind) {
+        if rust_owned_face_query_required_kind(context, &face_shape)?.is_none() {
             return Ok(false);
         }
     }
 
     Ok(face_count > 0)
-}
-
-fn strict_brep_supported_surface_kind(kind: SurfaceKind) -> bool {
-    matches!(
-        kind,
-        SurfaceKind::Plane
-            | SurfaceKind::Cylinder
-            | SurfaceKind::Cone
-            | SurfaceKind::Sphere
-            | SurfaceKind::Torus
-            | SurfaceKind::Revolution
-            | SurfaceKind::Extrusion
-            | SurfaceKind::Offset
-    )
 }
 
 fn strict_brep_missing_ported_topology_error(
@@ -417,7 +402,9 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EllipseEdgeParams, HelixParams};
+    use crate::{
+        BoxParams, EllipseEdgeParams, HelixParams, OffsetParams, PrismParams, SurfaceKind,
+    };
     use std::sync::Mutex;
 
     static STRICT_BREP_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -498,6 +485,74 @@ mod tests {
         assert!(strict_brep_requires_ported_topology(
             &context,
             &mixed_compound
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn strict_brep_face_inventory_gate_uses_rust_face_support() -> Result<(), Error> {
+        let _guard = STRICT_BREP_TEST_LOCK.lock().unwrap();
+        let context = Context::new()?;
+
+        let box_shape = context.make_box(BoxParams {
+            origin: [-10.0, -10.0, -10.0],
+            size: [20.0, 20.0, 20.0],
+        })?;
+        let box_summary = context.describe_shape_occt(&box_shape)?;
+        assert!(strict_brep_face_inventory_requires_ported_topology(
+            &context,
+            &box_shape,
+            box_summary.face_count,
+        )?);
+        assert!(!strict_brep_face_inventory_requires_ported_topology(
+            &context,
+            &box_shape,
+            box_summary.face_count + 1,
+        )?);
+
+        let ellipse = context.make_ellipse_edge(EllipseEdgeParams {
+            origin: [30.0, 4.0, -2.0],
+            axis: [0.0, 1.0, 0.0],
+            x_direction: [1.0, 0.0, 0.0],
+            major_radius: 10.0,
+            minor_radius: 6.0,
+        })?;
+        let prism = context.make_prism(
+            &ellipse,
+            PrismParams {
+                direction: [0.0, 24.0, 0.0],
+            },
+        )?;
+        let prism_summary = context.describe_shape_occt(&prism)?;
+        assert!(strict_brep_face_inventory_requires_ported_topology(
+            &context,
+            &prism,
+            prism_summary.face_count,
+        )?);
+
+        let offset_basis = context
+            .subshapes_occt(&box_shape, ShapeKind::Face)?
+            .into_iter()
+            .find(|face| {
+                matches!(
+                    context.face_geometry(face).map(|geometry| geometry.kind),
+                    Ok(SurfaceKind::Plane)
+                )
+            })
+            .ok_or_else(|| Error::new("expected box to expose a planar basis face"))?;
+        let offset_surface = context.make_offset_surface_face(
+            &offset_basis,
+            OffsetParams {
+                offset: 1.25,
+                tolerance: 1.0e-4,
+            },
+        )?;
+        let offset_summary = context.describe_shape_occt(&offset_surface)?;
+        assert!(strict_brep_face_inventory_requires_ported_topology(
+            &context,
+            &offset_surface,
+            offset_summary.face_count,
         )?);
 
         Ok(())
