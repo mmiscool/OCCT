@@ -8,18 +8,20 @@ Current milestone: `M7. Public Payload Fallback Narrowing` from `portingMileston
 - `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/face_snapshot.rs` now rebuilds planar multi-wire root-face snapshot plane payloads through `PortedSurface::from_context_with_ported_payloads()` via `ported_snapshot_plane_payload()`. The module no longer calls `face_plane_payload()` or `face_plane_payload_occt()`, so supported holed planar faces do not accept a direct OCCT plane-payload rescue after Rust extraction fails.
 - `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs::ported_face_geometry()` no longer retries direct analytic `face_plane_payload_occt()`, `face_cylinder_payload_occt()`, `face_cone_payload_occt()`, `face_sphere_payload_occt()`, or `face_torus_payload_occt()` helpers when Rust sample-derived payload extraction returns `None`.
 - `rust/lean_occt/tests/brep_workflows.rs::ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes` now asserts the holed planar face raw-geometry route yields a Rust plane payload, the BRep face retained that Rust analytic surface route, and the reconstructed loops still expose outer/inner roles and expected area.
-- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, and `git diff --check`.
+- `rust/lean_occt/src/lib.rs` public analytic face payload wrappers (`face_plane_payload()`, `face_cylinder_payload()`, `face_cone_payload()`, `face_sphere_payload()`, and `face_torus_payload()`) now use `ported_analytic_face_surface_payload()`: they accept an existing `ported_face_surface()` descriptor, otherwise use raw OCCT geometry only to identify supported surface kind/bounds and then require `PortedSurface::from_context_with_geometry()` to produce the Rust payload. They no longer silently call direct `face_*_payload_occt()` helpers after Rust descriptor extraction returns `None`.
+- `rust/lean_occt/tests/ported_geometry_workflows.rs::public_analytic_curve_and_surface_payload_queries_match_occt` now requires matching Rust Plane, Cylinder, Cone, Sphere, and Torus descriptors before each public analytic face payload query, compares the public payload to that descriptor, and then compares against the explicit OCCT oracle.
+- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `! rg -n 'None => self.face_(plane|cylinder|cone|sphere|torus)_payload_occt|face_(plane|cylinder|cone|sphere|torus)_payload_occt\\(shape\\)' rust/lean_occt/src/lib.rs`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, and `git diff --check`.
 
 ## Target
 
-Remove or strictly narrow the next public payload fallback family: `rust/lean_occt/src/lib.rs` analytic face payload methods still call direct `face_*_payload_occt()` helpers when `ported_face_surface()` returns `None`.
+Remove or strictly narrow the next public payload fallback family: `rust/lean_occt/src/lib.rs` swept face payload methods still call direct `face_revolution_payload_occt()` and `face_extrusion_payload_occt()` helpers when `ported_face_surface_descriptor()` returns `None`.
 
 ## Next Bounded Cut
 
-1. Start with `Context::face_plane_payload()`, `face_cylinder_payload()`, `face_cone_payload()`, `face_sphere_payload()`, and `face_torus_payload()` in `rust/lean_occt/src/lib.rs`.
-2. Split supported analytic-kind failures from unsupported descriptor absence: when raw/ported face geometry identifies the requested supported analytic kind, require `PortedSurface::from_context_with_geometry()` to produce the matching Rust payload and return an explicit Rust error if it cannot.
-3. Preserve the explicit `face_*_payload_occt()` methods as opt-in parity/oracle APIs, and keep test oracle usage explicit.
-4. Strengthen `ported_geometry_workflows::public_analytic_curve_and_surface_payload_queries_match_occt` or nearby coverage so exercised analytic public payloads are proven to come from Rust descriptors before comparing to OCCT.
+1. Start with `Context::face_revolution_payload()` and `face_extrusion_payload()` in `rust/lean_occt/src/lib.rs`.
+2. Split supported swept-kind failures from unsupported descriptor absence: when raw/ported face geometry identifies Revolution or Extrusion, require the Rust `PortedFaceSurface::Swept` descriptor path to produce the matching payload and return an explicit Rust error if it cannot.
+3. Preserve the explicit `face_revolution_payload_occt()` and `face_extrusion_payload_occt()` methods as opt-in parity/oracle APIs, and keep test oracle usage explicit.
+4. Strengthen `ported_geometry_workflows::public_swept_and_offset_payload_queries_match_occt` so exercised swept public payloads are proven to come from Rust descriptors before comparing to OCCT.
 
 ## Guardrails
 
@@ -38,9 +40,10 @@ Remove or strictly narrow the next public payload fallback family: `rust/lean_oc
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
 - `git diff --check`

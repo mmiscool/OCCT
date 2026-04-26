@@ -50,6 +50,35 @@ fn find_first_face_by_kind(
     Err(std::io::Error::other(format!("expected face with surface kind {:?}", kind)).into())
 }
 
+fn ported_surface_kind(surface: PortedSurface) -> SurfaceKind {
+    match surface {
+        PortedSurface::Plane(_) => SurfaceKind::Plane,
+        PortedSurface::Cylinder(_) => SurfaceKind::Cylinder,
+        PortedSurface::Cone(_) => SurfaceKind::Cone,
+        PortedSurface::Sphere(_) => SurfaceKind::Sphere,
+        PortedSurface::Torus(_) => SurfaceKind::Torus,
+    }
+}
+
+fn require_ported_analytic_face_surface(
+    surface: Option<PortedSurface>,
+    expected: SurfaceKind,
+    label: &str,
+) -> Result<PortedSurface, Box<dyn std::error::Error>> {
+    let surface = surface.ok_or_else(|| {
+        std::io::Error::other(format!("{label} missing Rust analytic surface descriptor"))
+    })?;
+    let actual = ported_surface_kind(surface);
+    if actual == expected {
+        Ok(surface)
+    } else {
+        Err(std::io::Error::other(format!(
+            "{label} expected Rust {expected:?} descriptor, got {actual:?}"
+        ))
+        .into())
+    }
+}
+
 fn assert_vec3_close(
     lhs: [f64; 3],
     rhs: [f64; 3],
@@ -1613,7 +1642,39 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     )?;
 
     let plane_face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Plane)?;
+    let plane_descriptor = require_ported_analytic_face_surface(
+        context.ported_face_surface(&plane_face)?,
+        SurfaceKind::Plane,
+        "plane public payload",
+    )?;
     let plane_payload = context.face_plane_payload(&plane_face)?;
+    let PortedSurface::Plane(plane_descriptor_payload) = plane_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_vec3_close(
+        plane_payload.origin,
+        plane_descriptor_payload.origin,
+        1.0e-12,
+        "plane public descriptor origin",
+    )?;
+    assert_vec3_close(
+        plane_payload.normal,
+        plane_descriptor_payload.normal,
+        1.0e-12,
+        "plane public descriptor normal",
+    )?;
+    assert_vec3_close(
+        plane_payload.x_direction,
+        plane_descriptor_payload.x_direction,
+        1.0e-12,
+        "plane public descriptor x direction",
+    )?;
+    assert_vec3_close(
+        plane_payload.y_direction,
+        plane_descriptor_payload.y_direction,
+        1.0e-12,
+        "plane public descriptor y direction",
+    )?;
     let plane_payload_occt = context.face_plane_payload_occt(&plane_face)?;
     assert_vec3_close(
         plane_payload.origin,
@@ -1641,7 +1702,45 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     )?;
 
     let cylinder_face = find_first_face_by_kind(&kernel, &cut, SurfaceKind::Cylinder)?;
+    let cylinder_descriptor = require_ported_analytic_face_surface(
+        context.ported_face_surface(&cylinder_face)?,
+        SurfaceKind::Cylinder,
+        "cylinder public payload",
+    )?;
     let cylinder_payload = context.face_cylinder_payload(&cylinder_face)?;
+    let PortedSurface::Cylinder(cylinder_descriptor_payload) = cylinder_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_vec3_close(
+        cylinder_payload.origin,
+        cylinder_descriptor_payload.origin,
+        1.0e-12,
+        "cylinder public descriptor origin",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.axis,
+        cylinder_descriptor_payload.axis,
+        1.0e-12,
+        "cylinder public descriptor axis",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.x_direction,
+        cylinder_descriptor_payload.x_direction,
+        1.0e-12,
+        "cylinder public descriptor x direction",
+    )?;
+    assert_vec3_close(
+        cylinder_payload.y_direction,
+        cylinder_descriptor_payload.y_direction,
+        1.0e-12,
+        "cylinder public descriptor y direction",
+    )?;
+    assert_scalar_close(
+        cylinder_payload.radius,
+        cylinder_descriptor_payload.radius,
+        1.0e-12,
+        "cylinder public descriptor radius",
+    )?;
     let cylinder_payload_occt = context.face_cylinder_payload_occt(&cylinder_face)?;
     assert_vec3_close(
         cylinder_payload.origin,
@@ -1675,7 +1774,51 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     )?;
 
     let cone_face = find_first_face_by_kind(&kernel, &cone, SurfaceKind::Cone)?;
+    let cone_descriptor = require_ported_analytic_face_surface(
+        context.ported_face_surface(&cone_face)?,
+        SurfaceKind::Cone,
+        "cone public payload",
+    )?;
     let cone_payload = context.face_cone_payload(&cone_face)?;
+    let PortedSurface::Cone(cone_descriptor_payload) = cone_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_vec3_close(
+        cone_payload.origin,
+        cone_descriptor_payload.origin,
+        1.0e-12,
+        "cone public descriptor origin",
+    )?;
+    assert_vec3_close(
+        cone_payload.axis,
+        cone_descriptor_payload.axis,
+        1.0e-12,
+        "cone public descriptor axis",
+    )?;
+    assert_vec3_close(
+        cone_payload.x_direction,
+        cone_descriptor_payload.x_direction,
+        1.0e-12,
+        "cone public descriptor x direction",
+    )?;
+    assert_vec3_close(
+        cone_payload.y_direction,
+        cone_descriptor_payload.y_direction,
+        1.0e-12,
+        "cone public descriptor y direction",
+    )?;
+    assert_scalar_close(
+        cone_payload.reference_radius,
+        cone_descriptor_payload.reference_radius,
+        1.0e-12,
+        "cone public descriptor reference radius",
+    )?;
+    assert_scalar_close(
+        cone_payload.semi_angle,
+        cone_descriptor_payload.semi_angle,
+        1.0e-12,
+        "cone public descriptor semi angle",
+    )?;
     let cone_payload_occt = context.face_cone_payload_occt(&cone_face)?;
     assert_vec3_close(
         cone_payload.origin,
@@ -1715,7 +1858,45 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     )?;
 
     let sphere_face = find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?;
+    let sphere_descriptor = require_ported_analytic_face_surface(
+        context.ported_face_surface(&sphere_face)?,
+        SurfaceKind::Sphere,
+        "sphere public payload",
+    )?;
     let sphere_payload = context.face_sphere_payload(&sphere_face)?;
+    let PortedSurface::Sphere(sphere_descriptor_payload) = sphere_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_vec3_close(
+        sphere_payload.center,
+        sphere_descriptor_payload.center,
+        1.0e-12,
+        "sphere public descriptor center",
+    )?;
+    assert_vec3_close(
+        sphere_payload.normal,
+        sphere_descriptor_payload.normal,
+        1.0e-12,
+        "sphere public descriptor normal",
+    )?;
+    assert_vec3_close(
+        sphere_payload.x_direction,
+        sphere_descriptor_payload.x_direction,
+        1.0e-12,
+        "sphere public descriptor x direction",
+    )?;
+    assert_vec3_close(
+        sphere_payload.y_direction,
+        sphere_descriptor_payload.y_direction,
+        1.0e-12,
+        "sphere public descriptor y direction",
+    )?;
+    assert_scalar_close(
+        sphere_payload.radius,
+        sphere_descriptor_payload.radius,
+        1.0e-12,
+        "sphere public descriptor radius",
+    )?;
     let sphere_payload_occt = context.face_sphere_payload_occt(&sphere_face)?;
     assert_vec3_close(
         sphere_payload.center,
@@ -1749,7 +1930,51 @@ fn public_analytic_curve_and_surface_payload_queries_match_occt(
     )?;
 
     let torus_face = find_first_face_by_kind(&kernel, &torus, SurfaceKind::Torus)?;
+    let torus_descriptor = require_ported_analytic_face_surface(
+        context.ported_face_surface(&torus_face)?,
+        SurfaceKind::Torus,
+        "torus public payload",
+    )?;
     let torus_payload = context.face_torus_payload(&torus_face)?;
+    let PortedSurface::Torus(torus_descriptor_payload) = torus_descriptor else {
+        unreachable!("descriptor kind was checked above");
+    };
+    assert_vec3_close(
+        torus_payload.center,
+        torus_descriptor_payload.center,
+        1.0e-12,
+        "torus public descriptor center",
+    )?;
+    assert_vec3_close(
+        torus_payload.axis,
+        torus_descriptor_payload.axis,
+        1.0e-12,
+        "torus public descriptor axis",
+    )?;
+    assert_vec3_close(
+        torus_payload.x_direction,
+        torus_descriptor_payload.x_direction,
+        1.0e-12,
+        "torus public descriptor x direction",
+    )?;
+    assert_vec3_close(
+        torus_payload.y_direction,
+        torus_descriptor_payload.y_direction,
+        1.0e-12,
+        "torus public descriptor y direction",
+    )?;
+    assert_scalar_close(
+        torus_payload.major_radius,
+        torus_descriptor_payload.major_radius,
+        1.0e-12,
+        "torus public descriptor major radius",
+    )?;
+    assert_scalar_close(
+        torus_payload.minor_radius,
+        torus_descriptor_payload.minor_radius,
+        1.0e-12,
+        "torus public descriptor minor radius",
+    )?;
     let torus_payload_occt = context.face_torus_payload_occt(&torus_face)?;
     assert_vec3_close(
         torus_payload.center,

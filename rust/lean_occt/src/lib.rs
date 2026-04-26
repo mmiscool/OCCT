@@ -2065,14 +2065,34 @@ impl Context {
         }
     }
 
+    fn ported_analytic_face_surface_payload(
+        &self,
+        shape: &Shape,
+        expected: SurfaceKind,
+    ) -> Result<PortedSurface, Error> {
+        if let Some(surface) = self.ported_face_surface(shape)? {
+            return Ok(surface);
+        }
+
+        let geometry = self.face_geometry_occt(shape)?;
+        if geometry.kind != expected {
+            return Err(mismatched_ported_surface_payload_error(
+                expected,
+                geometry.kind,
+            ));
+        }
+
+        PortedSurface::from_context_with_geometry(self, shape, geometry)?
+            .ok_or_else(|| unsupported_ported_surface_payload_error(expected, geometry.kind))
+    }
+
     pub fn face_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
-        match self.ported_face_surface(shape)? {
-            Some(PortedSurface::Plane(payload)) => Ok(payload),
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Plane)? {
+            PortedSurface::Plane(payload) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Plane,
                 ported_surface_kind(surface),
             )),
-            None => self.face_plane_payload_occt(shape),
         }
     }
 
@@ -2103,13 +2123,12 @@ impl Context {
     }
 
     pub fn face_cylinder_payload(&self, shape: &Shape) -> Result<CylinderPayload, Error> {
-        match self.ported_face_surface(shape)? {
-            Some(PortedSurface::Cylinder(payload)) => Ok(payload),
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Cylinder)? {
+            PortedSurface::Cylinder(payload) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Cylinder,
                 ported_surface_kind(surface),
             )),
-            None => self.face_cylinder_payload_occt(shape),
         }
     }
 
@@ -2142,13 +2161,12 @@ impl Context {
     }
 
     pub fn face_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
-        match self.ported_face_surface(shape)? {
-            Some(PortedSurface::Cone(payload)) => Ok(payload),
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Cone)? {
+            PortedSurface::Cone(payload) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Cone,
                 ported_surface_kind(surface),
             )),
-            None => self.face_cone_payload_occt(shape),
         }
     }
 
@@ -2183,13 +2201,12 @@ impl Context {
     }
 
     pub fn face_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
-        match self.ported_face_surface(shape)? {
-            Some(PortedSurface::Sphere(payload)) => Ok(payload),
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Sphere)? {
+            PortedSurface::Sphere(payload) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Sphere,
                 ported_surface_kind(surface),
             )),
-            None => self.face_sphere_payload_occt(shape),
         }
     }
 
@@ -2222,13 +2239,12 @@ impl Context {
     }
 
     pub fn face_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
-        match self.ported_face_surface(shape)? {
-            Some(PortedSurface::Torus(payload)) => Ok(payload),
-            Some(surface) => Err(mismatched_ported_surface_payload_error(
+        match self.ported_analytic_face_surface_payload(shape, SurfaceKind::Torus)? {
+            PortedSurface::Torus(payload) => Ok(payload),
+            surface => Err(mismatched_ported_surface_payload_error(
                 SurfaceKind::Torus,
                 ported_surface_kind(surface),
             )),
-            None => self.face_torus_payload_occt(shape),
         }
     }
 
@@ -3413,6 +3429,12 @@ fn mismatched_ported_curve_payload_error(expected: CurveKind, actual: CurveKind)
 fn mismatched_ported_surface_payload_error(expected: SurfaceKind, actual: SurfaceKind) -> Error {
     Error::new(format!(
         "requested {expected:?} payload for ported {actual:?} face"
+    ))
+}
+
+fn unsupported_ported_surface_payload_error(expected: SurfaceKind, actual: SurfaceKind) -> Error {
+    Error::new(format!(
+        "Rust-owned {expected:?} payload extraction did not cover {actual:?} face"
     ))
 }
 
