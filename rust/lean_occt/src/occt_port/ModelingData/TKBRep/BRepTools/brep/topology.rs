@@ -783,9 +783,6 @@ fn root_assembly_topology_inventory_required(
     shape: &Shape,
 ) -> Result<RootAssemblyTopologyInventory, Error> {
     let summary = context.describe_shape_occt(shape)?;
-    if summary.face_count == 0 || summary.shell_count == 0 {
-        return Ok(RootAssemblyTopologyInventory::NotAssembly);
-    }
 
     match summary.root_kind {
         ShapeKind::Compound => root_compound_topology_inventory_required(context, shape, 0),
@@ -793,6 +790,8 @@ fn root_assembly_topology_inventory_required(
             if summary.compsolid_count != 1
                 || summary.compound_count != 0
                 || summary.solid_count == 0
+                || summary.shell_count == 0
+                || summary.face_count == 0
             {
                 return Ok(RootAssemblyTopologyInventory::Unsupported);
             }
@@ -874,6 +873,15 @@ fn root_assembly_child_topology_supported(
         ShapeKind::Shell => Ok(child_summary.solid_count == 0
             && child_summary.shell_count >= 1
             && child_summary.face_count > 0),
+        ShapeKind::Face => Ok(root_face_topology_inventory_required(context, child_shape)?
+            && load_root_face_topology_snapshot(context, child_shape)?.is_some()),
+        ShapeKind::Wire => Ok(root_wire_topology_inventory_required(context, child_shape)?
+            && load_root_wire_topology_snapshot(context, child_shape)?.is_some()),
+        ShapeKind::Edge => Ok(load_root_edge_topology_snapshot(context, child_shape)?.is_some()),
+        ShapeKind::Vertex => Ok(
+            root_vertex_topology_inventory_required(context, child_shape)?
+                && load_root_vertex_topology_snapshot(context, child_shape)?.is_some(),
+        ),
         ShapeKind::Compound => Ok(matches!(
             root_compound_topology_inventory_required(context, child_shape, depth + 1)?,
             RootAssemblyTopologyInventory::Supported(RootAssemblyKind::Compound)
@@ -902,9 +910,6 @@ fn load_root_assembly_topology_snapshot(
             Ok(face_shapes) => attach_offset_result_face_metadata(context, shape, face_shapes)?,
             Err(_) => return Ok(None),
         };
-    if face_shapes.is_empty() {
-        return Ok(None);
-    }
 
     let vertex_shapes = match root_assembly_subshapes_occt(
         context,
@@ -984,9 +989,6 @@ fn load_root_assembly_topology_snapshot(
             Ok(shell_shapes) => shell_shapes,
             Err(_) => return Ok(None),
         };
-    if root_assembly_shell_shapes.is_empty() {
-        return Ok(None);
-    }
     let multi_face_offset_metadata = shape
         .multi_face_offset_result_metadata()
         .map(|metadata| metadata.to_vec());

@@ -3499,6 +3499,223 @@ fn assert_ported_root_assembly_shells(
     Ok(())
 }
 
+fn assert_root_edge_public_inventory(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if topology.edges.len() != 1 || !topology.wires.is_empty() || !topology.faces.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "{label} expected one face-free root edge, found edges={} wires={} faces={}",
+            topology.edges.len(),
+            topology.wires.len(),
+            topology.faces.len()
+        ))
+        .into());
+    }
+
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != 1 {
+        return Err(std::io::Error::other(format!(
+            "{label} root edge inventory mismatch: public={} topology=1",
+            edge_shapes.len()
+        ))
+        .into());
+    }
+    let indexed_edge = kernel.context().subshape(shape, ShapeKind::Edge, 0)?;
+    let public_edge_topology = kernel.context().topology_occt(&edge_shapes[0])?;
+    let indexed_edge_topology = kernel.context().topology_occt(&indexed_edge)?;
+    assert_topology_matches_ignoring_edge_lengths(
+        &format!("{label} public root edge handle"),
+        &public_edge_topology,
+        topology,
+    )?;
+    assert_topology_matches_ignoring_edge_lengths(
+        &format!("{label} indexed root edge handle"),
+        &indexed_edge_topology,
+        topology,
+    )?;
+
+    let vertex_shapes = kernel.context().subshapes(shape, ShapeKind::Vertex)?;
+    if vertex_shapes.len() != topology.vertex_positions.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} root edge vertex handle mismatch: public={} topology={}",
+            vertex_shapes.len(),
+            topology.vertex_positions.len()
+        ))
+        .into());
+    }
+    for (index, vertex_shape) in vertex_shapes.iter().enumerate() {
+        let point = kernel.context().vertex_point(vertex_shape)?;
+        assert_vec3_close(
+            point,
+            topology.vertex_positions[index],
+            1.0e-8,
+            &format!("{label} root edge vertex {index} public point"),
+        )?;
+    }
+
+    for kind in [ShapeKind::Wire, ShapeKind::Face, ShapeKind::Shell] {
+        let public_count = kernel.context().subshape_count(shape, kind)?;
+        let public_shapes = kernel.context().subshapes(shape, kind)?;
+        if public_count != 0 || !public_shapes.is_empty() {
+            return Err(std::io::Error::other(format!(
+                "{label} expected empty {kind:?} inventory, count={public_count} handles={}",
+                public_shapes.len()
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_root_vertex_public_inventory(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if topology.vertex_positions.len() != 1
+        || !topology.edges.is_empty()
+        || !topology.wires.is_empty()
+        || !topology.faces.is_empty()
+    {
+        return Err(std::io::Error::other(format!(
+            "{label} expected one isolated root vertex, found vertices={} edges={} wires={} faces={}",
+            topology.vertex_positions.len(),
+            topology.edges.len(),
+            topology.wires.len(),
+            topology.faces.len()
+        ))
+        .into());
+    }
+
+    let vertex_shapes = kernel.context().subshapes(shape, ShapeKind::Vertex)?;
+    if vertex_shapes.len() != 1 {
+        return Err(std::io::Error::other(format!(
+            "{label} root vertex inventory mismatch: public={} topology=1",
+            vertex_shapes.len()
+        ))
+        .into());
+    }
+    let indexed_vertex = kernel.context().subshape(shape, ShapeKind::Vertex, 0)?;
+    for (handle_label, vertex_shape) in [
+        ("public root vertex handle", &vertex_shapes[0]),
+        ("indexed root vertex handle", &indexed_vertex),
+    ] {
+        let vertex_topology = kernel.context().topology_occt(vertex_shape)?;
+        assert_topology_matches(
+            &format!("{label} {handle_label}"),
+            &vertex_topology,
+            topology,
+        )?;
+        let point = kernel.context().vertex_point(vertex_shape)?;
+        assert_vec3_close(
+            point,
+            topology.vertex_positions[0],
+            1.0e-8,
+            &format!("{label} {handle_label} point"),
+        )?;
+    }
+
+    for kind in [
+        ShapeKind::Edge,
+        ShapeKind::Wire,
+        ShapeKind::Face,
+        ShapeKind::Shell,
+    ] {
+        let public_count = kernel.context().subshape_count(shape, kind)?;
+        let public_shapes = kernel.context().subshapes(shape, kind)?;
+        if public_count != 0 || !public_shapes.is_empty() {
+            return Err(std::io::Error::other(format!(
+                "{label} expected empty {kind:?} inventory, count={public_count} handles={}",
+                public_shapes.len()
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_ported_root_compound_leaf_topology(
+    kernel: &ModelKernel,
+    label: &str,
+    compound: &Shape,
+    expected_direct_child_kinds: &[ShapeKind],
+    expected_primary_kind: ShapeKind,
+    compare_occt_edge_lengths: bool,
+    linear_length_tolerance: f64,
+    surface_area_tolerance: f64,
+) -> Result<lean_occt::TopologySnapshot, Box<dyn std::error::Error>> {
+    assert_root_compound_child_kinds(kernel, label, compound, expected_direct_child_kinds)?;
+    let occt_summary = kernel.context().describe_shape_occt(compound)?;
+    assert_eq!(occt_summary.root_kind, ShapeKind::Compound);
+    assert_eq!(occt_summary.compsolid_count, 0);
+    assert_eq!(occt_summary.solid_count, 0);
+    assert_eq!(occt_summary.shell_count, 0);
+
+    let rust_topology = kernel
+        .context()
+        .ported_topology(compound)?
+        .ok_or_else(|| std::io::Error::other(format!("expected Rust topology for {label}")))?;
+    let occt_topology = kernel.context().topology_occt(compound)?;
+    let brep = kernel.brep(compound)?;
+
+    if compare_occt_edge_lengths {
+        assert_topology_matches(label, &rust_topology, &occt_topology)?;
+    } else {
+        assert_topology_matches_ignoring_edge_lengths(label, &rust_topology, &occt_topology)?;
+    }
+    assert_topology_backed_subshape_counts_match(kernel, label, compound, &rust_topology)?;
+    assert_topology_backed_subshapes_match(kernel, label, compound, &rust_topology)?;
+    assert_summary_backed_subshape_counts_match(kernel, label, compound)?;
+    assert_topology_matches(
+        &format!("{label} BRep topology"),
+        &brep.topology,
+        &rust_topology,
+    )?;
+    assert_brep_edge_geometries_match_public(kernel, label, compound, &brep)?;
+    assert_brep_faces_match_public(kernel, label, compound, &brep)?;
+    assert_brep_edge_lengths_match(kernel, label, compound, &brep)?;
+
+    let rust_summary = kernel.context().describe_shape(compound)?;
+    assert_eq!(rust_summary.root_kind, ShapeKind::Compound);
+    assert_eq!(rust_summary.primary_kind, expected_primary_kind);
+    assert_eq!(rust_summary.compsolid_count, 0);
+    assert_eq!(rust_summary.solid_count, 0);
+    assert_eq!(rust_summary.shell_count, 0);
+    assert_eq!(rust_summary.face_count, rust_topology.faces.len());
+    assert_eq!(rust_summary.wire_count, rust_topology.wires.len());
+    assert_eq!(rust_summary.edge_count, rust_topology.edges.len());
+    assert_eq!(
+        rust_summary.vertex_count,
+        rust_topology.vertex_positions.len()
+    );
+    assert!(
+        (rust_summary.linear_length - occt_summary.linear_length).abs() <= linear_length_tolerance,
+        "{label} linear length mismatch: rust={} occt={} tol={linear_length_tolerance}",
+        rust_summary.linear_length,
+        occt_summary.linear_length
+    );
+    assert!(
+        (rust_summary.surface_area - occt_summary.surface_area).abs() <= surface_area_tolerance,
+        "{label} surface area mismatch: rust={} occt={} tol={surface_area_tolerance}",
+        rust_summary.surface_area,
+        occt_summary.surface_area
+    );
+    assert!(
+        (rust_summary.volume - occt_summary.volume).abs() <= 1.0e-8,
+        "{label} volume mismatch: rust={} occt={}",
+        rust_summary.volume,
+        occt_summary.volume
+    );
+
+    Ok(rust_topology)
+}
+
 #[test]
 fn ported_brep_uses_rust_owned_topology_for_root_compound_shells(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3567,6 +3784,230 @@ fn ported_brep_uses_rust_owned_topology_for_nested_root_compound_shells(
         2,
         12,
     )
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_root_compound_faces(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs = kernel.make_box(BoxParams {
+        origin: [-20.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let rhs = kernel.make_box(BoxParams {
+        origin: [10.0, -5.0, -5.0],
+        size: [10.0, 10.0, 10.0],
+    })?;
+    let lhs_face = find_first_face_by_kind(&kernel, &lhs, SurfaceKind::Plane)?;
+    let rhs_face = find_first_face_by_kind(&kernel, &rhs, SurfaceKind::Plane)?;
+    let compound = kernel.make_compound(&[lhs_face, rhs_face])?;
+    let occt_summary = kernel.context().describe_shape_occt(&compound)?;
+    assert_eq!(occt_summary.face_count, 2);
+    assert_eq!(occt_summary.shell_count, 0);
+
+    assert_ported_root_compound_leaf_topology(
+        &kernel,
+        "root face compound",
+        &compound,
+        &[ShapeKind::Face, ShapeKind::Face],
+        ShapeKind::Face,
+        false,
+        1.0e-8,
+        1.0e-8,
+    )?;
+
+    let face_shapes = kernel.context().subshapes(&compound, ShapeKind::Face)?;
+    for (index, face_shape) in face_shapes.iter().enumerate() {
+        let face_topology = kernel
+            .context()
+            .ported_topology(face_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "expected Rust topology for root face compound face {index}"
+                ))
+            })?;
+        let face_occt_topology = kernel.context().topology_occt(face_shape)?;
+        assert_topology_matches_ignoring_edge_lengths(
+            &format!("root face compound face {index} topology"),
+            &face_topology,
+            &face_occt_topology,
+        )?;
+        assert_root_face_public_inventory(
+            &kernel,
+            &format!("root face compound face {index}"),
+            face_shape,
+            &face_topology,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_nested_root_compound_face_free_wires(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs_wire = kernel.make_helix(HelixParams {
+        origin: [-15.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 6.0,
+        height: 18.0,
+        pitch: 6.0,
+    })?;
+    let rhs_wire = kernel.make_helix(HelixParams {
+        origin: [15.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 5.0,
+        height: 20.0,
+        pitch: 5.0,
+    })?;
+    let child_compound = kernel.make_compound(&[lhs_wire, rhs_wire])?;
+    let root_compound = kernel.make_compound(&[child_compound])?;
+    let root_children = assert_root_compound_child_kinds(
+        &kernel,
+        "nested root face-free wire compound",
+        &root_compound,
+        &[ShapeKind::Compound],
+    )?;
+    assert_root_compound_child_kinds(
+        &kernel,
+        "nested root face-free wire compound child",
+        &root_children[0],
+        &[ShapeKind::Wire, ShapeKind::Wire],
+    )?;
+    let occt_summary = kernel.context().describe_shape_occt(&root_compound)?;
+    assert_eq!(occt_summary.face_count, 0);
+    assert_eq!(occt_summary.wire_count, 2);
+
+    assert_ported_root_compound_leaf_topology(
+        &kernel,
+        "nested root face-free wire compound",
+        &root_compound,
+        &[ShapeKind::Compound],
+        ShapeKind::Wire,
+        false,
+        5.0e-2,
+        1.0e-8,
+    )?;
+
+    let wire_shapes = kernel
+        .context()
+        .subshapes(&root_compound, ShapeKind::Wire)?;
+    for (index, wire_shape) in wire_shapes.iter().enumerate() {
+        let wire_topology = kernel
+            .context()
+            .ported_topology(wire_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "expected Rust topology for nested root face-free wire {index}"
+                ))
+            })?;
+        let wire_occt_topology = kernel.context().topology_occt(wire_shape)?;
+        assert_topology_matches_ignoring_edge_lengths(
+            &format!("nested root face-free wire {index} topology"),
+            &wire_topology,
+            &wire_occt_topology,
+        )?;
+        assert_face_free_root_wire_public_inventory(
+            &kernel,
+            &format!("nested root face-free wire {index}"),
+            wire_shape,
+            &wire_topology,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_uses_rust_owned_topology_for_root_compound_edges_and_vertices(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let lhs_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [-18.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 5.0,
+        minor_radius: 3.0,
+    })?;
+    let rhs_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [18.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 6.0,
+        minor_radius: 2.5,
+    })?;
+    let lhs_vertex = kernel.context().subshape(&lhs_edge, ShapeKind::Vertex, 0)?;
+    let rhs_vertex = kernel.context().subshape(&rhs_edge, ShapeKind::Vertex, 0)?;
+    let edge_compound = kernel.make_compound(&[lhs_edge, rhs_edge])?;
+    let vertex_compound = kernel.make_compound(&[lhs_vertex, rhs_vertex])?;
+
+    assert_ported_root_compound_leaf_topology(
+        &kernel,
+        "root edge compound",
+        &edge_compound,
+        &[ShapeKind::Edge, ShapeKind::Edge],
+        ShapeKind::Edge,
+        false,
+        1.0e-1,
+        1.0e-8,
+    )?;
+    let edge_shapes = kernel
+        .context()
+        .subshapes(&edge_compound, ShapeKind::Edge)?;
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let edge_topology = kernel
+            .context()
+            .ported_topology(edge_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "expected Rust topology for root edge compound edge {index}"
+                ))
+            })?;
+        assert_root_edge_public_inventory(
+            &kernel,
+            &format!("root edge compound edge {index}"),
+            edge_shape,
+            &edge_topology,
+        )?;
+    }
+
+    assert_ported_root_compound_leaf_topology(
+        &kernel,
+        "root vertex compound",
+        &vertex_compound,
+        &[ShapeKind::Vertex, ShapeKind::Vertex],
+        ShapeKind::Vertex,
+        true,
+        1.0e-8,
+        1.0e-8,
+    )?;
+    let vertex_shapes = kernel
+        .context()
+        .subshapes(&vertex_compound, ShapeKind::Vertex)?;
+    for (index, vertex_shape) in vertex_shapes.iter().enumerate() {
+        let vertex_topology = kernel
+            .context()
+            .ported_topology(vertex_shape)?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "expected Rust topology for root vertex compound vertex {index}"
+                ))
+            })?;
+        assert_root_vertex_public_inventory(
+            &kernel,
+            &format!("root vertex compound vertex {index}"),
+            vertex_shape,
+            &vertex_topology,
+        )?;
+    }
+
+    Ok(())
 }
 
 #[test]
