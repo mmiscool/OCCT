@@ -4496,22 +4496,71 @@ fn ported_face_geometry_classifies_constructor_metadata_before_raw_geometry() {
         .next()
         .expect("ported_face_geometry source should end before ported_edge_curve");
     assert!(
-        function.contains("ported_swept_surface_from_metadata_face_geometry(self, shape)?"),
+        function.contains("return ported_swept_surface_from_metadata_face_geometry(self, shape);"),
         "constructor-owned swept faces should use Rust metadata before raw UV bounds"
     );
     assert!(
-        function.contains("ported_analytic_surface_from_metadata_face_geometry(self, shape)?"),
+        function
+            .contains("return ported_analytic_surface_from_metadata_face_geometry(self, shape);"),
         "constructor-owned analytic faces should use Rust metadata before raw UV bounds"
     );
+    assert!(
+        function.contains("if shape.offset_surface_face_metadata().is_some()"),
+        "offset metadata-bearing faces should be excluded before raw UV bounds"
+    );
+    assert!(
+        function.contains("if shape.swept_surface_face_metadata().is_some()"),
+        "swept metadata-bearing faces should be excluded before raw UV bounds"
+    );
+    assert!(
+        function.contains("if shape.analytic_surface_face_metadata().is_some()"),
+        "analytic metadata-bearing faces should be excluded before raw UV bounds"
+    );
+    assert!(
+        function.contains("return ported_offset_surface_from_metadata_face_geometry(self, shape);"),
+        "offset metadata failure should not continue to raw UV bounds"
+    );
+    assert!(
+        function.contains("return ported_swept_surface_from_metadata_face_geometry(self, shape);"),
+        "swept metadata failure should not continue to raw UV bounds"
+    );
+    assert!(
+        function
+            .contains("return ported_analytic_surface_from_metadata_face_geometry(self, shape);"),
+        "analytic metadata failure should not continue to raw UV bounds"
+    );
+    assert!(
+        !function
+            .contains("if let Some(geometry) = ported_offset_surface_from_metadata_face_geometry"),
+        "offset metadata must not use the old fall-through-to-raw pattern"
+    );
+    assert!(
+        !function
+            .contains("if let Some(geometry) = ported_swept_surface_from_metadata_face_geometry"),
+        "swept metadata must not use the old fall-through-to-raw pattern"
+    );
+    assert!(
+        !function.contains(
+            "if let Some(geometry) = ported_analytic_surface_from_metadata_face_geometry"
+        ),
+        "analytic metadata must not use the old fall-through-to-raw pattern"
+    );
+    let offset_metadata_index = function
+        .find("if shape.offset_surface_face_metadata().is_some()")
+        .expect("offset metadata classifier should be present");
     let swept_metadata_index = function
-        .find("ported_swept_surface_from_metadata_face_geometry(self, shape)?")
+        .find("if shape.swept_surface_face_metadata().is_some()")
         .expect("swept metadata classifier should be present");
     let analytic_metadata_index = function
-        .find("ported_analytic_surface_from_metadata_face_geometry(self, shape)?")
+        .find("if shape.analytic_surface_face_metadata().is_some()")
         .expect("analytic metadata classifier should be present");
     let raw_bounds_index = function
         .find("let bounds = self.face_uv_bounds_occt(shape)?;")
         .expect("raw UV bounds fallback should be present");
+    assert!(
+        offset_metadata_index < raw_bounds_index,
+        "offset metadata classifier should run before raw UV bounds fallback"
+    );
     assert!(
         swept_metadata_index < raw_bounds_index,
         "swept metadata classifier should run before raw UV bounds fallback"

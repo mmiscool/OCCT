@@ -1,56 +1,45 @@
 # Next Task
 
-Current milestone: `M49. Rust-Owned Face UV Bounds Seed Narrowing` from `portingMilestones.md`.
+Current milestone: `M50. Rust-Owned Single-Face Surface Bbox Fallback Narrowing` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- M49 direct single-face swept seed cut remains complete for exercised edge-source `make_prism()` and `make_revolution()` faces.
-- M49 multi-face swept seed cut remains complete for the exercised face-source `make_revolution()` side-face path. Face-source sweeps retain conservative `MultiFaceSweptResult` inventories from Rust-owned ellipse edge geometry while edge-source sweeps keep `SingleFaceSweptResult`.
-- The first constructor-owned analytic UV-seed family is now complete for exercised `make_box()` planar faces. `make_box()` emits a `MultiFaceAnalyticResult` inventory with the three OCCT-local planar UV seed families derived from `BoxParams` sizes.
-- The next constructor-owned analytic UV-seed family is now complete for exercised `make_cylinder()` side and cap faces. `make_cylinder()` emits a `MultiFaceAnalyticResult` inventory with a Rust-owned periodic cylindrical side seed and a shared planar cap seed derived from `CylinderParams`; all three generated faces attach validated `AnalyticSurfaceFaceMetadata`.
-- The next constructor-owned analytic UV-seed family is now complete for exercised `make_cone()` side and cap faces. `make_cone()` emits a `MultiFaceAnalyticResult` inventory with a Rust-owned periodic conical side seed derived from constructor slant height and positive-radius planar cap seeds derived from `ConeParams`; all three generated faces attach validated `AnalyticSurfaceFaceMetadata`.
-- The next constructor-owned analytic UV-seed family is now complete for exercised `make_sphere()` faces. `make_sphere()` emits a `MultiFaceAnalyticResult` inventory with one Rust-owned periodic spherical seed derived from `SphereParams`; the generated face attaches validated `AnalyticSurfaceFaceMetadata`.
-- The remaining exercised primitive constructor-owned analytic UV-seed family is now complete for `make_torus()` faces. `make_torus()` emits a `MultiFaceAnalyticResult` inventory with one Rust-owned doubly periodic torus seed derived from `TorusParams`; the generated face attaches validated `AnalyticSurfaceFaceMetadata`.
-- Ported topology now propagates analytic inventories through root/shell/solid loading, validates each generated face against candidate analytic seeds, and attaches `AnalyticSurfaceFaceMetadata` only when exactly one seed matches normalized sample positions and oriented normals.
-- `Context::ported_face_geometry()` consumes offset metadata, swept metadata, and analytic metadata before `face_uv_bounds_occt(shape)`. Imported, unsupported, metadata-free, and ambiguous faces remain on the existing raw bounds path.
-- Regression coverage now includes all six faces of a non-cubic `make_box()` result, asserting Rust analytic metadata, plane geometry parity, descriptor classification, and normalized sample parity against OCCT. The source guard now covers constructor metadata before raw bounds for swept and analytic helpers.
-- Regression coverage now also includes all three faces of a non-unit-axis `make_cylinder()` result, asserting Rust analytic metadata, cylinder/cap geometry parity, descriptor classification, and normalized sample parity against OCCT.
-- Regression coverage now also includes all three faces of a truncated `make_cone()` result, asserting Rust analytic metadata, cone/cap geometry parity, descriptor classification, and normalized sample parity against OCCT.
-- Regression coverage now also includes the generated face of a non-unit-axis `make_sphere()` result, asserting Rust analytic metadata, sphere geometry parity, descriptor classification, and normalized sample parity against OCCT.
-- Regression coverage now also includes the generated face of a non-unit-axis `make_torus()` result, asserting Rust analytic metadata, torus geometry parity, descriptor classification, and normalized sample parity against OCCT.
+- M49 is complete. `Context::ported_face_geometry()` no longer lets metadata-bearing offset, swept, or analytic faces continue to `face_uv_bounds_occt(shape)` after Rust metadata validation returns `None`.
+- Offset, swept, and analytic metadata checks now run before the raw UV-bounds seed and immediately return their Rust-owned helper result. Imported, unsupported, metadata-free, and ambiguous faces remain on the existing raw bounds path.
+- The constructor metadata source guard now requires the offset/swept/analytic metadata classifiers before `face_uv_bounds_occt(shape)`, requires immediate helper returns, and blocks the old `if let Some(...)` fall-through-to-raw pattern.
+- Focused metadata regressions stayed green for torus, sphere, cone, cylinder, box-plane, offset, swept, supported descriptor, and public payload paths; the full Rust suite and C ABI build also stayed green.
 
 ## Target
 
-Keep narrowing the remaining M49 raw bounds fallback beyond swept faces, box planes, cylinder side/cap faces, cone side/cap faces, sphere faces, and torus faces.
+Move the next exercised bbox fallback family from direct OCCT helpers to Rust-owned BRep/ported-surface data.
 
-`face_uv_bounds_occt(shape)` still seeds metadata-free analytic/swept candidates, imported faces, unsupported faces, and ambiguous faces whose constructor inventories could not be uniquely validated. The next useful cut is to strictly narrow metadata-bearing faces so a present offset, swept, or analytic metadata record cannot silently fall through to raw UV bounds after Rust validation fails.
+`summary.rs::single_face_surface_bbox()` still calls `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` from the reconstructed-cap and degenerate-plane single-face bbox paths. Those raw helpers should remain available only for imported BSpline/Bezier/unsupported faces, not for supported analytic, swept, or offset faces that already have `BrepFace` geometry and `PortedFaceSurface` descriptors.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Split `Context::ported_face_geometry()` metadata checks so offset, swept, and analytic metadata-bearing faces return their Rust-owned geometry or an explicit miss instead of continuing to `face_uv_bounds_occt(shape)`.
-3. Keep imported, unsupported, metadata-free, and ambiguous faces on the existing raw bounds path.
-4. Strengthen source coverage so the raw bounds call remains reachable only after metadata-bearing branches have been excluded, without weakening the swept or analytic metadata guards.
-5. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
+2. Replace the supported-face calls from `reconstructed_cap_surface_bbox()` and `degenerate_plane_cap_surface_bbox()` to `single_face_surface_bbox()` with a Rust-owned path that consumes the loaded `BrepFace`.
+3. Expand `ported_face_surface_bbox()` or add an adjacent supported-face helper so exercised analytic, swept, and offset faces can derive their surface bbox contribution from Rust-owned geometry, boundary topology, mesh validation, or sampled `PortedFaceSurface` descriptors.
+4. Keep direct `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` only in an explicitly named unsupported/imported raw helper.
+5. Strengthen BRep/source coverage so supported `PortedFaceSurface` branches cannot enter that raw helper, while imported/unsupported raw behavior remains available.
+6. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
-- Do not reintroduce `face_geometry_occt(shape)` inside `Context::ported_face_geometry()`.
-- Keep offset metadata first, swept metadata before `face_uv_bounds_occt(shape)`, analytic metadata before the raw bounds fallback, analytic raw-bounds candidates before the generic swept recognizer.
-- Do not attach swept or analytic metadata to metadata-free, imported, invalid, unsupported, or ambiguous faces.
-- Preserve explicit raw/oracle face geometry, UV bounds, swept payload, offset payload, basis, and sampling APIs.
-- Keep direct swept, multi-face swept, box-plane analytic metadata, cylinder analytic metadata, cone analytic metadata, sphere analytic metadata, torus analytic metadata, public payload, swept BRep solid, swept-offset metadata, multi-source swept offset, offset-solid volume, source-guard, and full-suite regressions green.
+- Do not weaken the completed M49 metadata-before-raw-bounds guard in `ported_geometry.rs`.
+- Do not remove explicit raw/oracle bbox APIs; narrow their automatic use from supported BRep summary paths.
+- Preserve existing bbox source expectations for exact primitives, supported single-face BReps, offset face unions, offset-solid shell unions, and full-shape summaries.
+- Do not replace one direct OCCT bbox helper with another direct OCCT helper for supported analytic, swept, or offset faces.
+- Keep imported BSpline/Bezier and unsupported face families on an explicit raw path unless they are ported in the same cut.
 
 ## Verification
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_torus_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_sphere_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_cone_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_cylinder_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_box_plane_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_face_geometry_classifies_constructor_metadata_before_raw_geometry -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_face_surface_descriptors_cover_supported_faces -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_bounding_boxes -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
 - `cmake --build build --target LeanOcctCAPI`

@@ -768,14 +768,14 @@ impl Context {
     }
 
     pub fn ported_face_geometry(&self, shape: &Shape) -> Result<Option<FaceGeometry>, Error> {
-        if let Some(geometry) = ported_offset_surface_from_metadata_face_geometry(self, shape)? {
-            return Ok(Some(geometry));
+        if shape.offset_surface_face_metadata().is_some() {
+            return ported_offset_surface_from_metadata_face_geometry(self, shape);
         }
-        if let Some(geometry) = ported_swept_surface_from_metadata_face_geometry(self, shape)? {
-            return Ok(Some(geometry));
+        if shape.swept_surface_face_metadata().is_some() {
+            return ported_swept_surface_from_metadata_face_geometry(self, shape);
         }
-        if let Some(geometry) = ported_analytic_surface_from_metadata_face_geometry(self, shape)? {
-            return Ok(Some(geometry));
+        if shape.analytic_surface_face_metadata().is_some() {
+            return ported_analytic_surface_from_metadata_face_geometry(self, shape);
         }
 
         let bounds = self.face_uv_bounds_occt(shape)?;
