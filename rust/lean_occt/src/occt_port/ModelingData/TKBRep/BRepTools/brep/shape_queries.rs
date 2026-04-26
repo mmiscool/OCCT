@@ -43,8 +43,10 @@ pub(super) fn ported_edge_endpoints(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<EdgeEndpoints>, Error> {
-    if let Some(endpoints) = root_edge_endpoints_from_topology_seed(context, shape)? {
-        return Ok(Some(endpoints));
+    match root_edge_endpoints_from_raw_endpoint_seed(context, shape)? {
+        RootEdgeEndpointSeed::Seeded(endpoints) => return Ok(Some(endpoints)),
+        RootEdgeEndpointSeed::UnsupportedRootEdge => return Ok(None),
+        RootEdgeEndpointSeed::NotRootEdge => {}
     }
 
     let Some(topology) = context.ported_topology(shape)? else {
@@ -70,25 +72,31 @@ pub(super) fn ported_edge_endpoints(
     Ok(Some(EdgeEndpoints { start, end }))
 }
 
-fn root_edge_endpoints_from_topology_seed(
+enum RootEdgeEndpointSeed {
+    NotRootEdge,
+    UnsupportedRootEdge,
+    Seeded(EdgeEndpoints),
+}
+
+fn root_edge_endpoints_from_raw_endpoint_seed(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<EdgeEndpoints>, Error> {
+) -> Result<RootEdgeEndpointSeed, Error> {
     if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
-        return Ok(None);
+        return Ok(RootEdgeEndpointSeed::NotRootEdge);
     }
 
-    let topology = context.topology_occt(shape)?;
-    let [edge] = topology.edges.as_slice() else {
-        return Ok(None);
-    };
-    let (Some(start), Some(end)) = (
-        optional_vertex_position(&topology, edge.start_vertex),
-        optional_vertex_position(&topology, edge.end_vertex),
-    ) else {
-        return Ok(None);
-    };
-    Ok(Some(EdgeEndpoints { start, end }))
+    let geometry = context.edge_geometry_occt(shape)?;
+    if !matches!(
+        geometry.kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    ) {
+        return Ok(RootEdgeEndpointSeed::UnsupportedRootEdge);
+    }
+
+    Ok(RootEdgeEndpointSeed::Seeded(
+        context.edge_endpoints_occt(shape)?,
+    ))
 }
 
 pub(super) fn ported_subshape_count(

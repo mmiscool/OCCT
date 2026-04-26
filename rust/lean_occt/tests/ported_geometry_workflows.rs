@@ -964,6 +964,132 @@ fn revolved_ellipse_area(
 }
 
 #[test]
+fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cut = kernel.box_with_through_hole(default_cut())?;
+    let ellipse_edge = kernel.make_ellipse_edge(EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    })?;
+
+    for (label, expected_kind, edge) in [
+        (
+            "line",
+            CurveKind::Line,
+            find_first_edge_by_kind(&kernel, &cut, CurveKind::Line)?,
+        ),
+        (
+            "circle",
+            CurveKind::Circle,
+            find_first_edge_by_kind(&kernel, &cut, CurveKind::Circle)?,
+        ),
+        ("ellipse", CurveKind::Ellipse, ellipse_edge),
+    ] {
+        let summary = kernel.context().describe_shape_occt(&edge)?;
+        assert_eq!(
+            summary.root_kind,
+            ShapeKind::Edge,
+            "{label} fixture should enter the root edge endpoint seed"
+        );
+
+        let geometry = kernel.context().edge_geometry(&edge)?;
+        assert_eq!(
+            geometry.kind, expected_kind,
+            "{label} fixture geometry kind changed"
+        );
+        let public_endpoints = kernel.context().edge_endpoints(&edge)?;
+        let ported_endpoints = kernel
+            .context()
+            .ported_edge_endpoints(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported endpoints")))?;
+        let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
+        assert_vec3_close(
+            public_endpoints.start,
+            ported_endpoints.start,
+            1.0e-12,
+            &format!("{label} public/ported start"),
+        )?;
+        assert_vec3_close(
+            public_endpoints.end,
+            ported_endpoints.end,
+            1.0e-12,
+            &format!("{label} public/ported end"),
+        )?;
+        assert_vec3_close(
+            public_endpoints.start,
+            occt_endpoints.start,
+            1.0e-12,
+            &format!("{label} public/occt start"),
+        )?;
+        assert_vec3_close(
+            public_endpoints.end,
+            occt_endpoints.end,
+            1.0e-12,
+            &format!("{label} public/occt end"),
+        )?;
+
+        let topology = kernel.context().topology(&edge)?;
+        assert_eq!(topology.edges.len(), 1, "{label} root edge topology");
+        let topology_edge = topology
+            .edges
+            .first()
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing topology edge")))?;
+        let start_index = topology_edge.start_vertex.ok_or_else(|| {
+            std::io::Error::other(format!("{label} missing topology start vertex"))
+        })?;
+        let end_index = topology_edge
+            .end_vertex
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing topology end vertex")))?;
+        let topology_start = topology
+            .vertex_positions
+            .get(start_index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other(format!("{label} bad start vertex index")))?;
+        let topology_end = topology
+            .vertex_positions
+            .get(end_index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other(format!("{label} bad end vertex index")))?;
+        assert_vec3_close(
+            topology_start,
+            public_endpoints.start,
+            1.0e-12,
+            &format!("{label} topology start"),
+        )?;
+        assert_vec3_close(
+            topology_end,
+            public_endpoints.end,
+            1.0e-12,
+            &format!("{label} topology end"),
+        )?;
+
+        assert_eq!(
+            kernel.context().subshape_count(&edge, ShapeKind::Edge)?,
+            topology.edges.len(),
+            "{label} public edge count should come from ported root topology"
+        );
+        assert_eq!(
+            kernel.context().subshape_count(&edge, ShapeKind::Vertex)?,
+            topology.vertex_positions.len(),
+            "{label} public vertex count should come from ported root topology"
+        );
+        assert_eq!(
+            kernel
+                .context()
+                .subshape_count_occt(&edge, ShapeKind::Vertex)?,
+            topology.vertex_positions.len(),
+            "{label} ported root topology vertex count should match OCCT"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ported_vertex_points_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
