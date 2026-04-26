@@ -2229,12 +2229,8 @@ impl Context {
             return Ok(sample);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
-        if rust_owned_face_query_required(geometry.kind) {
-            Err(unsupported_ported_face_query_error(
-                "face sample",
-                geometry.kind,
-            ))
+        if let Some(kind) = rust_owned_face_query_required_kind(self, shape)? {
+            Err(unsupported_ported_face_query_error("face sample", kind))
         } else {
             self.face_sample_occt(shape, uv)
         }
@@ -2273,11 +2269,10 @@ impl Context {
             return Ok(sample);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
-        if rust_owned_face_query_required(geometry.kind) {
+        if let Some(kind) = rust_owned_face_query_required_kind(self, shape)? {
             Err(unsupported_ported_face_query_error(
                 "normalized face sample",
-                geometry.kind,
+                kind,
             ))
         } else {
             self.face_sample_normalized_occt(shape, uv_t)
@@ -2317,14 +2312,10 @@ impl Context {
             return Ok(geometry);
         }
 
-        let geometry = self.face_geometry_occt(shape)?;
-        if rust_owned_face_query_required(geometry.kind) {
-            Err(unsupported_ported_face_query_error(
-                "face geometry",
-                geometry.kind,
-            ))
+        if let Some(kind) = rust_owned_face_query_required_kind(self, shape)? {
+            Err(unsupported_ported_face_query_error("face geometry", kind))
         } else {
-            Ok(geometry)
+            self.raw_face_geometry(shape)
         }
     }
 
@@ -2362,6 +2353,10 @@ impl Context {
         } else {
             Err(Error::new(self.last_error()))
         }
+    }
+
+    fn raw_face_geometry(&self, shape: &Shape) -> Result<FaceGeometry, Error> {
+        self.face_geometry_occt(shape)
     }
 
     pub fn face_pcurve_control_polygon_bbox_occt(
@@ -4479,8 +4474,18 @@ fn unsupported_ported_edge_query_error(operation: &str, kind: CurveKind) -> Erro
     ))
 }
 
-fn rust_owned_face_query_required(kind: SurfaceKind) -> bool {
-    matches!(
+fn rust_owned_face_query_required_kind(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<SurfaceKind>, Error> {
+    let Some(geometry) = context.ported_face_geometry(shape)? else {
+        return Ok(None);
+    };
+    let Some(surface) = brep::ported_face_surface_descriptor(context, shape, geometry)? else {
+        return Ok(None);
+    };
+    let kind = ported_face_surface_descriptor_kind(surface);
+    Ok(matches!(
         kind,
         SurfaceKind::Plane
             | SurfaceKind::Cylinder
@@ -4491,6 +4496,7 @@ fn rust_owned_face_query_required(kind: SurfaceKind) -> bool {
             | SurfaceKind::Extrusion
             | SurfaceKind::Offset
     )
+    .then_some(kind))
 }
 
 fn offset_surface_face_metadata_supports_basis(kind: SurfaceKind) -> bool {

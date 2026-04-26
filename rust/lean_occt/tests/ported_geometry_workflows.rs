@@ -2132,6 +2132,16 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
         ("offset-torus", torus_offset_face, [0.2, 0.7]),
     ] {
         let geometry = kernel.context().face_geometry(&face)?;
+        let ported_geometry = kernel
+            .context()
+            .ported_face_geometry(&face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} geometry")))?;
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} public geometry"),
+        )?;
         let orientation = kernel.context().shape_orientation(&face)?;
         let uv = normalized_uv_to_uv(geometry, uv_t);
         let descriptor = kernel
