@@ -556,6 +556,28 @@ fn assert_brep_ported_curve_matches_public(
             &format!("{label} edge {index} curve"),
         )?;
 
+        let raw_geometry = kernel.context().edge_geometry_occt(edge_shape)?;
+        if raw_geometry.kind != expected_kind {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} raw geometry kind mismatch: raw={:?} expected={expected_kind:?}",
+                raw_geometry.kind
+            ))
+            .into());
+        }
+        let Some(raw_geometry_curve) =
+            PortedCurve::from_context_with_geometry(kernel.context(), edge_shape, raw_geometry)?
+        else {
+            return Err(std::io::Error::other(format!(
+                "{label} edge {index} raw geometry route expected ported {expected_kind:?} curve"
+            ))
+            .into());
+        };
+        assert_same_variant(
+            &raw_geometry_curve,
+            &expected_curve,
+            &format!("{label} edge {index} raw geometry curve"),
+        )?;
+
         let derived_length = actual_curve.length_with_geometry(actual_edge.geometry);
         if (actual_edge.length - derived_length).abs() > 1.0e-9 {
             return Err(std::io::Error::other(format!(
@@ -590,6 +612,24 @@ fn assert_brep_ported_curve_matches_public(
             occt_sample.tangent,
             1.0e-8,
             &format!("{label} edge {index} sample tangent"),
+        )?;
+
+        let raw_parameter = 0.5 * (raw_geometry.start_parameter + raw_geometry.end_parameter);
+        let raw_sample = raw_geometry_curve.sample_with_geometry(raw_geometry, raw_parameter);
+        let raw_occt_sample = kernel
+            .context()
+            .edge_sample_at_parameter_occt(edge_shape, raw_parameter)?;
+        assert_vec3_close(
+            raw_sample.position,
+            raw_occt_sample.position,
+            1.0e-8,
+            &format!("{label} edge {index} raw geometry sample position"),
+        )?;
+        assert_vec3_close(
+            raw_sample.tangent,
+            raw_occt_sample.tangent,
+            1.0e-8,
+            &format!("{label} edge {index} raw geometry sample tangent"),
         )?;
 
         let occt_length = kernel

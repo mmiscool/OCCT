@@ -87,17 +87,7 @@ impl PortedCurve {
         shape: &Shape,
         geometry: EdgeGeometry,
     ) -> Result<Option<Self>, Error> {
-        match geometry.kind {
-            CurveKind::Line => Ok(Some(Self::Line(
-                ported_line_payload(context, shape, geometry)?
-                    .unwrap_or(context.edge_line_payload_occt(shape)?),
-            ))),
-            CurveKind::Circle => Ok(Some(Self::Circle(context.edge_circle_payload_occt(shape)?))),
-            CurveKind::Ellipse => Ok(Some(Self::Ellipse(
-                context.edge_ellipse_payload_occt(shape)?,
-            ))),
-            _ => Ok(None),
-        }
+        Self::from_context_with_ported_payloads(context, shape, geometry)
     }
 
     pub(crate) fn from_context_with_ported_payloads(

@@ -60,23 +60,15 @@ fn single_face_edge_with_route(
     edge_shape: &Shape,
     route: FaceSurfaceRoute,
 ) -> Result<BrepEdge, Error> {
-    let (geometry, ported_curve) = match route {
-        FaceSurfaceRoute::Raw => {
-            let geometry = context.edge_geometry_occt(edge_shape)?;
-            let ported_curve =
-                PortedCurve::from_context_with_geometry(context, edge_shape, geometry)?;
-            (geometry, ported_curve)
-        }
-        FaceSurfaceRoute::Public => {
-            let geometry = match context.edge_geometry(edge_shape) {
-                Ok(geometry) => geometry,
-                Err(_) => context.edge_geometry_occt(edge_shape)?,
-            };
-            let ported_curve =
-                PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?;
-            (geometry, ported_curve)
-        }
+    let geometry = match route {
+        FaceSurfaceRoute::Raw => context.edge_geometry_occt(edge_shape)?,
+        FaceSurfaceRoute::Public => match context.edge_geometry(edge_shape) {
+            Ok(geometry) => geometry,
+            Err(_) => context.edge_geometry_occt(edge_shape)?,
+        },
     };
+    let ported_curve =
+        PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?;
     Ok(single_face_edge(index, geometry, ported_curve))
 }
 
