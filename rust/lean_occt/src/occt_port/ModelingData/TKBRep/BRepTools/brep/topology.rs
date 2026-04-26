@@ -73,15 +73,20 @@ fn load_root_topology_snapshot(
         .into_iter()
         .map(|wire_shape| {
             Ok(PreparedRootWireShape {
-                wire_edge_shapes: context.subshapes_occt(&wire_shape, ShapeKind::Edge)?,
+                wire_edge_occurrence_shapes: context.wire_edge_occurrences_occt(&wire_shape)?,
                 wire_shape,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let mut root_wires = Vec::with_capacity(prepared_wire_shapes.len());
     for prepared_wire_shape in &prepared_wire_shapes {
-        let Some(topology) =
-            root_wire_topology(context, prepared_wire_shape, &vertex_positions, &root_edges)?
+        let Some(topology) = root_wire_topology(
+            context,
+            prepared_wire_shape,
+            &vertex_positions,
+            &edge_shapes,
+            &root_edges,
+        )?
         else {
             return Ok(None);
         };
@@ -135,8 +140,8 @@ fn load_root_topology_snapshot(
                     .into_iter()
                     .map(|face_wire_shape| {
                         Ok(PreparedRootWireShape {
-                            wire_edge_shapes: context
-                                .subshapes_occt(&face_wire_shape, ShapeKind::Edge)?,
+                            wire_edge_occurrence_shapes: context
+                                .wire_edge_occurrences_occt(&face_wire_shape)?,
                             wire_shape: face_wire_shape,
                         })
                     })

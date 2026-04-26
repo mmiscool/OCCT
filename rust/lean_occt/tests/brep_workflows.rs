@@ -705,6 +705,18 @@ fn assert_topology_matches(
     Ok(())
 }
 
+fn topology_has_repeated_wire_edge_occurrence(topology: &lean_occt::TopologySnapshot) -> bool {
+    topology.wires.iter().any(|wire| {
+        let edge_indices = &topology.wire_edge_indices[wire.offset..wire.offset + wire.count];
+        edge_indices.iter().enumerate().any(|(index, edge_index)| {
+            edge_indices
+                .iter()
+                .skip(index + 1)
+                .any(|other_edge_index| other_edge_index == edge_index)
+        })
+    })
+}
+
 fn assert_topology_backed_subshape_counts_match(
     kernel: &ModelKernel,
     label: &str,
@@ -2137,6 +2149,45 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
     }
 
     assert!(kernel.context().ported_topology(&cut)?.is_some());
+
+    Ok(())
+}
+
+#[test]
+fn ported_brep_orders_repeated_wire_edge_occurrences_in_rust(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let cylinder = kernel.make_cylinder(CylinderParams {
+        origin: [0.0, 0.0, -7.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 5.0,
+        height: 14.0,
+    })?;
+
+    let rust_topology = kernel
+        .context()
+        .ported_topology(&cylinder)?
+        .ok_or_else(|| {
+            std::io::Error::other("expected Rust topology for repeated cylinder wire occurrences")
+        })?;
+    let occt_topology = kernel.context().topology_occt(&cylinder)?;
+    let brep = kernel.brep(&cylinder)?;
+
+    assert_topology_matches(
+        "repeated cylinder wire occurrences",
+        &rust_topology,
+        &occt_topology,
+    )?;
+    assert!(
+        topology_has_repeated_wire_edge_occurrence(&rust_topology),
+        "expected the cylinder topology to include a wire that repeats a root edge occurrence"
+    );
+    assert_topology_matches(
+        "repeated cylinder wire BRep topology",
+        &brep.topology,
+        &rust_topology,
+    )?;
 
     Ok(())
 }

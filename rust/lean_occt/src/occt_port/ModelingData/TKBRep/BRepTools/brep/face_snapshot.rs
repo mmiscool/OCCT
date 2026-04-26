@@ -72,8 +72,13 @@ impl PreparedFaceTopologyBuilder {
         };
 
         for face_wire_shape in face_wire_shapes {
-            let Some(face_wire_topology) =
-                root_wire_topology(context, face_wire_shape, vertex_positions, root_edges)?
+            let Some(face_wire_topology) = root_wire_topology(
+                context,
+                face_wire_shape,
+                vertex_positions,
+                edge_shapes,
+                root_edges,
+            )?
             else {
                 return Ok(None);
             };

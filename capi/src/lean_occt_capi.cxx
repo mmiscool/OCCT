@@ -498,6 +498,16 @@ static TopoDS_Edge requireEdgeShape(const LeanOcctShape* the_shape)
   return TopoDS::Edge(a_shape);
 }
 
+static TopoDS_Wire requireWireShape(const LeanOcctShape* the_shape)
+{
+  const TopoDS_Shape& a_shape = requireShape(the_shape);
+  if (a_shape.ShapeType() != TopAbs_WIRE)
+  {
+    throw std::invalid_argument("LeanOcctShape was not a wire.");
+  }
+  return TopoDS::Wire(a_shape);
+}
+
 static TopoDS_Face requireFaceShape(const LeanOcctShape* the_shape)
 {
   const TopoDS_Shape& a_shape = requireShape(the_shape);
@@ -620,6 +630,31 @@ static TopoDS_Shape indexedSubshape(const TopoDS_Shape& the_shape,
   }
 
   return a_map.FindKey(static_cast<int>(the_index + 1));
+}
+
+static std::size_t countWireEdgeOccurrences(const TopoDS_Wire& the_wire)
+{
+  std::size_t a_count = 0;
+  for (BRepTools_WireExplorer an_edge_exp(the_wire); an_edge_exp.More(); an_edge_exp.Next())
+  {
+    ++a_count;
+  }
+  return a_count;
+}
+
+static TopoDS_Edge indexedWireEdgeOccurrence(const TopoDS_Wire& the_wire, std::size_t the_index)
+{
+  std::size_t a_current_index = 0;
+  for (BRepTools_WireExplorer an_edge_exp(the_wire); an_edge_exp.More();
+       an_edge_exp.Next(), ++a_current_index)
+  {
+    if (a_current_index == the_index)
+    {
+      return TopoDS::Edge(an_edge_exp.Current());
+    }
+  }
+
+  throw std::out_of_range("Requested wire edge occurrence index was out of range.");
 }
 
 static uint32_t toUInt32(std::size_t the_value)
@@ -2338,6 +2373,17 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_orientation(
                          });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_is_same(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_lhs,
+  const LeanOcctShape* the_rhs,
+  uint8_t*             the_is_same)
+{
+  return writeOutput(the_context, the_is_same, "Shape identity output pointer was null.", [&](uint8_t& the_result) {
+    the_result = requireShape(the_lhs).IsSame(requireShape(the_rhs)) ? 1 : 0;
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_vertex_point(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
@@ -2945,6 +2991,26 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_subshape(
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireShape(the_shape), the_kind, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Wire edge occurrence count output pointer was null.", [&](size_t& the_result) {
+    the_result = countWireEdgeOccurrences(requireWireShape(the_shape));
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_wire_edge_occurrence(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedWireEdgeOccurrence(requireWireShape(the_shape), the_index);
   });
 }
 

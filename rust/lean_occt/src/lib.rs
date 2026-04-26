@@ -568,6 +568,12 @@ mod ffi {
             shape: *const LeanOcctShape,
             orientation: *mut LeanOcctOrientation,
         ) -> LeanOcctResult;
+        pub fn lean_occt_shape_is_same(
+            context: *mut LeanOcctContext,
+            lhs: *const LeanOcctShape,
+            rhs: *const LeanOcctShape,
+            is_same: *mut u8,
+        ) -> LeanOcctResult;
         pub fn lean_occt_shape_destroy(shape: *mut LeanOcctShape);
         pub fn lean_occt_shape_vertex_point(
             context: *mut LeanOcctContext,
@@ -766,6 +772,16 @@ mod ffi {
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
             kind: LeanOcctShapeKind,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_wire_edge_occurrence_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_wire_edge_occurrence(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
             index: usize,
         ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_edge_count(shape: *const LeanOcctShape) -> usize;
@@ -1627,6 +1643,23 @@ impl Context {
         };
         if result == ffi::LeanOcctResult::Ok {
             Ok(Orientation::from_lean_occt(orientation))
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub(crate) fn shape_is_same_occt(&self, lhs: &Shape, rhs: &Shape) -> Result<bool, Error> {
+        let mut is_same = 0_u8;
+        let result = unsafe {
+            ffi::lean_occt_shape_is_same(
+                self.raw.as_ptr(),
+                lhs.raw.as_ptr(),
+                rhs.raw.as_ptr(),
+                &mut is_same,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(is_same != 0)
         } else {
             Err(Error::new(self.last_error()))
         }
@@ -3395,6 +3428,36 @@ impl Context {
         let mut shapes = Vec::with_capacity(count);
         for index in 0..count {
             shapes.push(self.subshape_occt(shape, kind, index)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn wire_edge_occurrences_occt(
+        &self,
+        wire_shape: &Shape,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_wire_edge_occurrence_count(
+                self.raw.as_ptr(),
+                wire_shape.raw.as_ptr(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_wire_edge_occurrence(
+                    self.raw.as_ptr(),
+                    wire_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
         }
         Ok(shapes)
     }

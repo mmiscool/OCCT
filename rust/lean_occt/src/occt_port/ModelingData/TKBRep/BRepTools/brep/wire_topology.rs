@@ -1,9 +1,9 @@
-use super::edge_topology::{oriented_edge_geometry, topology_edge_query, RootEdgeTopology};
+use super::edge_topology::{topology_edge_query, RootEdgeTopology};
 use super::*;
 
 pub(super) struct PreparedRootWireShape {
     pub(super) wire_shape: Shape,
-    pub(super) wire_edge_shapes: Vec<Shape>,
+    pub(super) wire_edge_occurrence_shapes: Vec<Shape>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,34 +25,36 @@ pub(super) fn root_wire_topology(
     context: &Context,
     prepared_wire_shape: &PreparedRootWireShape,
     vertex_positions: &[[f64; 3]],
+    root_edge_shapes: &[Shape],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<RootWireTopology>, Error> {
-    if let Some(topology) = root_wire_topology_from_occurrences(
+    root_wire_topology_from_occurrences(
         context,
         prepared_wire_shape,
         vertex_positions,
+        root_edge_shapes,
         root_edges,
-    )? {
-        return Ok(Some(topology));
-    }
-
-    root_wire_topology_from_snapshot(context, prepared_wire_shape, vertex_positions, root_edges)
+    )
 }
 
 fn root_wire_topology_from_occurrences(
     context: &Context,
     prepared_wire_shape: &PreparedRootWireShape,
     vertex_positions: &[[f64; 3]],
+    root_edge_shapes: &[Shape],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<RootWireTopology>, Error> {
-    if prepared_wire_shape.wire_edge_shapes.len() != prepared_wire_shape.wire_shape.edge_count() {
+    if prepared_wire_shape.wire_edge_occurrence_shapes.len()
+        != prepared_wire_shape.wire_shape.edge_count()
+    {
         return Ok(None);
     }
 
     let occurrences = match ported_wire_occurrences(
         context,
-        &prepared_wire_shape.wire_edge_shapes,
+        &prepared_wire_shape.wire_edge_occurrence_shapes,
         vertex_positions,
+        root_edge_shapes,
         root_edges,
     )? {
         Some(occurrences) => occurrences,
@@ -110,13 +112,20 @@ pub(super) fn pack_wire_topology(
 
 fn ported_wire_occurrences(
     context: &Context,
-    wire_edge_shapes: &[Shape],
+    wire_edge_occurrence_shapes: &[Shape],
     vertex_positions: &[[f64; 3]],
+    root_edge_shapes: &[Shape],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<Vec<WireOccurrence>>, Error> {
     let mut occurrences = Vec::new();
-    for edge_shape in wire_edge_shapes {
-        let Some(occurrence) = wire_occurrence(context, edge_shape, vertex_positions, root_edges)?
+    for edge_shape in wire_edge_occurrence_shapes {
+        let Some(occurrence) = wire_occurrence(
+            context,
+            edge_shape,
+            vertex_positions,
+            root_edge_shapes,
+            root_edges,
+        )?
         else {
             return Ok(None);
         };
@@ -125,141 +134,11 @@ fn ported_wire_occurrences(
     Ok(Some(occurrences))
 }
 
-fn root_wire_topology_from_snapshot(
-    context: &Context,
-    prepared_wire_shape: &PreparedRootWireShape,
-    vertex_positions: &[[f64; 3]],
-    root_edges: &[RootEdgeTopology],
-) -> Result<Option<RootWireTopology>, Error> {
-    let topology = context.topology_occt(&prepared_wire_shape.wire_shape)?;
-    if !topology.faces.is_empty() || topology.wires.len() != 1 {
-        return Ok(None);
-    }
-
-    let wire_range = topology.wires[0];
-    let vertex_range = topology.wire_vertices[0];
-    if wire_range.count == 0 || vertex_range.count != wire_range.count + 1 {
-        return Ok(None);
-    }
-
-    let local_edge_shapes = &prepared_wire_shape.wire_edge_shapes;
-    let mut edge_indices = Vec::with_capacity(wire_range.count);
-    let mut edge_orientations = Vec::with_capacity(wire_range.count);
-    let mut ordered_vertices = Vec::with_capacity(vertex_range.count);
-
-    for occurrence_offset in 0..wire_range.count {
-        let wire_edge_offset = wire_range.offset + occurrence_offset;
-        let local_edge_index = *topology
-            .wire_edge_indices
-            .get(wire_edge_offset)
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "wire topology is missing edge occurrence {wire_edge_offset}"
-                ))
-            })?;
-        let orientation = *topology
-            .wire_edge_orientations
-            .get(wire_edge_offset)
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "wire topology is missing edge orientation {wire_edge_offset}"
-                ))
-            })?;
-        let local_edge_shape = local_edge_shapes.get(local_edge_index).ok_or_else(|| {
-            Error::new(format!(
-                "wire topology referenced local edge index {local_edge_index} outside the edge map"
-            ))
-        })?;
-
-        let local_start_index = *topology
-            .wire_vertex_indices
-            .get(vertex_range.offset + occurrence_offset)
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "wire topology is missing start vertex occurrence {}",
-                    vertex_range.offset + occurrence_offset
-                ))
-            })?;
-        let local_end_index = *topology
-            .wire_vertex_indices
-            .get(vertex_range.offset + occurrence_offset + 1)
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "wire topology is missing end vertex occurrence {}",
-                    vertex_range.offset + occurrence_offset + 1
-                ))
-            })?;
-
-        let start_vertex = topology_vertex_match(
-            &topology.vertex_positions,
-            vertex_positions,
-            local_start_index,
-        );
-        let end_vertex = topology_vertex_match(
-            &topology.vertex_positions,
-            vertex_positions,
-            local_end_index,
-        );
-
-        let geometry = oriented_edge_geometry(
-            topology_edge_query(context, local_edge_shape)?.geometry,
-            orientation,
-        );
-        let length = edge_length(local_edge_shape);
-        let matches = root_edges
-            .iter()
-            .enumerate()
-            .filter_map(|(root_edge_index, root_edge)| {
-                if root_edge.geometry.kind != geometry.kind
-                    || !approx_eq(root_edge.length, length, 1.0e-6, 1.0e-6)
-                {
-                    return None;
-                }
-                if let (Some(start_vertex), Some(end_vertex)) = (start_vertex, end_vertex) {
-                    if !matches_edge_vertices(root_edge, start_vertex, end_vertex) {
-                        return None;
-                    }
-                }
-                Some(root_edge_index)
-            })
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Ok(None);
-        }
-
-        let matched_edge = &root_edges[matches[0]];
-        let start_vertex = start_vertex.or_else(|| {
-            oriented_root_edge_vertices(matched_edge, orientation)
-                .map(|(start_vertex, _)| start_vertex)
-        });
-        let end_vertex = end_vertex.or_else(|| {
-            oriented_root_edge_vertices(matched_edge, orientation).map(|(_, end_vertex)| end_vertex)
-        });
-        let (Some(start_vertex), Some(end_vertex)) = (start_vertex, end_vertex) else {
-            return Ok(None);
-        };
-
-        edge_indices.push(matches[0]);
-        edge_orientations.push(orientation);
-        if ordered_vertices.is_empty() {
-            ordered_vertices.push(start_vertex);
-        } else if *ordered_vertices.last().unwrap_or(&start_vertex) != start_vertex {
-            return Ok(None);
-        }
-        ordered_vertices.push(end_vertex);
-    }
-
-    Ok(Some(RootWireTopology {
-        edge_indices,
-        edge_orientations,
-        vertex_indices: ordered_vertices,
-    }))
-}
-
 fn wire_occurrence(
     context: &Context,
     edge_shape: &Shape,
     vertex_positions: &[[f64; 3]],
+    root_edge_shapes: &[Shape],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<WireOccurrence>, Error> {
     let query = topology_edge_query(context, edge_shape)?;
@@ -275,26 +154,80 @@ fn wire_occurrence(
         std::mem::swap(&mut start_vertex, &mut end_vertex);
     }
     let length = edge_length(edge_shape);
-    let matches = root_edges
-        .iter()
-        .enumerate()
-        .filter(|(_, root_edge)| {
-            root_edge.geometry.kind == geometry.kind
-                && approx_eq(root_edge.length, length, 1.0e-6, 1.0e-6)
-                && matches_edge_vertices(root_edge, start_vertex, end_vertex)
-        })
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    if matches.len() != 1 {
+    let Some(edge_index) = matched_root_edge_index(
+        context,
+        edge_shape,
+        root_edge_shapes,
+        root_edges,
+        geometry,
+        length,
+        start_vertex,
+        end_vertex,
+    )?
+    else {
         return Ok(None);
-    }
+    };
 
     Ok(Some(WireOccurrence {
-        edge_index: matches[0],
+        edge_index,
         orientation,
         start_vertex,
         end_vertex,
     }))
+}
+
+fn matched_root_edge_index(
+    context: &Context,
+    edge_shape: &Shape,
+    root_edge_shapes: &[Shape],
+    root_edges: &[RootEdgeTopology],
+    geometry: EdgeGeometry,
+    length: f64,
+    start_vertex: usize,
+    end_vertex: usize,
+) -> Result<Option<usize>, Error> {
+    let mut identity_matches = Vec::new();
+    for (index, root_edge_shape) in root_edge_shapes.iter().enumerate() {
+        let Some(root_edge) = root_edges.get(index) else {
+            return Ok(None);
+        };
+        if !root_edge_matches_occurrence(root_edge, geometry, length, start_vertex, end_vertex) {
+            continue;
+        }
+        if context.shape_is_same_occt(edge_shape, root_edge_shape)? {
+            identity_matches.push(index);
+        }
+    }
+    match identity_matches.as_slice() {
+        [index] => return Ok(Some(*index)),
+        [] => {}
+        _ => return Ok(None),
+    }
+
+    let matches = root_edges
+        .iter()
+        .enumerate()
+        .filter(|(_, root_edge)| {
+            root_edge_matches_occurrence(root_edge, geometry, length, start_vertex, end_vertex)
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    Ok(match matches.as_slice() {
+        [index] => Some(*index),
+        _ => None,
+    })
+}
+
+fn root_edge_matches_occurrence(
+    root_edge: &RootEdgeTopology,
+    geometry: EdgeGeometry,
+    length: f64,
+    start_vertex: usize,
+    end_vertex: usize,
+) -> bool {
+    root_edge.geometry.kind == geometry.kind
+        && approx_eq(root_edge.length, length, 1.0e-6, 1.0e-6)
+        && matches_edge_vertices(root_edge, start_vertex, end_vertex)
 }
 
 fn order_wire_occurrences(
@@ -406,29 +339,6 @@ fn matches_edge_vertices(
             if (root_start == start_vertex && root_end == end_vertex)
                 || (root_start == end_vertex && root_end == start_vertex)
     )
-}
-
-fn oriented_root_edge_vertices(
-    root_edge: &RootEdgeTopology,
-    orientation: Orientation,
-) -> Option<(usize, usize)> {
-    let start_vertex = root_edge.start_vertex?;
-    let end_vertex = root_edge.end_vertex?;
-    Some(match orientation {
-        Orientation::Reversed => (end_vertex, start_vertex),
-        _ => (start_vertex, end_vertex),
-    })
-}
-
-fn topology_vertex_match(
-    topology_vertices: &[[f64; 3]],
-    root_vertices: &[[f64; 3]],
-    index: usize,
-) -> Option<usize> {
-    topology_vertices
-        .get(index)
-        .copied()
-        .and_then(|point| match_vertex_index(root_vertices, point))
 }
 
 pub(super) fn edge_length(edge_shape: &Shape) -> f64 {

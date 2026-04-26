@@ -463,6 +463,10 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_orientation(
   LeanOcctContext*        the_context,
   const LeanOcctShape*    the_shape,
   LeanOcctOrientation*    the_orientation);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_is_same(LeanOcctContext*     the_context,
+                                                             const LeanOcctShape* the_lhs,
+                                                             const LeanOcctShape* the_rhs,
+                                                             uint8_t*             the_is_same);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_vertex_point(LeanOcctContext*     the_context,
                                                                   const LeanOcctShape* the_shape,
                                                                   double*              the_xyz3);
@@ -616,6 +620,14 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_subshape(LeanOcctContext*  
                                                               const LeanOcctShape*  the_shape,
                                                               LeanOcctShapeKind     the_kind,
                                                               size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_wire_edge_occurrence(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  size_t                the_index);
 LEAN_OCCT_CAPI_EXPORT size_t lean_occt_shape_edge_count(const LeanOcctShape* the_shape);
 LEAN_OCCT_CAPI_EXPORT size_t lean_occt_shape_face_count_raw(const LeanOcctShape* the_shape);
 LEAN_OCCT_CAPI_EXPORT size_t lean_occt_shape_solid_count_raw(const LeanOcctShape* the_shape);
