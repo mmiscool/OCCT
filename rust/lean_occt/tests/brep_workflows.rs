@@ -4439,6 +4439,40 @@ fn ported_brep_uses_rust_owned_area_for_offset_faces() -> Result<(), Box<dyn std
     let occt_sample = kernel
         .context()
         .face_sample_normalized_occt(&occt_face, [0.5, 0.5])?;
+    assert!(
+        occt_face.has_rust_offset_surface_face_metadata(),
+        "single-face offset result should attach Rust-retained offset metadata before public payload queries"
+    );
+    let descriptor = match kernel
+        .context()
+        .ported_face_surface_descriptor(&occt_face)?
+    {
+        Some(PortedFaceSurface::Offset(surface)) => surface,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "single-face offset result did not expose a Rust offset descriptor: {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_eq!(
+        descriptor.payload.basis_surface_kind,
+        SurfaceKind::Revolution,
+        "single-face offset result should retain the revolution basis kind"
+    );
+    assert!(matches!(
+        descriptor.basis,
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. })
+    ));
+    let public_payload = kernel.context().face_offset_payload(&occt_face)?;
+    assert_eq!(
+        public_payload.basis_surface_kind, descriptor.payload.basis_surface_kind,
+        "single-face offset public payload basis drifted from the attached Rust descriptor"
+    );
+    assert!(
+        (public_payload.offset_value - descriptor.payload.offset_value).abs() <= 1.0e-9,
+        "single-face offset public payload offset drifted from the attached Rust descriptor"
+    );
 
     assert_eq!(brep.summary.primary_kind, ShapeKind::Shell);
     assert_eq!(brep.summary.face_count, 1);

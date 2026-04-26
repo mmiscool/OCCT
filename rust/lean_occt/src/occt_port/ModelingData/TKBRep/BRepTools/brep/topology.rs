@@ -1381,11 +1381,10 @@ fn attach_single_face_offset_metadata(
     let face_shape = face_shapes
         .pop()
         .expect("length was checked before popping single offset face");
-    if context.face_geometry_occt(&face_shape)?.kind != crate::SurfaceKind::Offset {
-        return Ok(vec![face_shape]);
+    match context.ported_offset_surface_from_metadata(&face_shape, metadata) {
+        Ok(Some(_)) => Ok(vec![face_shape.with_offset_surface_face_metadata(metadata)]),
+        Ok(None) | Err(_) => Ok(vec![face_shape]),
     }
-
-    Ok(vec![face_shape.with_offset_surface_face_metadata(metadata)])
 }
 
 fn attach_multi_face_offset_metadata(
@@ -1400,10 +1399,6 @@ fn attach_multi_face_offset_metadata(
     face_shapes
         .into_iter()
         .map(|face_shape| {
-            if context.face_geometry_occt(&face_shape)?.kind != crate::SurfaceKind::Offset {
-                return Ok(face_shape);
-            }
-
             let mut best_match = None;
             let mut tied_best_match = false;
             for candidate in metadata.iter().copied() {

@@ -1,57 +1,61 @@
 # Next Task
 
-Current milestone: `M45. Rust-Owned Offset Result Attachment Kind Gate` from `portingMilestones.md`.
+Current milestone: `M46. Rust-Owned Metadata-Backed Offset Face Geometry Entry` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `M44. Rust-Owned Offset Metadata Basis Support Gate` is complete.
-- `Context::offset_surface_face_metadata_candidate()` no longer calls `self.face_geometry_occt(basis_face)` before deciding whether retained `OffsetSurfaceFaceMetadata` applies.
-- The metadata candidate path now starts with `self.ported_face_geometry(basis_face)`, returns `Ok(None)` for non-face roots or unsupported/unported families, and uses the ported geometry kind for `offset_surface_face_metadata_supports_basis()`.
-- Analytic basis metadata still validates through `PortedSurface::from_context_with_ported_payloads()`, swept basis metadata still validates through `brep::ported_face_surface_descriptor()`, and mismatch/unsupported errors are based on the Rust-owned descriptor kind.
-- Direct and generated offset metadata coverage was strengthened: `public_offset_basis_queries_match_occt` now requires Rust-owned source basis geometry for direct analytic, direct swept, and generated swept offset metadata sources.
-- The full suite initially exposed the whole-source `make_offset()` caller path; the final candidate preserves the old `Ok(None)` behavior for non-face source roots so multi-face offset inventory discovery remains intact.
-- Source guard passed: no `face_geometry_occt(` call remains in `offset_surface_face_metadata_candidate()`.
-- Verification passed with `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, focused offset basis/sampling/BRep regressions, the multi-source swept-offset and offset-solid volume regressions, the source guard, full `(cd rust/lean_occt && cargo test)`, and `git diff --check`.
+- `M45. Rust-Owned Offset Result Attachment Kind Gate` is complete.
+- `attach_single_face_offset_metadata()` no longer calls `context.face_geometry_occt(&face_shape)?.kind`; it now validates the retained metadata with `Context::ported_offset_surface_from_metadata()` and attaches it only when the generated face reconstructs a Rust-owned offset descriptor.
+- `attach_multi_face_offset_metadata()` no longer performs a raw generated-face kind gate. Every retained metadata candidate, including signed-offset variants, reaches the existing Rust descriptor validation and deterministic match scoring.
+- Non-offset, unsupported, invalid, or tied generated faces remain unchanged because candidate validation returns no unique match.
+- Single-face regression coverage was strengthened: `ported_brep_uses_rust_owned_area_for_offset_faces` now asserts the generated offset subshape carries Rust-retained metadata before public payload queries and that the public payload mirrors the attached descriptor.
+- Source guard passed: no `face_geometry_occt(` call remains between `attach_single_face_offset_metadata()` and `offset_metadata_match_score()`.
+- Verification passed with `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, focused offset attachment/basis/sampling/BRep regressions, the attachment source guard, full `(cd rust/lean_occt && cargo test)`, and `git diff --check`.
 
 ## Target
 
-Remove the next raw face geometry generated-face kind gates in offset result metadata attachment:
+Move the next exercised metadata-backed offset face geometry entry out of the raw face-geometry classifier.
 
-`attach_single_face_offset_metadata()` and `attach_multi_face_offset_metadata()` in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs` currently call `context.face_geometry_occt(&face_shape)?.kind` before attaching retained Rust offset metadata to generated faces. Those reads decide whether a generated face is eligible for Rust-owned offset metadata; they are not explicit raw oracle APIs.
+`Context::ported_face_geometry()` in `rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs` still starts with:
 
-The attachment path should validate candidate metadata through the Rust offset descriptor/match path instead of first asking raw OCCT for the face kind. Explicit raw offset, face geometry, and sampling APIs should remain available as oracle APIs.
+```rust
+let raw_geometry = self.face_geometry_occt(shape)?;
+```
+
+After M45, direct offset faces and generated single-/multi-face offset faces carry retained Rust offset metadata only after Rust descriptor validation. Those metadata-backed offset faces should be able to return `FaceGeometry { kind: SurfaceKind::Offset, ... }` from retained Rust basis geometry before `ported_face_geometry()` reaches the raw classifier.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Inspect `attach_single_face_offset_metadata()`, `attach_multi_face_offset_metadata()`, and `offset_metadata_match_score()` in `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs`.
-3. Replace the single-face raw generated-kind check with Rust-owned validation of the sole generated face against the retained metadata, likely by using `Context::ported_offset_surface_from_metadata()`.
-4. Replace the multi-face raw generated-kind check by letting candidate scoring/validation decide whether a generated face can accept offset metadata.
-5. Preserve deterministic multi-face assignment, tie rejection, and signed-offset handling.
-6. Preserve non-offset or unsupported generated faces as unchanged shapes without widening Rust-required support.
-7. Keep explicit raw face geometry, offset payload, offset basis, and sampling oracle APIs available.
-8. Strengthen regression coverage if the existing multi-source swept-offset and offset-solid tests do not fail on this attachment gate.
-9. Add a source guard proving the attachment gate contains no `face_geometry_occt(` call.
-10. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
+2. Inspect `Context::ported_face_geometry()`, `Context::ported_offset_surface_from_metadata()`, and the offset geometry assertions in `ported_geometry_workflows.rs` and `brep_workflows.rs`.
+3. Add a helper in `ported_geometry.rs` that checks `shape.offset_surface_face_metadata()`, validates it with `Context::ported_offset_surface_from_metadata()`, and derives an offset `FaceGeometry` from the validated `PortedOffsetSurface::basis_geometry` with `kind: SurfaceKind::Offset`.
+4. Call that helper at the top of `Context::ported_face_geometry()` before `self.face_geometry_occt(shape)?`.
+5. Treat invalid metadata, non-face roots, unsupported generated faces, and metadata-free shapes as `Ok(None)` from the new helper so the existing behavior remains available outside the ported metadata-backed family.
+6. Preserve the remaining raw classifier for metadata-free and currently unsupported families; do not remove explicit raw/oracle APIs.
+7. Strengthen runtime coverage if current offset geometry tests do not prove direct, single-face generated, and multi-face generated metadata-backed offset faces still expose public/ported offset geometry.
+8. Add source guards proving the pre-raw branch contains metadata-backed validation and no direct `face_geometry_occt()` call.
+9. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
-- Do not classify generated offset faces by calling `face_geometry_occt()` in the attachment functions.
-- Do not attach retained metadata merely because a result has one face; validate that the candidate metadata reconstructs a ported offset surface for that generated face.
-- Keep unsupported generated faces outside retained Rust offset metadata unless the same turn ports their behavior.
-- Preserve explicit raw OCCT helpers as oracle APIs or unsupported fallback paths outside this attachment gate.
-- Keep multi-face matching deterministic: ambiguous ties should continue to leave the face unmodified.
+- Do not call `face_geometry_occt()` before serving metadata-backed offset face geometry.
+- Do not classify metadata-free, imported, invalid, or unsupported faces as Rust-owned offsets just because metadata validation failed or the shape has offset result metadata on a non-face root.
+- Derive the returned offset geometry from validated Rust metadata, not from raw generated-face kind reads.
+- Keep explicit raw face geometry, offset payload, offset basis, and sampling oracle APIs available.
+- Preserve public face geometry parity for all currently exercised analytic, swept, direct offset, single-face generated offset, and multi-face generated offset fixtures.
 
 ## Verification
 
 - `(cd rust/lean_occt && cargo fmt)`
 - `cmake --build build --target LeanOcctCAPI`
 - `(cd rust/lean_occt && cargo check)`
-- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_maps_multi_source_swept_offsets_in_rust -- --nocapture)`
-- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture)`
-- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_offset_surface_sampling_matches_occt -- --nocapture)`
-- `! awk '/fn attach_single_face_offset_metadata/,/^fn offset_metadata_match_score/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs | rg -n 'face_geometry_occt\('`
+- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_maps_multi_source_swept_offsets_in_rust -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture)`
+- `perl -0ne 'print $1 if /(pub fn ported_face_geometry[\s\S]*?)\n        let raw_geometry = self\.face_geometry_occt/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'offset_surface_face_metadata|ported_offset_surface_from_metadata'`
+- `! perl -0ne 'print $1 if /(pub fn ported_face_geometry[\s\S]*?)\n        let raw_geometry = self\.face_geometry_occt/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'face_geometry_occt\('`
 - `(cd rust/lean_occt && cargo test)`
 - `git diff --check`
