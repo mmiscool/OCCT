@@ -1028,6 +1028,25 @@ fn public_root_edge_endpoints_are_topology_backed() -> Result<(), Box<dyn std::e
             .get(end_index)
             .copied()
             .ok_or_else(|| std::io::Error::other(format!("{label} bad end vertex index")))?;
+        let vertex_shapes = kernel.context().subshapes(&edge, ShapeKind::Vertex)?;
+        assert_eq!(
+            vertex_shapes.len(),
+            topology.vertex_positions.len(),
+            "{label} public vertex inventory should be topology-backed"
+        );
+        for (vertex_index, (vertex_shape, topology_position)) in vertex_shapes
+            .iter()
+            .zip(topology.vertex_positions.iter())
+            .enumerate()
+        {
+            let vertex_point = kernel.context().vertex_point(vertex_shape)?;
+            assert_vec3_close(
+                vertex_point,
+                *topology_position,
+                1.0e-12,
+                &format!("{label} vertex {vertex_index} point/topology"),
+            )?;
+        }
 
         let ported_endpoints = kernel
             .context()

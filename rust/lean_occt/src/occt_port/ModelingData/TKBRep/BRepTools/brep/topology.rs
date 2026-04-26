@@ -62,6 +62,14 @@ enum RootAssemblyTopologyInventory {
     NotAssembly,
 }
 
+struct RootEdgeVertexSeed {
+    vertex_shapes: Vec<Shape>,
+    vertex_positions: Vec<[f64; 3]>,
+    start_vertex: Option<usize>,
+    end_vertex: Option<usize>,
+    endpoints: EdgeEndpoints,
+}
+
 const ROOT_ASSEMBLY_MAX_DEPTH: usize = 16;
 
 pub(super) fn root_assembly_requires_ported_topology(
@@ -275,12 +283,17 @@ fn load_root_edge_topology_snapshot(
         return Ok(None);
     }
 
-    let Some((geometry, endpoints)) = root_edge_topology_bootstrap_seed(context, shape)? else {
+    let Some((geometry, vertex_seed)) = root_edge_topology_bootstrap_seed(context, shape)? else {
         return Ok(None);
     };
 
-    let (vertex_shapes, vertex_positions, start_vertex, end_vertex) =
-        root_edge_vertices_from_ported_seed(context, shape, endpoints)?;
+    let RootEdgeVertexSeed {
+        vertex_shapes,
+        vertex_positions,
+        start_vertex,
+        end_vertex,
+        endpoints,
+    } = vertex_seed;
     let edge_shape = context.duplicate_shape_occt(shape)?;
     let length = root_edge_topology_bootstrap_length(context, shape, geometry, endpoints)?;
     let root_edges = vec![RootEdgeTopology {
@@ -318,7 +331,7 @@ fn load_root_edge_topology_snapshot(
 fn root_edge_topology_bootstrap_seed(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<(EdgeGeometry, EdgeEndpoints)>, Error> {
+) -> Result<Option<(EdgeGeometry, RootEdgeVertexSeed)>, Error> {
     let geometry = context.edge_geometry_occt(shape)?;
     if !matches!(
         geometry.kind,
@@ -326,8 +339,8 @@ fn root_edge_topology_bootstrap_seed(
     ) {
         return Ok(None);
     }
-    let endpoints = context.edge_endpoints_occt(shape)?;
-    Ok(Some((geometry, endpoints)))
+    let vertex_seed = root_edge_vertices_from_ported_seed(context, shape)?;
+    Ok(Some((geometry, vertex_seed)))
 }
 
 fn root_edge_topology_bootstrap_length(
@@ -345,20 +358,34 @@ fn root_edge_topology_bootstrap_length(
 fn root_edge_vertices_from_ported_seed(
     context: &Context,
     shape: &Shape,
-    endpoints: EdgeEndpoints,
-) -> Result<(Vec<Shape>, Vec<[f64; 3]>, Option<usize>, Option<usize>), Error> {
+) -> Result<RootEdgeVertexSeed, Error> {
     let start_shape = context.root_edge_vertex_shape_occt(shape, 0)?;
     let end_shape = context.root_edge_vertex_shape_occt(shape, 1)?;
+    let start_position = context.vertex_point(&start_shape)?;
     if context.shape_is_same_occt(&start_shape, &end_shape)? {
-        return Ok((vec![start_shape], vec![endpoints.start], Some(0), Some(0)));
+        return Ok(RootEdgeVertexSeed {
+            vertex_shapes: vec![start_shape],
+            vertex_positions: vec![start_position],
+            start_vertex: Some(0),
+            end_vertex: Some(0),
+            endpoints: EdgeEndpoints {
+                start: start_position,
+                end: start_position,
+            },
+        });
     }
 
-    Ok((
-        vec![start_shape, end_shape],
-        vec![endpoints.start, endpoints.end],
-        Some(0),
-        Some(1),
-    ))
+    let end_position = context.vertex_point(&end_shape)?;
+    Ok(RootEdgeVertexSeed {
+        vertex_shapes: vec![start_shape, end_shape],
+        vertex_positions: vec![start_position, end_position],
+        start_vertex: Some(0),
+        end_vertex: Some(1),
+        endpoints: EdgeEndpoints {
+            start: start_position,
+            end: end_position,
+        },
+    })
 }
 
 fn root_wire_topology_inventory_required(context: &Context, shape: &Shape) -> Result<bool, Error> {
