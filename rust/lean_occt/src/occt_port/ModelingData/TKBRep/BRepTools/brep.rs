@@ -130,7 +130,6 @@ pub enum SummaryBboxSource {
     ExactPrimitive,
     PortedBrep,
     OffsetFaceUnion,
-    OffsetOcctSubshapeUnion,
     OffsetValidatedMesh,
     OffsetSolidShellUnion,
     Mesh,
@@ -185,11 +184,10 @@ impl Context {
     }
 
     pub fn ported_brep(&self, shape: &Shape) -> Result<BrepShape, Error> {
-        let (topology, vertex_shapes, edge_shapes, prepared_shell_shapes, face_shapes, face_route) =
+        let (topology, edge_shapes, prepared_shell_shapes, face_shapes, face_route) =
             match load_ported_topology(self, shape)? {
                 Some(loaded) => (
                     loaded.topology,
-                    loaded.vertex_shapes,
                     loaded.edge_shapes,
                     loaded.prepared_shell_shapes,
                     loaded.face_shapes,
@@ -213,7 +211,6 @@ impl Context {
                         .collect::<Result<Vec<_>, Error>>()?;
                     (
                         self.topology_occt(shape)?,
-                        self.subshapes_occt(shape, ShapeKind::Vertex)?,
                         self.subshapes_occt(shape, ShapeKind::Edge)?,
                         prepared_shell_shapes,
                         self.subshapes_occt(shape, ShapeKind::Face)?,
@@ -242,7 +239,6 @@ impl Context {
                 &wires,
                 &edges,
                 &faces,
-                &vertex_shapes,
                 &prepared_shell_shapes,
                 &face_shapes,
                 &edge_shapes,

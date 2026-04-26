@@ -116,7 +116,6 @@ pub(super) fn ported_shape_summary(
     wires: &[BrepWire],
     edges: &[BrepEdge],
     faces: &[BrepFace],
-    vertex_shapes: &[Shape],
     prepared_shell_shapes: &[PreparedShellShape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
@@ -149,8 +148,7 @@ pub(super) fn ported_shape_summary(
         supports_rust_owned_offset_solid_volume || supports_rust_owned_swept_solid_volume;
     let offset_non_solid =
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
-    let supports_rust_owned_offset_root_bbox = contains_offset_faces
-        && ((counts.solid_count > 0 || counts.compsolid_count > 0) || face_shapes.len() == 1);
+    let supports_rust_owned_offset_root_bbox = contains_offset_faces && !face_shapes.is_empty();
     let requires_rust_owned_bbox = exact_primitive_bbox.is_some()
         || ported_topological_bbox.is_some()
         || supports_rust_owned_offset_root_bbox;
@@ -166,21 +164,6 @@ pub(super) fn ported_shape_summary(
         .or_else(|| {
             offset_face_bbox_resolution
                 .map(|resolution| (resolution.bbox, SummaryBboxSource::OffsetFaceUnion))
-        })
-        .or_else(|| {
-            if offset_non_solid && !supports_rust_owned_offset_root_bbox {
-                offset_shape_bbox_occt(
-                    context,
-                    shape,
-                    faces,
-                    vertex_shapes,
-                    face_shapes,
-                    edge_shapes,
-                )
-                .map(|bbox| (bbox, SummaryBboxSource::OffsetOcctSubshapeUnion))
-            } else {
-                None
-            }
         })
         .or_else(|| {
             if offset_non_solid {
@@ -1368,37 +1351,6 @@ fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool 
         })
 }
 
-fn offset_shape_bbox_occt(
-    context: &Context,
-    shape: &Shape,
-    faces: &[BrepFace],
-    vertex_shapes: &[Shape],
-    face_shapes: &[Shape],
-    edge_shapes: &[Shape],
-) -> Option<([f64; 3], [f64; 3])> {
-    if faces.is_empty()
-        || face_shapes.is_empty()
-        || !faces
-            .iter()
-            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
-    {
-        return None;
-    }
-
-    let bbox = union_shape_bboxes_occt(
-        context,
-        vertex_shapes
-            .iter()
-            .chain(face_shapes.iter())
-            .chain(edge_shapes.iter()),
-    )?;
-    match shape_bbox_occt(context, shape) {
-        Some(shape_occt_bbox) if bbox_matches(bbox, shape_occt_bbox) => Some(bbox),
-        Some(_) => None,
-        None => Some(bbox),
-    }
-}
-
 fn offset_solid_shell_bbox(
     context: &Context,
     faces: &[BrepFace],
@@ -1669,34 +1621,6 @@ fn bbox_matches(lhs: ([f64; 3], [f64; 3]), rhs: ([f64; 3], [f64; 3])) -> bool {
         .all(|(lhs_coordinate, rhs_coordinate)| {
             approx_eq(*lhs_coordinate, *rhs_coordinate, 1.0e-6, 1.0e-6)
         })
-}
-
-fn union_shape_bboxes_occt<'a, I>(context: &Context, shapes: I) -> Option<([f64; 3], [f64; 3])>
-where
-    I: IntoIterator<Item = &'a Shape>,
-{
-    let mut bbox_min = [f64::INFINITY; 3];
-    let mut bbox_max = [f64::NEG_INFINITY; 3];
-    let mut any_shapes = false;
-    for shape in shapes {
-        any_shapes = true;
-        let shape_bbox = shape_bbox_occt(context, shape)?;
-        for coordinate in 0..3 {
-            bbox_min[coordinate] = bbox_min[coordinate].min(shape_bbox.0[coordinate]);
-            bbox_max[coordinate] = bbox_max[coordinate].max(shape_bbox.1[coordinate]);
-        }
-    }
-
-    if any_shapes
-        && bbox_min
-            .iter()
-            .zip(bbox_max.iter())
-            .all(|(min, max)| min.is_finite() && max.is_finite())
-    {
-        Some((bbox_min, bbox_max))
-    } else {
-        None
-    }
 }
 
 fn line_segment_points_bbox(
