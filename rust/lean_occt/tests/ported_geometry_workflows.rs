@@ -449,6 +449,121 @@ fn assert_torus_payload_close(
     Ok(())
 }
 
+fn assert_revolution_payload_close(
+    lhs: lean_occt::RevolutionSurfacePayload,
+    rhs: lean_occt::RevolutionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.axis_origin,
+        rhs.axis_origin,
+        tolerance,
+        &format!("{label} axis_origin"),
+    )?;
+    assert_vec3_close(
+        lhs.axis_direction,
+        rhs.axis_direction,
+        tolerance,
+        &format!("{label} axis_direction"),
+    )?;
+    assert_eq!(
+        lhs.basis_curve_kind, rhs.basis_curve_kind,
+        "{label} basis_curve_kind mismatch"
+    );
+    Ok(())
+}
+
+fn assert_extrusion_payload_close(
+    lhs: lean_occt::ExtrusionSurfacePayload,
+    rhs: lean_occt::ExtrusionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.direction,
+        rhs.direction,
+        tolerance,
+        &format!("{label} direction"),
+    )?;
+    assert_eq!(
+        lhs.basis_curve_kind, rhs.basis_curve_kind,
+        "{label} basis_curve_kind mismatch"
+    );
+    Ok(())
+}
+
+fn assert_offset_payload_close(
+    lhs: lean_occt::OffsetSurfacePayload,
+    rhs: lean_occt::OffsetSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_scalar_close(
+        lhs.offset_value,
+        rhs.offset_value,
+        tolerance,
+        &format!("{label} offset_value"),
+    )?;
+    assert_eq!(
+        lhs.basis_surface_kind, rhs.basis_surface_kind,
+        "{label} basis_surface_kind mismatch"
+    );
+    Ok(())
+}
+
+fn assert_offset_swept_basis_curve_close(
+    context: &lean_occt::Context,
+    offset_face: &Shape,
+    basis_curve: PortedCurve,
+    basis_geometry: lean_occt::EdgeGeometry,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let basis_curve_geometry = context.face_offset_basis_curve_geometry(offset_face)?;
+    let basis_curve_geometry_occt = context.face_offset_basis_curve_geometry_occt(offset_face)?;
+    assert_edge_geometry_close(
+        basis_curve_geometry,
+        basis_curve_geometry_occt,
+        1.0e-12,
+        &format!("{label} basis curve occt geometry"),
+    )?;
+    assert_edge_geometry_close(
+        basis_curve_geometry,
+        basis_geometry,
+        1.0e-12,
+        &format!("{label} descriptor basis curve geometry"),
+    )?;
+    assert_eq!(basis_curve_geometry.kind, CurveKind::Ellipse);
+
+    match basis_curve {
+        PortedCurve::Ellipse(payload) => {
+            let public_payload = context.face_offset_basis_curve_ellipse_payload(offset_face)?;
+            let public_payload_occt =
+                context.face_offset_basis_curve_ellipse_payload_occt(offset_face)?;
+            assert_ellipse_payload_close(
+                public_payload,
+                payload,
+                1.0e-12,
+                &format!("{label} basis ellipse descriptor payload"),
+            )?;
+            assert_ellipse_payload_close(
+                public_payload,
+                public_payload_occt,
+                1.0e-12,
+                &format!("{label} basis ellipse occt payload"),
+            )?;
+        }
+        curve => {
+            return Err(std::io::Error::other(format!(
+                "unexpected {label} offset swept basis curve: {curve:?}"
+            ))
+            .into())
+        }
+    }
+
+    Ok(())
+}
+
 fn normalized_uv_to_uv(geometry: lean_occt::FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
     [
         geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
@@ -1080,17 +1195,38 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
     let context = kernel.context();
     let extrusion_payload = context.face_extrusion_payload(&extrusion_face)?;
     let extrusion_payload_occt = context.face_extrusion_payload_occt(&extrusion_face)?;
+    let extrusion_descriptor = context
+        .ported_face_surface_descriptor(&extrusion_face)?
+        .ok_or_else(|| std::io::Error::other("expected ported extrusion descriptor"))?;
 
-    assert_eq!(
-        extrusion_payload.basis_curve_kind,
-        extrusion_payload_occt.basis_curve_kind
-    );
-    assert_vec3_close(
-        extrusion_payload.direction,
-        extrusion_payload_occt.direction,
+    match extrusion_descriptor {
+        PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { payload, .. }) => {
+            assert_extrusion_payload_close(
+                extrusion_payload,
+                payload,
+                1.0e-12,
+                "extrusion public descriptor payload",
+            )?;
+        }
+        descriptor => {
+            return Err(std::io::Error::other(format!(
+                "unexpected extrusion descriptor: {descriptor:?}"
+            ))
+            .into())
+        }
+    }
+    assert_extrusion_payload_close(
+        extrusion_payload,
+        extrusion_payload_occt,
         1.0e-12,
-        "extrusion payload direction",
+        "extrusion public occt payload",
     )?;
+    let error = context
+        .face_revolution_payload(&extrusion_face)
+        .expect_err("extrusion face should reject revolution payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Revolution payload for ported Extrusion face"));
 
     let revolution = kernel.make_revolution(
         &ellipse_edge,
@@ -1103,23 +1239,38 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
     let revolution_face = find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
     let revolution_payload = context.face_revolution_payload(&revolution_face)?;
     let revolution_payload_occt = context.face_revolution_payload_occt(&revolution_face)?;
+    let revolution_descriptor = context
+        .ported_face_surface_descriptor(&revolution_face)?
+        .ok_or_else(|| std::io::Error::other("expected ported revolution descriptor"))?;
 
-    assert_eq!(
-        revolution_payload.basis_curve_kind,
-        revolution_payload_occt.basis_curve_kind
-    );
-    assert_vec3_close(
-        revolution_payload.axis_origin,
-        revolution_payload_occt.axis_origin,
+    match revolution_descriptor {
+        PortedFaceSurface::Swept(PortedSweptSurface::Revolution { payload, .. }) => {
+            assert_revolution_payload_close(
+                revolution_payload,
+                payload,
+                1.0e-12,
+                "revolution public descriptor payload",
+            )?;
+        }
+        descriptor => {
+            return Err(std::io::Error::other(format!(
+                "unexpected revolution descriptor: {descriptor:?}"
+            ))
+            .into())
+        }
+    }
+    assert_revolution_payload_close(
+        revolution_payload,
+        revolution_payload_occt,
         1.0e-12,
-        "revolution payload axis origin",
+        "revolution public occt payload",
     )?;
-    assert_vec3_close(
-        revolution_payload.axis_direction,
-        revolution_payload_occt.axis_direction,
-        1.0e-12,
-        "revolution payload axis direction",
-    )?;
+    let error = context
+        .face_extrusion_payload(&revolution_face)
+        .expect_err("revolution face should reject extrusion payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Extrusion payload for ported Revolution face"));
 
     let offset_shape = kernel.make_offset(
         &revolution_face,
@@ -1131,15 +1282,38 @@ fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn st
     let offset_face = find_first_face_by_kind(&kernel, &offset_shape, SurfaceKind::Offset)?;
     let offset_payload = context.face_offset_payload(&offset_face)?;
     let offset_payload_occt = context.face_offset_payload_occt(&offset_face)?;
+    let offset_descriptor = context
+        .ported_face_surface_descriptor(&offset_face)?
+        .ok_or_else(|| std::io::Error::other("expected ported offset descriptor"))?;
 
-    assert_eq!(
-        offset_payload.basis_surface_kind,
-        offset_payload_occt.basis_surface_kind
-    );
-    assert!(
-        (offset_payload.offset_value - offset_payload_occt.offset_value).abs() <= 1.0e-12,
-        "offset payload mismatch: rust={offset_payload:?} occt={offset_payload_occt:?}"
-    );
+    match offset_descriptor {
+        PortedFaceSurface::Offset(surface) => {
+            assert_offset_payload_close(
+                offset_payload,
+                surface.payload,
+                1.0e-12,
+                "offset public descriptor payload",
+            )?;
+        }
+        descriptor => {
+            return Err(std::io::Error::other(format!(
+                "unexpected offset descriptor: {descriptor:?}"
+            ))
+            .into())
+        }
+    }
+    assert_offset_payload_close(
+        offset_payload,
+        offset_payload_occt,
+        1.0e-12,
+        "offset public occt payload",
+    )?;
+    let error = context
+        .face_revolution_payload(&offset_face)
+        .expect_err("offset face should reject top-level revolution payload requests in Rust");
+    assert!(error
+        .to_string()
+        .contains("requested Revolution payload for ported Offset face"));
 
     Ok(())
 }
@@ -1478,29 +1652,64 @@ fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::err
     )?;
 
     let context = kernel.context();
-    for (label, basis_kind, source_face) in [
+    let extrusion_source_face = find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?;
+    let extrusion_offset_shape = kernel.make_offset(
+        &extrusion_source_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+    let revolution_source_face =
+        find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?;
+    let revolution_offset_shape = kernel.make_offset(
+        &revolution_source_face,
+        OffsetParams {
+            offset: 2.5,
+            tolerance: 1.0e-4,
+        },
+    )?;
+
+    for (label, basis_kind, offset_face) in [
         (
             "extrusion",
             SurfaceKind::Extrusion,
-            find_first_face_by_kind(&kernel, &prism, SurfaceKind::Extrusion)?,
+            find_first_face_by_kind(&kernel, &extrusion_offset_shape, SurfaceKind::Offset)?,
         ),
         (
             "revolution",
             SurfaceKind::Revolution,
-            find_first_face_by_kind(&kernel, &revolution, SurfaceKind::Revolution)?,
+            find_first_face_by_kind(&kernel, &revolution_offset_shape, SurfaceKind::Offset)?,
         ),
     ] {
-        let offset_shape = kernel.make_offset(
-            &source_face,
-            OffsetParams {
-                offset: 2.5,
-                tolerance: 1.0e-4,
-            },
-        )?;
-        let offset_face = find_first_face_by_kind(&kernel, &offset_shape, SurfaceKind::Offset)?;
         let offset_payload = context.face_offset_payload(&offset_face)?;
+        let offset_payload_occt = context.face_offset_payload_occt(&offset_face)?;
+        let descriptor = context
+            .ported_face_surface_descriptor(&offset_face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} offset")))?;
+        let offset_surface = match descriptor {
+            PortedFaceSurface::Offset(surface) => surface,
+            descriptor => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected {label} offset descriptor: {descriptor:?}"
+                ))
+                .into())
+            }
+        };
 
         assert_eq!(offset_payload.basis_surface_kind, basis_kind);
+        assert_offset_payload_close(
+            offset_payload,
+            offset_surface.payload,
+            1.0e-12,
+            &format!("{label} offset descriptor payload"),
+        )?;
+        assert_offset_payload_close(
+            offset_payload,
+            offset_payload_occt,
+            1.0e-12,
+            &format!("{label} offset occt payload"),
+        )?;
 
         let basis_geometry = context.face_offset_basis_geometry(&offset_face)?;
         let basis_geometry_occt = context.face_offset_basis_geometry_occt(&offset_face)?;
@@ -1510,92 +1719,230 @@ fn public_swept_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::err
             1.0e-12,
             &format!("{label} basis geometry"),
         )?;
-
-        let basis_curve_geometry = context.face_offset_basis_curve_geometry(&offset_face)?;
-        let basis_curve_geometry_occt =
-            context.face_offset_basis_curve_geometry_occt(&offset_face)?;
-        assert_edge_geometry_close(
-            basis_curve_geometry,
-            basis_curve_geometry_occt,
+        assert_face_geometry_close(
+            basis_geometry,
+            offset_surface.basis_geometry,
             1.0e-12,
-            &format!("{label} basis curve geometry"),
-        )?;
-        assert_eq!(basis_curve_geometry.kind, CurveKind::Ellipse);
-
-        let ellipse_payload = context.face_offset_basis_curve_ellipse_payload(&offset_face)?;
-        let ellipse_payload_occt =
-            context.face_offset_basis_curve_ellipse_payload_occt(&offset_face)?;
-        assert_vec3_close(
-            ellipse_payload.center,
-            ellipse_payload_occt.center,
-            1.0e-12,
-            &format!("{label} basis ellipse center"),
-        )?;
-        assert_vec3_close(
-            ellipse_payload.normal,
-            ellipse_payload_occt.normal,
-            1.0e-12,
-            &format!("{label} basis ellipse normal"),
-        )?;
-        assert_vec3_close(
-            ellipse_payload.x_direction,
-            ellipse_payload_occt.x_direction,
-            1.0e-12,
-            &format!("{label} basis ellipse x direction"),
-        )?;
-        assert_vec3_close(
-            ellipse_payload.y_direction,
-            ellipse_payload_occt.y_direction,
-            1.0e-12,
-            &format!("{label} basis ellipse y direction"),
-        )?;
-        assert_scalar_close(
-            ellipse_payload.major_radius,
-            ellipse_payload_occt.major_radius,
-            1.0e-12,
-            &format!("{label} basis ellipse major radius"),
-        )?;
-        assert_scalar_close(
-            ellipse_payload.minor_radius,
-            ellipse_payload_occt.minor_radius,
-            1.0e-12,
-            &format!("{label} basis ellipse minor radius"),
+            &format!("{label} descriptor basis geometry"),
         )?;
 
-        match basis_kind {
-            SurfaceKind::Extrusion => {
+        match (basis_kind, offset_surface.basis) {
+            (
+                SurfaceKind::Plane,
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)),
+            ) => {
+                let public_payload = context.face_offset_basis_plane_payload(&offset_face)?;
+                let public_payload_occt =
+                    context.face_offset_basis_plane_payload_occt(&offset_face)?;
+                assert_plane_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    "plane offset-basis descriptor payload",
+                )?;
+                assert_plane_payload_close(
+                    public_payload,
+                    public_payload_occt,
+                    1.0e-12,
+                    "plane offset-basis occt payload",
+                )?;
+                let error = context
+                    .face_offset_basis_cylinder_payload(&offset_face)
+                    .expect_err(
+                        "plane offset should reject cylinder basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Cylinder offset-basis payload for ported Plane offset basis"
+                ));
+            }
+            (
+                SurfaceKind::Cylinder,
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(payload)),
+            ) => {
+                let public_payload = context.face_offset_basis_cylinder_payload(&offset_face)?;
+                let public_payload_occt =
+                    context.face_offset_basis_cylinder_payload_occt(&offset_face)?;
+                assert_cylinder_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    "cylinder offset-basis descriptor payload",
+                )?;
+                assert_cylinder_payload_close(
+                    public_payload,
+                    public_payload_occt,
+                    1.0e-12,
+                    "cylinder offset-basis occt payload",
+                )?;
+                let error = context
+                    .face_offset_basis_plane_payload(&offset_face)
+                    .expect_err(
+                        "cylinder offset should reject plane basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Plane offset-basis payload for ported Cylinder offset basis"
+                ));
+            }
+            (
+                SurfaceKind::Cone,
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(payload)),
+            ) => {
+                let public_payload = context.face_offset_basis_cone_payload(&offset_face)?;
+                let public_payload_occt =
+                    context.face_offset_basis_cone_payload_occt(&offset_face)?;
+                assert_cone_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    "cone offset-basis descriptor payload",
+                )?;
+                assert_cone_payload_close(
+                    public_payload,
+                    public_payload_occt,
+                    1.0e-12,
+                    "cone offset-basis occt payload",
+                )?;
+            }
+            (
+                SurfaceKind::Sphere,
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(payload)),
+            ) => {
+                let public_payload = context.face_offset_basis_sphere_payload(&offset_face)?;
+                let public_payload_occt =
+                    context.face_offset_basis_sphere_payload_occt(&offset_face)?;
+                assert_sphere_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    "sphere offset-basis descriptor payload",
+                )?;
+                assert_sphere_payload_close(
+                    public_payload,
+                    public_payload_occt,
+                    1.0e-12,
+                    "sphere offset-basis occt payload",
+                )?;
+            }
+            (
+                SurfaceKind::Torus,
+                PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(payload)),
+            ) => {
+                let public_payload = context.face_offset_basis_torus_payload(&offset_face)?;
+                let public_payload_occt =
+                    context.face_offset_basis_torus_payload_occt(&offset_face)?;
+                assert_torus_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    "torus offset-basis descriptor payload",
+                )?;
+                assert_torus_payload_close(
+                    public_payload,
+                    public_payload_occt,
+                    1.0e-12,
+                    "torus offset-basis occt payload",
+                )?;
+            }
+            (
+                SurfaceKind::Extrusion,
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    payload: descriptor_payload,
+                    basis_curve,
+                    basis_geometry,
+                }),
+            ) => {
+                assert_offset_swept_basis_curve_close(
+                    context,
+                    &offset_face,
+                    basis_curve,
+                    basis_geometry,
+                    label,
+                )?;
                 let payload = context.face_offset_basis_extrusion_payload(&offset_face)?;
                 let payload_occt =
                     context.face_offset_basis_extrusion_payload_occt(&offset_face)?;
-                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
-                assert_eq!(payload.basis_curve_kind, payload_occt.basis_curve_kind);
-                assert_vec3_close(
-                    payload.direction,
-                    payload_occt.direction,
+                assert_extrusion_payload_close(
+                    payload,
+                    payload_occt,
                     1.0e-12,
-                    "extrusion basis direction",
+                    "extrusion offset-basis occt payload",
                 )?;
+                assert_extrusion_payload_close(
+                    payload,
+                    descriptor_payload,
+                    1.0e-12,
+                    "extrusion offset-basis descriptor payload",
+                )?;
+                let error = context
+                    .face_offset_basis_revolution_payload(&offset_face)
+                    .expect_err(
+                        "extrusion offset should reject revolution basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Revolution offset-basis payload for ported Extrusion offset basis"
+                ));
+                let error = context
+                    .face_offset_basis_plane_payload(&offset_face)
+                    .expect_err(
+                        "extrusion offset should reject plane basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Plane offset-basis payload for ported Extrusion offset basis"
+                ));
             }
-            SurfaceKind::Revolution => {
+            (
+                SurfaceKind::Revolution,
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    payload: descriptor_payload,
+                    basis_curve,
+                    basis_geometry,
+                }),
+            ) => {
+                assert_offset_swept_basis_curve_close(
+                    context,
+                    &offset_face,
+                    basis_curve,
+                    basis_geometry,
+                    label,
+                )?;
                 let payload = context.face_offset_basis_revolution_payload(&offset_face)?;
                 let payload_occt =
                     context.face_offset_basis_revolution_payload_occt(&offset_face)?;
-                assert_eq!(payload.basis_curve_kind, CurveKind::Ellipse);
-                assert_eq!(payload.basis_curve_kind, payload_occt.basis_curve_kind);
-                assert_vec3_close(
-                    payload.axis_origin,
-                    payload_occt.axis_origin,
+                assert_revolution_payload_close(
+                    payload,
+                    payload_occt,
                     1.0e-12,
-                    "revolution basis axis origin",
+                    "revolution offset-basis occt payload",
                 )?;
-                assert_vec3_close(
-                    payload.axis_direction,
-                    payload_occt.axis_direction,
+                assert_revolution_payload_close(
+                    payload,
+                    descriptor_payload,
                     1.0e-12,
-                    "revolution basis axis direction",
+                    "revolution offset-basis descriptor payload",
                 )?;
+                let error = context
+                    .face_offset_basis_extrusion_payload(&offset_face)
+                    .expect_err(
+                        "revolution offset should reject extrusion basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Extrusion offset-basis payload for ported Revolution offset basis"
+                ));
+                let error = context
+                    .face_offset_basis_cylinder_payload(&offset_face)
+                    .expect_err(
+                        "revolution offset should reject cylinder basis payload requests in Rust",
+                    );
+                assert!(error.to_string().contains(
+                    "requested Cylinder offset-basis payload for ported Revolution offset basis"
+                ));
             }
-            _ => unreachable!("unexpected swept basis kind"),
+            (expected, basis) => {
+                return Err(std::io::Error::other(format!(
+                "unexpected {label} offset basis descriptor: expected {expected:?}, got {basis:?}"
+            ))
+                .into())
+            }
         }
     }
 
