@@ -199,7 +199,7 @@ fn ported_snapshot_plane_payload(
     context: &Context,
     face_shape: &Shape,
 ) -> Result<Option<(PlanePayload, FaceGeometry)>, Error> {
-    let face_geometry = context.face_geometry_occt(face_shape)?;
+    let face_geometry = context.face_geometry(face_shape)?;
     if face_geometry.kind != crate::SurfaceKind::Plane {
         return Ok(None);
     }
