@@ -2765,21 +2765,18 @@ impl Context {
     }
 
     pub fn face_offset_basis_curve_geometry(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    basis_geometry,
-                    ..
-                })
-                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    basis_geometry,
-                    ..
-                }) => Ok(basis_geometry),
-                basis => Err(unsupported_ported_offset_basis_curve_geometry_error(
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_curve_geometry_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                basis_geometry,
+                ..
+            })
+            | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                basis_geometry,
+                ..
+            }) => Ok(basis_geometry),
+            basis => Err(unsupported_ported_offset_basis_curve_geometry_error(
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2820,29 +2817,26 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<LinePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    basis_curve: PortedCurve::Line(payload),
-                    ..
-                })
-                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    basis_curve: PortedCurve::Line(payload),
-                    ..
-                }) => Ok(payload),
-                PortedOffsetBasisSurface::Swept(
-                    PortedSweptSurface::Revolution { basis_curve, .. }
-                    | PortedSweptSurface::Extrusion { basis_curve, .. },
-                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
-                    CurveKind::Line,
-                    ported_curve_kind(basis_curve),
-                )),
-                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
-                    CurveKind::Line,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_curve_line_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                basis_curve: PortedCurve::Line(payload),
+                ..
+            })
+            | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                basis_curve: PortedCurve::Line(payload),
+                ..
+            }) => Ok(payload),
+            PortedOffsetBasisSurface::Swept(
+                PortedSweptSurface::Revolution { basis_curve, .. }
+                | PortedSweptSurface::Extrusion { basis_curve, .. },
+            ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                CurveKind::Line,
+                ported_curve_kind(basis_curve),
+            )),
+            basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                CurveKind::Line,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2875,29 +2869,26 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<CirclePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    basis_curve: PortedCurve::Circle(payload),
-                    ..
-                })
-                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    basis_curve: PortedCurve::Circle(payload),
-                    ..
-                }) => Ok(payload),
-                PortedOffsetBasisSurface::Swept(
-                    PortedSweptSurface::Revolution { basis_curve, .. }
-                    | PortedSweptSurface::Extrusion { basis_curve, .. },
-                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
-                    CurveKind::Circle,
-                    ported_curve_kind(basis_curve),
-                )),
-                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
-                    CurveKind::Circle,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_curve_circle_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                basis_curve: PortedCurve::Circle(payload),
+                ..
+            })
+            | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                basis_curve: PortedCurve::Circle(payload),
+                ..
+            }) => Ok(payload),
+            PortedOffsetBasisSurface::Swept(
+                PortedSweptSurface::Revolution { basis_curve, .. }
+                | PortedSweptSurface::Extrusion { basis_curve, .. },
+            ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                CurveKind::Circle,
+                ported_curve_kind(basis_curve),
+            )),
+            basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                CurveKind::Circle,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 
@@ -2936,29 +2927,26 @@ impl Context {
         &self,
         shape: &Shape,
     ) -> Result<EllipsePayload, Error> {
-        match self.ported_offset_surface(shape)? {
-            Some(surface) => match surface.basis {
-                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
-                    basis_curve: PortedCurve::Ellipse(payload),
-                    ..
-                })
-                | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
-                    basis_curve: PortedCurve::Ellipse(payload),
-                    ..
-                }) => Ok(payload),
-                PortedOffsetBasisSurface::Swept(
-                    PortedSweptSurface::Revolution { basis_curve, .. }
-                    | PortedSweptSurface::Extrusion { basis_curve, .. },
-                ) => Err(mismatched_ported_offset_basis_curve_payload_error(
-                    CurveKind::Ellipse,
-                    ported_curve_kind(basis_curve),
-                )),
-                basis => Err(unsupported_ported_offset_basis_curve_payload_error(
-                    CurveKind::Ellipse,
-                    ported_offset_basis_surface_kind(basis),
-                )),
-            },
-            None => self.face_offset_basis_curve_ellipse_payload_occt(shape),
+        match self.ported_offset_face_surface_payload(shape)?.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                basis_curve: PortedCurve::Ellipse(payload),
+                ..
+            })
+            | PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                basis_curve: PortedCurve::Ellipse(payload),
+                ..
+            }) => Ok(payload),
+            PortedOffsetBasisSurface::Swept(
+                PortedSweptSurface::Revolution { basis_curve, .. }
+                | PortedSweptSurface::Extrusion { basis_curve, .. },
+            ) => Err(mismatched_ported_offset_basis_curve_payload_error(
+                CurveKind::Ellipse,
+                ported_curve_kind(basis_curve),
+            )),
+            basis => Err(unsupported_ported_offset_basis_curve_payload_error(
+                CurveKind::Ellipse,
+                ported_offset_basis_surface_kind(basis),
+            )),
         }
     }
 

@@ -655,6 +655,35 @@ fn assert_offset_swept_basis_curve_close(
     Ok(())
 }
 
+fn assert_analytic_offset_basis_rejects_curve_queries(
+    context: &lean_occt::Context,
+    offset_face: &Shape,
+    basis_kind: SurfaceKind,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let error = context
+        .face_offset_basis_curve_geometry(offset_face)
+        .expect_err("analytic offset basis should reject curve geometry requests in Rust");
+    assert!(
+        error.to_string().contains(&format!(
+            "requested offset-basis curve geometry for ported {basis_kind:?} offset basis"
+        )),
+        "{label} unexpected curve geometry error: {error}"
+    );
+
+    let error = context
+        .face_offset_basis_curve_ellipse_payload(offset_face)
+        .expect_err("analytic offset basis should reject curve payload requests in Rust");
+    assert!(
+        error.to_string().contains(&format!(
+            "requested Ellipse offset-basis curve payload for ported {basis_kind:?} offset basis"
+        )),
+        "{label} unexpected curve payload error: {error}"
+    );
+
+    Ok(())
+}
+
 fn normalized_uv_to_uv(geometry: lean_occt::FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
     [
         geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
@@ -2264,6 +2293,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                 assert!(error.to_string().contains(
                     "requested Cylinder offset-basis payload for ported Plane offset basis"
                 ));
+                assert_analytic_offset_basis_rejects_curve_queries(
+                    context,
+                    &offset_face,
+                    SurfaceKind::Plane,
+                    label,
+                )?;
             }
             (
                 SurfaceKind::Cylinder,
@@ -2292,6 +2327,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                 assert!(error.to_string().contains(
                     "requested Plane offset-basis payload for ported Cylinder offset basis"
                 ));
+                assert_analytic_offset_basis_rejects_curve_queries(
+                    context,
+                    &offset_face,
+                    SurfaceKind::Cylinder,
+                    label,
+                )?;
             }
             (
                 SurfaceKind::Cone,
@@ -2311,6 +2352,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                     public_payload_occt,
                     1.0e-12,
                     "cone offset-basis occt payload",
+                )?;
+                assert_analytic_offset_basis_rejects_curve_queries(
+                    context,
+                    &offset_face,
+                    SurfaceKind::Cone,
+                    label,
                 )?;
             }
             (
@@ -2332,6 +2379,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                     1.0e-12,
                     "sphere offset-basis occt payload",
                 )?;
+                assert_analytic_offset_basis_rejects_curve_queries(
+                    context,
+                    &offset_face,
+                    SurfaceKind::Sphere,
+                    label,
+                )?;
             }
             (
                 SurfaceKind::Torus,
@@ -2351,6 +2404,12 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
                     public_payload_occt,
                     1.0e-12,
                     "torus offset-basis occt payload",
+                )?;
+                assert_analytic_offset_basis_rejects_curve_queries(
+                    context,
+                    &offset_face,
+                    SurfaceKind::Torus,
+                    label,
                 )?;
             }
             (
