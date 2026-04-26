@@ -1162,6 +1162,29 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             1.0e-10,
             &format!("{label} topology length"),
         )?;
+        if expected_kind == CurveKind::Line {
+            let delta = [
+                public_endpoints.end[0] - public_endpoints.start[0],
+                public_endpoints.end[1] - public_endpoints.start[1],
+                public_endpoints.end[2] - public_endpoints.start[2],
+            ];
+            let endpoint_length =
+                (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
+            assert_scalar_close(
+                topology_edge.length,
+                endpoint_length,
+                1.0e-12,
+                &format!("{label} topology endpoint length"),
+            )?;
+        }
+        if label == "ellipse" {
+            assert_scalar_close(
+                topology_edge.length,
+                ellipse_perimeter(10.0, 6.0),
+                1.0e-3,
+                "ellipse topology analytic length",
+            )?;
+        }
         let start_index = topology_edge.start_vertex.ok_or_else(|| {
             std::io::Error::other(format!("{label} missing topology start vertex"))
         })?;

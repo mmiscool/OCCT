@@ -1,53 +1,54 @@
 # Next Task
 
-Current milestone: `M36. Rust-Owned Root Edge Geometry Bootstrap Seed` from `portingMilestones.md`.
+Current milestone: `M37. Rust-Owned Public Root Edge Geometry Query` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `M35. Rust-Owned Public Root Edge Support Classification` is complete.
-- `RootEdgeEndpointTopologySupport` and `root_edge_endpoint_topology_support()` were removed from `shape_queries.rs`.
-- `ported_edge_endpoints()` now loads `LoadedPortedTopology` directly and derives endpoint positions from the loaded topology edge's start/end vertex indices, with no direct `edge_geometry_occt()` or `edge_endpoints_occt()` classifier in the public query path.
-- `topology.rs` now owns root-edge support classification through `RootEdgeTopologyInventory::{Supported, UnsupportedRootEdge, NotRootEdge}`.
-- `load_root_topology_snapshot()` returns `Ok(None)` for `UnsupportedRootEdge` before the generic raw root inventory sweep can rebuild unsupported root edge topology.
-- `unsupported_root_edge_does_not_use_generic_raw_topology_inventory` covers a helix child edge as an unsupported root edge: `ported_topology()` and `ported_edge_endpoints()` return `None`, while public endpoints still match the explicit OCCT oracle fallback.
-- Source guards show the `ported_edge_endpoints()` function body contains no `edge_geometry_occt(`, `edge_endpoints_occt(`, or `RootEdgeEndpointTopologySupport`; `edge_endpoints_occt(` remains absent from both `brep/topology.rs` and `brep/shape_queries.rs`.
+- `M36. Rust-Owned Root Edge Geometry Bootstrap Seed` is complete.
+- `root_edge_topology_bootstrap_seed()` no longer calls `edge_geometry_occt()`, public `edge_geometry()`, `ported_edge_geometry()`, `edge_endpoints()`, or `edge_endpoints_occt()`.
+- Root-edge topology geometry now comes from `Context::ported_root_edge_topology_bootstrap_geometry()` using the M34 root vertex seed.
+- Supported root lines are classified from endpoint/sample collinearity and use endpoint distance for topology length.
+- Supported closed circles and ellipses are reconstructed through the ported payload solvers from normalized position samples, and supported open circle arcs are reconstructed from root endpoints plus an interior sample.
+- Root-edge topology lengths for circles/ellipses now come from `PortedCurve::length_with_geometry()` instead of the removed `root_edge_topology_bootstrap_length()` raw geometry route.
+- Degenerate or unsupported root edges return `RootEdgeTopologyInventory::UnsupportedRootEdge`/`Ok(None)` before the generic raw root inventory sweep; the helix unsupported-root regression remains green.
+- `edge_endpoints_occt(` remains absent from `brep/topology.rs` and `brep/shape_queries.rs`.
 - Full verification passed with `cargo test`.
 
 ## Target
 
-Remove the remaining topology-owned raw geometry seed:
+Remove the next public root-edge raw geometry read:
 
-`load_root_edge_topology_inventory() -> root_edge_topology_bootstrap_seed() -> edge_geometry_occt()`
+`Context::ported_edge_geometry() -> edge_geometry_occt()`
 
-After M35, root-edge support classification is in the topology loader, but `root_edge_topology_bootstrap_seed()` still uses direct OCCT edge geometry to classify supported line/circle/ellipse root edges and seed `RootEdgeTopology`. Replace that bootstrap read with a Rust-owned classifier/geometry seed while preserving unsupported root-edge `Ok(None)` behavior.
+After M36, topology can seed supported root line/circle/ellipse geometry without direct raw geometry. Public `ported_edge_geometry()` still begins by reading direct OCCT edge geometry, including for root edge shapes that could now return the Rust-owned root topology edge geometry.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Build a topology-local bootstrap geometry classifier for root edges that does not call public `edge_geometry()` because that path recurses through public endpoints/topology.
-3. Use the M34 vertex seed and existing Rust curve reconstruction helpers where possible to derive supported line/circle/ellipse `EdgeGeometry` for root topology construction.
-4. Remove or strictly narrow `root_edge_topology_bootstrap_seed() -> edge_geometry_occt()` in the same turn.
-5. Keep unsupported root edge kinds returning `RootEdgeTopologyInventory::UnsupportedRootEdge` and `Ok(None)` from ported topology/endpoint paths.
-6. Keep explicit `Context::edge_geometry_occt()` and `Context::edge_endpoints_occt()` available as oracle/unsupported APIs outside the ported root-edge bootstrap.
-7. Strengthen source guards so `root_edge_topology_bootstrap_seed()` contains no `edge_geometry_occt(` or `edge_endpoints_occt(`, and `brep/topology.rs`/`brep/shape_queries.rs` still contain no `edge_endpoints_occt(` calls.
+2. Add a root-edge branch to `ported_edge_geometry()` that detects `ShapeKind::Edge` root shapes before the direct `edge_geometry_occt()` read.
+3. Load Rust topology for that root edge through the M36 bootstrap inventory and return the single `RootEdgeTopology.geometry` when available.
+4. Preserve unsupported root edge behavior: unsupported roots should return `Ok(None)` from `ported_edge_geometry()` so public `edge_geometry()` can use the explicit raw/oracle fallback outside the Rust-owned supported path.
+5. Do not route the root-edge branch through public `edge_geometry()` or any direct `edge_endpoints_occt()` path.
+6. Strengthen root-edge workflow coverage so public geometry for root line/circle/ellipse is proven topology-backed and still matches OCCT oracle geometry where appropriate.
+7. Add source guards showing the root-edge branch in `ported_edge_geometry()` contains no `edge_geometry_occt(`, public recursive `edge_geometry(`, or direct endpoint helper.
 8. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
 - Do not reintroduce `edge_endpoints_occt()` into `brep/topology.rs` or `brep/shape_queries.rs`.
-- Do not route the bootstrap through public `edge_geometry()` or `ported_edge_geometry()` until recursion through root-edge topology is broken or bypassed.
-- Do not let unsupported root edge kinds fall through to the generic raw root topology inventory.
-- Preserve line/circle/ellipse root endpoint and topology behavior for public, ported, and OCCT parity tests.
+- Do not call public `edge_geometry()` or `ported_edge_geometry()` from root-edge topology bootstrap.
+- Keep explicit `Context::edge_geometry_occt()` and `Context::edge_endpoints_occt()` available as oracle/unsupported APIs outside the ported root-edge path.
+- Preserve line/circle/ellipse root endpoint, topology, payload, sample, and public geometry behavior.
 
 ## Verification
 
 - `(cd rust/lean_occt && cargo fmt)`
 - `cmake --build build --target LeanOcctCAPI`
 - `(cd rust/lean_occt && cargo check)`
-- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows unsupported_root_edge_does_not_use_generic_raw_topology_inventory -- --nocapture)`
-- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_root_edge_endpoints_are_topology_backed -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture)`
-- `! perl -0ne 'print $1 if /(fn root_edge_topology_bootstrap_seed[\s\S]*?)\nfn root_edge_topology_bootstrap_length/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs | rg -n 'edge_geometry_occt\(|edge_endpoints_occt\('`
-- `! rg -n 'edge_endpoints_occt\(' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/topology.rs rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_root_edge_endpoints_are_topology_backed -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_analytic_curve_and_surface_payload_queries_match_occt -- --nocapture)`
+- `! perl -0ne 'print $1 if /(pub fn ported_edge_geometry[\s\S]*?)\n    pub fn ported_face_geometry/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'ShapeKind::Edge[\s\S]*edge_geometry_occt\('`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows -- --nocapture)`
 - `(cd rust/lean_occt && cargo test)`
 - `git diff --check`

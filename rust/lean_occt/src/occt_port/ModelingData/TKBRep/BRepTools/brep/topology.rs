@@ -305,7 +305,8 @@ fn load_root_edge_topology_inventory(
         return Ok(RootEdgeTopologyInventory::NotRootEdge);
     }
 
-    let Some((geometry, vertex_seed)) = root_edge_topology_bootstrap_seed(context, shape)? else {
+    let Some((geometry, length, vertex_seed)) = root_edge_topology_bootstrap_seed(context, shape)?
+    else {
         return Ok(RootEdgeTopologyInventory::UnsupportedRootEdge);
     };
 
@@ -314,10 +315,9 @@ fn load_root_edge_topology_inventory(
         vertex_positions,
         start_vertex,
         end_vertex,
-        endpoints,
+        endpoints: _,
     } = vertex_seed;
     let edge_shape = context.duplicate_shape_occt(shape)?;
-    let length = root_edge_topology_bootstrap_length(context, shape, geometry, endpoints)?;
     let root_edges = vec![RootEdgeTopology {
         geometry,
         start_vertex,
@@ -355,28 +355,18 @@ fn load_root_edge_topology_inventory(
 fn root_edge_topology_bootstrap_seed(
     context: &Context,
     shape: &Shape,
-) -> Result<Option<(EdgeGeometry, RootEdgeVertexSeed)>, Error> {
-    let geometry = context.edge_geometry_occt(shape)?;
-    if !matches!(
-        geometry.kind,
-        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
-    ) {
-        return Ok(None);
-    }
+) -> Result<Option<(EdgeGeometry, f64, RootEdgeVertexSeed)>, Error> {
     let vertex_seed = root_edge_vertices_from_ported_seed(context, shape)?;
-    Ok(Some((geometry, vertex_seed)))
-}
-
-fn root_edge_topology_bootstrap_length(
-    context: &Context,
-    shape: &Shape,
-    geometry: EdgeGeometry,
-    endpoints: EdgeEndpoints,
-) -> Result<f64, Error> {
-    if geometry.kind == CurveKind::Line {
-        return Ok(norm3(subtract3(endpoints.end, endpoints.start)));
-    }
-    topology_edge_length(context, shape, geometry)
+    let Some(geometry_seed) =
+        context.ported_root_edge_topology_bootstrap_geometry(shape, vertex_seed.endpoints)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
+        geometry_seed.geometry,
+        geometry_seed.length,
+        vertex_seed,
+    )))
 }
 
 fn root_edge_vertices_from_ported_seed(

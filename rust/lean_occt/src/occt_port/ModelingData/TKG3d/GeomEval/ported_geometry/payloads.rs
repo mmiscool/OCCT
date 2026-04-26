@@ -240,7 +240,7 @@ pub(super) fn ported_circle_payload(
     ported_circle_payload_from_position_samples(geometry, &mut sample_position)
 }
 
-fn ported_circle_payload_from_position_samples<F>(
+pub(super) fn ported_circle_payload_from_position_samples<F>(
     geometry: EdgeGeometry,
     mut sample_position: F,
 ) -> Result<Option<CirclePayload>, Error>
@@ -323,7 +323,7 @@ pub(super) fn ported_ellipse_payload(
     ported_ellipse_payload_from_position_samples(geometry, &mut sample_position)
 }
 
-fn ported_ellipse_payload_from_position_samples<F>(
+pub(super) fn ported_ellipse_payload_from_position_samples<F>(
     geometry: EdgeGeometry,
     mut sample_position: F,
 ) -> Result<Option<EllipsePayload>, Error>
