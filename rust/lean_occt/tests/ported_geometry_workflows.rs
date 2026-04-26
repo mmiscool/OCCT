@@ -813,6 +813,14 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
         let geometry_occt = kernel.context().edge_geometry_occt(&edge)?;
         let context_endpoints = kernel.context().edge_endpoints(&edge)?;
         let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
+        let ported_geometry = kernel
+            .context()
+            .ported_edge_geometry(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} geometry")))?;
+        let ported_endpoints = kernel
+            .context()
+            .ported_edge_endpoints(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("expected Rust {label} endpoints")))?;
         let parameter = 0.5 * (geometry.start_parameter + geometry.end_parameter);
         let ported = kernel
             .context()
@@ -887,7 +895,20 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             }
         }
 
+        assert_edge_geometry_close(geometry, ported_geometry, 1.0e-12, label)?;
         assert_edge_geometry_close(geometry, geometry_occt, 1.0e-8, label)?;
+        assert_vec3_close(
+            context_endpoints.start,
+            ported_endpoints.start,
+            1.0e-12,
+            &format!("{label} ported start endpoint"),
+        )?;
+        assert_vec3_close(
+            context_endpoints.end,
+            ported_endpoints.end,
+            1.0e-12,
+            &format!("{label} ported end endpoint"),
+        )?;
         assert_vec3_close(
             context_endpoints.start,
             occt_endpoints.start,

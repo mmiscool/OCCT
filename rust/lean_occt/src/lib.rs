@@ -1635,9 +1635,18 @@ impl Context {
     }
 
     pub fn edge_endpoints(&self, shape: &Shape) -> Result<EdgeEndpoints, Error> {
-        match self.ported_edge_endpoints(shape)? {
-            Some(endpoints) => Ok(endpoints),
-            None => self.edge_endpoints_occt(shape),
+        if let Some(endpoints) = self.ported_edge_endpoints(shape)? {
+            return Ok(endpoints);
+        }
+
+        let geometry = self.edge_geometry_occt(shape)?;
+        if rust_owned_edge_query_required(geometry.kind) {
+            Err(unsupported_ported_edge_query_error(
+                "edge endpoints",
+                geometry.kind,
+            ))
+        } else {
+            self.edge_endpoints_occt(shape)
         }
     }
 
@@ -1660,9 +1669,18 @@ impl Context {
     }
 
     pub fn edge_sample(&self, shape: &Shape, t: f64) -> Result<EdgeSample, Error> {
-        match self.ported_edge_sample(shape, t)? {
-            Some(sample) => Ok(sample),
-            None => self.edge_sample_occt(shape, t),
+        if let Some(sample) = self.ported_edge_sample(shape, t)? {
+            return Ok(sample);
+        }
+
+        let geometry = self.edge_geometry_occt(shape)?;
+        if rust_owned_edge_query_required(geometry.kind) {
+            Err(unsupported_ported_edge_query_error(
+                "edge sample",
+                geometry.kind,
+            ))
+        } else {
+            self.edge_sample_occt(shape, t)
         }
     }
 
@@ -1689,9 +1707,18 @@ impl Context {
         shape: &Shape,
         parameter: f64,
     ) -> Result<EdgeSample, Error> {
-        match self.ported_edge_sample_at_parameter(shape, parameter)? {
-            Some(sample) => Ok(sample),
-            None => self.edge_sample_at_parameter_occt(shape, parameter),
+        if let Some(sample) = self.ported_edge_sample_at_parameter(shape, parameter)? {
+            return Ok(sample);
+        }
+
+        let geometry = self.edge_geometry_occt(shape)?;
+        if rust_owned_edge_query_required(geometry.kind) {
+            Err(unsupported_ported_edge_query_error(
+                "edge sample at parameter",
+                geometry.kind,
+            ))
+        } else {
+            self.edge_sample_at_parameter_occt(shape, parameter)
         }
     }
 
@@ -1723,9 +1750,18 @@ impl Context {
     }
 
     pub fn edge_geometry(&self, shape: &Shape) -> Result<EdgeGeometry, Error> {
-        match self.ported_edge_geometry(shape)? {
-            Some(geometry) => Ok(geometry),
-            None => self.edge_geometry_occt(shape),
+        if let Some(geometry) = self.ported_edge_geometry(shape)? {
+            return Ok(geometry);
+        }
+
+        let geometry = self.edge_geometry_occt(shape)?;
+        if rust_owned_edge_query_required(geometry.kind) {
+            Err(unsupported_ported_edge_query_error(
+                "edge geometry",
+                geometry.kind,
+            ))
+        } else {
+            Ok(geometry)
         }
     }
 
@@ -3443,6 +3479,19 @@ fn mismatched_ported_curve_payload_error(expected: CurveKind, actual: CurveKind)
 fn unsupported_ported_curve_payload_error(expected: CurveKind, actual: CurveKind) -> Error {
     Error::new(format!(
         "Rust-owned {expected:?} edge payload extraction did not cover {actual:?} edge"
+    ))
+}
+
+fn rust_owned_edge_query_required(kind: CurveKind) -> bool {
+    matches!(
+        kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    )
+}
+
+fn unsupported_ported_edge_query_error(operation: &str, kind: CurveKind) -> Error {
+    Error::new(format!(
+        "Rust-owned {operation} extraction did not cover {kind:?} edge"
     ))
 }
 

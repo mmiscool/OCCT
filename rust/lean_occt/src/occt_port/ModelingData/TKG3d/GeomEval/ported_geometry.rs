@@ -660,21 +660,18 @@ impl Context {
         let endpoints = self.edge_endpoints(shape)?;
 
         if geometry.kind == CurveKind::Line {
-            let line_payload = ported_line_payload_from_endpoints(geometry, endpoints)
-                .or_else(|| self.edge_line_payload_occt(shape).ok());
-            if let Some(payload) = line_payload {
+            if let Some(payload) = ported_line_payload_from_endpoints(geometry, endpoints) {
                 return Ok(ported_line_geometry(payload, endpoints));
             }
+            return Ok(None);
         }
 
-        let edge_length = shape.linear_length();
-        let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
-
-        let circle_payload = match ported_circle_payload(self, shape, geometry)? {
-            Some(payload) => Some(payload),
-            None => self.edge_circle_payload_occt(shape).ok(),
-        };
-        if let Some(payload) = circle_payload {
+        if geometry.kind == CurveKind::Circle {
+            let Some(payload) = ported_circle_payload(self, shape, geometry)? else {
+                return Ok(None);
+            };
+            let edge_length = shape.linear_length();
+            let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Circle,
                 endpoints,
@@ -696,11 +693,12 @@ impl Context {
             ));
         }
 
-        let ellipse_payload = match ported_ellipse_payload(self, shape, geometry)? {
-            Some(payload) => Some(payload),
-            None => self.edge_ellipse_payload_occt(shape).ok(),
-        };
-        if let Some(payload) = ellipse_payload {
+        if geometry.kind == CurveKind::Ellipse {
+            let Some(payload) = ported_ellipse_payload(self, shape, geometry)? else {
+                return Ok(None);
+            };
+            let edge_length = shape.linear_length();
+            let start_tangent = self.edge_sample_occt(shape, 0.0)?.tangent;
             return Ok(ported_periodic_curve_geometry(
                 CurveKind::Ellipse,
                 endpoints,
