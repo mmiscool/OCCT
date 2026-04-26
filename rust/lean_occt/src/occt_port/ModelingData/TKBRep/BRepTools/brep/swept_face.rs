@@ -149,10 +149,10 @@ fn ported_swept_face_surface_from_topology(
 ) -> Result<Option<PortedSweptSurface>, Error> {
     match face_geometry.kind {
         crate::SurfaceKind::Extrusion => {
-            ported_extrusion_face_surface(context, face_shape, face_geometry, &topology).map(Some)
+            ported_extrusion_face_surface(context, face_shape, face_geometry, &topology)
         }
         crate::SurfaceKind::Revolution => {
-            ported_revolution_face_surface(context, face_shape, face_geometry, &topology).map(Some)
+            ported_revolution_face_surface(context, face_shape, face_geometry, &topology)
         }
         _ => Ok(None),
     }
@@ -163,23 +163,63 @@ fn ported_extrusion_face_surface(
     face_shape: &Shape,
     face_geometry: FaceGeometry,
     topology: &SingleFaceTopology,
-) -> Result<PortedSweptSurface, Error> {
-    let payload = context.face_extrusion_payload_occt(face_shape)?;
-    let basis = select_swept_face_basis(
-        topology,
-        face_geometry,
-        payload.basis_curve_kind,
-        SweptBasisSelection::Extrusion {
-            direction: payload.direction,
-        },
-        "extrusion",
-    )?;
+) -> Result<Option<PortedSweptSurface>, Error> {
+    let orientation = context.shape_orientation(face_shape)?;
+    for basis_kind in SUPPORTED_SWEPT_BASIS_KINDS {
+        let candidates = match face_curve_candidates(
+            &topology.loops,
+            &topology.wires,
+            &topology.edges,
+            basis_kind,
+        ) {
+            Some(candidates) => candidates,
+            None => continue,
+        };
+        let basis_geometry = match candidates.first() {
+            Some(candidate) => candidate.geometry,
+            None => continue,
+        };
+        let basis_on_u = basis_parameter_on_u(face_geometry, basis_geometry);
+        let direction = match extrusion_direction_from_face_samples(
+            context,
+            face_shape,
+            face_geometry,
+            basis_on_u,
+        )? {
+            Some(direction) => direction,
+            None => continue,
+        };
+        let basis = match select_swept_face_basis_curve(
+            candidates,
+            face_geometry,
+            SweptBasisSelection::Extrusion { direction },
+        ) {
+            Some(basis) => basis,
+            None => continue,
+        };
+        let payload = crate::ExtrusionSurfacePayload {
+            direction,
+            basis_curve_kind: basis.geometry.kind,
+        };
 
-    Ok(PortedSweptSurface::Extrusion {
-        payload,
-        basis_curve: basis.curve,
-        basis_geometry: basis.geometry,
-    })
+        if validates_extrusion_face_surface(
+            context,
+            face_shape,
+            face_geometry,
+            orientation,
+            payload,
+            basis.curve,
+            basis.geometry,
+        )? {
+            return Ok(Some(PortedSweptSurface::Extrusion {
+                payload,
+                basis_curve: basis.curve,
+                basis_geometry: basis.geometry,
+            }));
+        }
+    }
+
+    Ok(None)
 }
 
 fn ported_revolution_face_surface(
@@ -187,50 +227,67 @@ fn ported_revolution_face_surface(
     face_shape: &Shape,
     face_geometry: FaceGeometry,
     topology: &SingleFaceTopology,
-) -> Result<PortedSweptSurface, Error> {
-    let payload = context.face_revolution_payload_occt(face_shape)?;
-    let basis = select_swept_face_basis(
-        topology,
-        face_geometry,
-        payload.basis_curve_kind,
-        SweptBasisSelection::Revolution {
-            axis_origin: payload.axis_origin,
-            axis_direction: payload.axis_direction,
-        },
-        "revolution",
-    )?;
+) -> Result<Option<PortedSweptSurface>, Error> {
+    let orientation = context.shape_orientation(face_shape)?;
+    for basis_kind in SUPPORTED_SWEPT_BASIS_KINDS {
+        let candidates = match face_curve_candidates(
+            &topology.loops,
+            &topology.wires,
+            &topology.edges,
+            basis_kind,
+        ) {
+            Some(candidates) => candidates,
+            None => continue,
+        };
+        let basis_geometry = match candidates.first() {
+            Some(candidate) => candidate.geometry,
+            None => continue,
+        };
+        let basis_on_u = basis_parameter_on_u(face_geometry, basis_geometry);
+        let (axis_origin, axis_direction) = match revolution_axis_from_face_samples(
+            context,
+            face_shape,
+            face_geometry,
+            basis_on_u,
+        )? {
+            Some(axis) => axis,
+            None => continue,
+        };
+        let basis = match select_swept_face_basis_curve(
+            candidates,
+            face_geometry,
+            SweptBasisSelection::Revolution {
+                axis_origin,
+                axis_direction,
+            },
+        ) {
+            Some(basis) => basis,
+            None => continue,
+        };
+        let payload = crate::RevolutionSurfacePayload {
+            axis_origin,
+            axis_direction,
+            basis_curve_kind: basis.geometry.kind,
+        };
 
-    Ok(PortedSweptSurface::Revolution {
-        payload,
-        basis_curve: basis.curve,
-        basis_geometry: basis.geometry,
-    })
-}
+        if validates_revolution_face_surface(
+            context,
+            face_shape,
+            face_geometry,
+            orientation,
+            payload,
+            basis.curve,
+            basis.geometry,
+        )? {
+            return Ok(Some(PortedSweptSurface::Revolution {
+                payload,
+                basis_curve: basis.curve,
+                basis_geometry: basis.geometry,
+            }));
+        }
+    }
 
-fn select_swept_face_basis(
-    topology: &SingleFaceTopology,
-    face_geometry: FaceGeometry,
-    basis_curve_kind: crate::CurveKind,
-    selection: SweptBasisSelection,
-    face_kind: &'static str,
-) -> Result<FaceCurveCandidate, Error> {
-    let candidates = face_curve_candidates(
-        &topology.loops,
-        &topology.wires,
-        &topology.edges,
-        basis_curve_kind,
-    )
-    .ok_or_else(|| {
-        Error::new(format!(
-            "failed to identify a Rust-owned basis curve for {face_kind} face"
-        ))
-    })?;
-
-    select_swept_face_basis_curve(candidates, face_geometry, selection).ok_or_else(|| {
-        Error::new(format!(
-            "failed to select a Rust-owned basis curve for {face_kind} face"
-        ))
-    })
+    Ok(None)
 }
 
 #[derive(Clone, Copy)]
@@ -244,6 +301,321 @@ pub(super) enum SweptBasisSelection {
     },
 }
 
+const SUPPORTED_SWEPT_BASIS_KINDS: [crate::CurveKind; 3] = [
+    crate::CurveKind::Line,
+    crate::CurveKind::Circle,
+    crate::CurveKind::Ellipse,
+];
+
+fn extrusion_direction_from_face_samples(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    basis_on_u: bool,
+) -> Result<Option<[f64; 3]>, Error> {
+    let (curve_start, curve_end) = curve_parameter_range(face_geometry, basis_on_u);
+    let curve_mid = 0.5 * (curve_start + curve_end);
+    let (sweep_start, sweep_end) = sweep_parameter_range(face_geometry, basis_on_u);
+    let sweep_span = sweep_end - sweep_start;
+    if sweep_span.abs() <= 1.0e-12 {
+        return Ok(None);
+    }
+
+    let derivative_at_curve = |curve_parameter| -> Result<[f64; 3], Error> {
+        let start = context.face_sample_occt(
+            face_shape,
+            swept_uv(basis_on_u, curve_parameter, sweep_start),
+        )?;
+        let end = context
+            .face_sample_occt(face_shape, swept_uv(basis_on_u, curve_parameter, sweep_end))?;
+        Ok(scale3(
+            subtract3(end.position, start.position),
+            1.0 / sweep_span,
+        ))
+    };
+
+    let direction0 = normalize3(derivative_at_curve(curve_start)?);
+    let direction1 = normalize3(derivative_at_curve(curve_mid)?);
+    if norm3(direction0) <= 1.0e-12 || norm3(direction1) <= 1.0e-12 {
+        return Ok(None);
+    }
+    if dot3(direction0, direction1) < 1.0 - 1.0e-7 {
+        return Ok(None);
+    }
+
+    let direction = normalize3(add3(direction0, direction1));
+    if norm3(direction) <= 1.0e-12 {
+        return Ok(None);
+    }
+    Ok(Some(direction))
+}
+
+fn revolution_axis_from_face_samples(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    basis_on_u: bool,
+) -> Result<Option<([f64; 3], [f64; 3])>, Error> {
+    let (curve_start, curve_end) = curve_parameter_range(face_geometry, basis_on_u);
+    let (sweep_start, sweep_end) = sweep_parameter_range(face_geometry, basis_on_u);
+    let sweep_parameters = trigonometric_curve_probe_parameters(sweep_start, sweep_end);
+    let sweep_parameters = match select_trigonometric_curve_parameters(sweep_parameters) {
+        Some(parameters) => parameters,
+        None => return Ok(None),
+    };
+
+    let mut axis: Option<([f64; 3], [f64; 3])> = None;
+    for fraction in [0.0, 0.33, 0.67, 1.0] {
+        let curve_parameter = curve_start + (curve_end - curve_start) * fraction;
+        let (origin, mut direction) = match revolution_axis_components_at_curve_parameter(
+            context,
+            face_shape,
+            basis_on_u,
+            curve_parameter,
+            sweep_parameters,
+        )? {
+            Some(axis) => axis,
+            None => continue,
+        };
+
+        if let Some((reference_origin, reference_direction)) = axis {
+            if dot3(reference_direction, direction) < 0.0 {
+                direction = scale3(direction, -1.0);
+            }
+            if dot3(reference_direction, direction) < 1.0 - 1.0e-7 {
+                return Ok(None);
+            }
+            let center_delta = subtract3(origin, reference_origin);
+            if norm3(center_delta) > 1.0e-8
+                && norm3(cross3(center_delta, reference_direction)) > 1.0e-6 * norm3(center_delta)
+            {
+                return Ok(None);
+            }
+        } else {
+            axis = Some((origin, direction));
+        }
+    }
+
+    Ok(axis.map(|(origin, direction)| (canonical_axis_origin(origin, direction), direction)))
+}
+
+fn revolution_axis_components_at_curve_parameter(
+    context: &Context,
+    face_shape: &Shape,
+    basis_on_u: bool,
+    curve_parameter: f64,
+    sweep_parameters: [f64; 3],
+) -> Result<Option<([f64; 3], [f64; 3])>, Error> {
+    let positions = [
+        context
+            .face_sample_occt(
+                face_shape,
+                swept_uv(basis_on_u, curve_parameter, sweep_parameters[0]),
+            )?
+            .position,
+        context
+            .face_sample_occt(
+                face_shape,
+                swept_uv(basis_on_u, curve_parameter, sweep_parameters[1]),
+            )?
+            .position,
+        context
+            .face_sample_occt(
+                face_shape,
+                swept_uv(basis_on_u, curve_parameter, sweep_parameters[2]),
+            )?
+            .position,
+    ];
+    let (center, x_component, y_component) =
+        match solve_trigonometric_curve_components(sweep_parameters, positions) {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+    let axis_direction = normalize3(cross3(x_component, y_component));
+    if norm3(axis_direction) <= 1.0e-12
+        || norm3(x_component) <= 1.0e-12
+        || norm3(y_component) <= 1.0e-12
+    {
+        return Ok(None);
+    }
+
+    Ok(Some((center, axis_direction)))
+}
+
+fn canonical_axis_origin(axis_point: [f64; 3], axis_direction: [f64; 3]) -> [f64; 3] {
+    subtract3(
+        axis_point,
+        scale3(axis_direction, dot3(axis_point, axis_direction)),
+    )
+}
+
+fn validates_extrusion_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    orientation: Orientation,
+    payload: crate::ExtrusionSurfacePayload,
+    basis_curve: PortedCurve,
+    basis_geometry: EdgeGeometry,
+) -> Result<bool, Error> {
+    for uv_t in SWEPT_VALIDATION_UVS {
+        let expected = sample_extrusion_surface_normalized(
+            basis_curve,
+            face_geometry,
+            basis_geometry,
+            uv_t,
+            payload.direction,
+            orientation,
+        );
+        let actual = context.face_sample_normalized_occt(face_shape, uv_t)?;
+        if !approx_points_eq(expected.position, actual.position, 1.0e-6)
+            || !approx_points_eq(expected.normal, actual.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn validates_revolution_face_surface(
+    context: &Context,
+    face_shape: &Shape,
+    face_geometry: FaceGeometry,
+    orientation: Orientation,
+    payload: crate::RevolutionSurfacePayload,
+    basis_curve: PortedCurve,
+    basis_geometry: EdgeGeometry,
+) -> Result<bool, Error> {
+    for uv_t in SWEPT_VALIDATION_UVS {
+        let expected = sample_revolution_surface_normalized(
+            basis_curve,
+            face_geometry,
+            basis_geometry,
+            uv_t,
+            payload.axis_origin,
+            payload.axis_direction,
+            orientation,
+        );
+        let actual = context.face_sample_normalized_occt(face_shape, uv_t)?;
+        if !approx_points_eq(expected.position, actual.position, 1.0e-6)
+            || !approx_points_eq(expected.normal, actual.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+const SWEPT_VALIDATION_UVS: [[f64; 2]; 5] = [
+    [0.0, 0.0],
+    [0.25, 0.75],
+    [0.5, 0.5],
+    [0.75, 0.25],
+    [1.0, 1.0],
+];
+
+fn curve_parameter_range(face_geometry: FaceGeometry, basis_on_u: bool) -> (f64, f64) {
+    if basis_on_u {
+        (face_geometry.u_min, face_geometry.u_max)
+    } else {
+        (face_geometry.v_min, face_geometry.v_max)
+    }
+}
+
+fn sweep_parameter_range(face_geometry: FaceGeometry, basis_on_u: bool) -> (f64, f64) {
+    if basis_on_u {
+        (face_geometry.v_min, face_geometry.v_max)
+    } else {
+        (face_geometry.u_min, face_geometry.u_max)
+    }
+}
+
+fn swept_uv(basis_on_u: bool, curve_parameter: f64, sweep_parameter: f64) -> [f64; 2] {
+    if basis_on_u {
+        [curve_parameter, sweep_parameter]
+    } else {
+        [sweep_parameter, curve_parameter]
+    }
+}
+
+fn trigonometric_curve_probe_parameters(start: f64, end: f64) -> [f64; 5] {
+    [0.0, 0.25, 0.5, 0.75, 1.0].map(|fraction| start + (end - start) * fraction)
+}
+
+fn select_trigonometric_curve_parameters(candidates: [f64; 5]) -> Option<[f64; 3]> {
+    let mut best: Option<([f64; 3], f64)> = None;
+    for i in 0..candidates.len() {
+        for j in (i + 1)..candidates.len() {
+            for k in (j + 1)..candidates.len() {
+                let selection = [candidates[i], candidates[j], candidates[k]];
+                let determinant = trigonometric_curve_determinant(selection).abs();
+                if best
+                    .as_ref()
+                    .map(|(_, best_determinant)| determinant > *best_determinant)
+                    .unwrap_or(true)
+                {
+                    best = Some((selection, determinant));
+                }
+            }
+        }
+    }
+
+    best.filter(|(_, determinant)| *determinant > 1.0e-6)
+        .map(|(selection, _)| selection)
+}
+
+fn solve_trigonometric_curve_components(
+    parameters: [f64; 3],
+    positions: [[f64; 3]; 3],
+) -> Option<([f64; 3], [f64; 3], [f64; 3])> {
+    let determinant = trigonometric_curve_determinant(parameters);
+    if determinant.abs() <= 1.0e-12 {
+        return None;
+    }
+
+    let cosines = parameters.map(f64::cos);
+    let sines = parameters.map(f64::sin);
+    let delta10 = subtract3(positions[1], positions[0]);
+    let delta20 = subtract3(positions[2], positions[0]);
+    let x_component = scale3(
+        subtract3(
+            scale3(delta10, sines[2] - sines[0]),
+            scale3(delta20, sines[1] - sines[0]),
+        ),
+        1.0 / determinant,
+    );
+    let y_component = scale3(
+        add3(
+            scale3(delta10, cosines[0] - cosines[2]),
+            scale3(delta20, cosines[1] - cosines[0]),
+        ),
+        1.0 / determinant,
+    );
+    let center = subtract3(
+        positions[0],
+        add3(
+            scale3(x_component, cosines[0]),
+            scale3(y_component, sines[0]),
+        ),
+    );
+    Some((center, x_component, y_component))
+}
+
+fn trigonometric_curve_determinant(parameters: [f64; 3]) -> f64 {
+    let cosines = parameters.map(f64::cos);
+    let sines = parameters.map(f64::sin);
+    (cosines[1] - cosines[0]) * (sines[2] - sines[0])
+        - (cosines[2] - cosines[0]) * (sines[1] - sines[0])
+}
+
+fn approx_points_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
+    lhs.iter()
+        .zip(rhs)
+        .all(|(lhs, rhs)| (*lhs - rhs).abs() <= tolerance)
+}
+
 pub(super) fn basis_parameter_on_u(
     face_geometry: FaceGeometry,
     basis_geometry: EdgeGeometry,
@@ -251,7 +623,16 @@ pub(super) fn basis_parameter_on_u(
     let basis_span = (basis_geometry.end_parameter - basis_geometry.start_parameter).abs();
     let u_span = (face_geometry.u_max - face_geometry.u_min).abs();
     let v_span = (face_geometry.v_max - face_geometry.v_min).abs();
-    (u_span - basis_span).abs() <= (v_span - basis_span).abs()
+    let u_delta = (u_span - basis_span).abs();
+    let v_delta = (v_span - basis_span).abs();
+    if (u_delta - v_delta).abs() <= 1.0e-9 {
+        return match face_geometry.kind {
+            crate::SurfaceKind::Revolution => false,
+            crate::SurfaceKind::Extrusion => true,
+            _ => true,
+        };
+    }
+    u_delta < v_delta
 }
 
 fn radial_direction(

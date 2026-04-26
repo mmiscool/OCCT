@@ -290,7 +290,14 @@ fn basis_parameter_on_u(face_geometry: FaceGeometry, basis_geometry: EdgeGeometr
     let v_span = (face_geometry.v_max - face_geometry.v_min).abs();
     let u_delta = (u_span - basis_span).abs();
     let v_delta = (v_span - basis_span).abs();
-    u_delta <= v_delta
+    if (u_delta - v_delta).abs() <= 1.0e-9 {
+        return match face_geometry.kind {
+            SurfaceKind::Revolution => false,
+            SurfaceKind::Extrusion => true,
+            _ => true,
+        };
+    }
+    u_delta < v_delta
 }
 
 impl PortedSurface {

@@ -93,6 +93,56 @@ fn assert_vec3_close(
     Ok(())
 }
 
+fn assert_revolution_payload_close(
+    lhs: lean_occt::RevolutionSurfacePayload,
+    rhs: lean_occt::RevolutionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.axis_origin,
+        rhs.axis_origin,
+        tolerance,
+        &format!("{label} axis_origin"),
+    )?;
+    assert_vec3_close(
+        lhs.axis_direction,
+        rhs.axis_direction,
+        tolerance,
+        &format!("{label} axis_direction"),
+    )?;
+    if lhs.basis_curve_kind != rhs.basis_curve_kind {
+        return Err(std::io::Error::other(format!(
+            "{label} basis_curve_kind mismatch: lhs={:?} rhs={:?}",
+            lhs.basis_curve_kind, rhs.basis_curve_kind
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn assert_extrusion_payload_close(
+    lhs: lean_occt::ExtrusionSurfacePayload,
+    rhs: lean_occt::ExtrusionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.direction,
+        rhs.direction,
+        tolerance,
+        &format!("{label} direction"),
+    )?;
+    if lhs.basis_curve_kind != rhs.basis_curve_kind {
+        return Err(std::io::Error::other(format!(
+            "{label} basis_curve_kind mismatch: lhs={:?} rhs={:?}",
+            lhs.basis_curve_kind, rhs.basis_curve_kind
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 fn assert_edge_geometry_close(
     lhs: lean_occt::EdgeGeometry,
     rhs: lean_occt::EdgeGeometry,
@@ -203,13 +253,12 @@ fn assert_ported_face_surface_matches_public(
                         basis_geometry: expected_basis_geometry,
                     }),
                 ) => {
-                    if actual_payload.basis_curve_kind != expected_payload.basis_curve_kind {
-                        return Err(std::io::Error::other(format!(
-                            "{label} extrusion basis kind mismatch: actual={:?} expected={:?}",
-                            actual_payload.basis_curve_kind, expected_payload.basis_curve_kind
-                        ))
-                        .into());
-                    }
+                    assert_extrusion_payload_close(
+                        actual_payload,
+                        expected_payload,
+                        1.0e-8,
+                        &format!("{label} extrusion payload"),
+                    )?;
                     assert_same_variant(&actual_curve, &expected_curve, label)?;
                     assert_edge_geometry_close(
                         actual_basis_geometry,
@@ -230,13 +279,12 @@ fn assert_ported_face_surface_matches_public(
                         basis_geometry: expected_basis_geometry,
                     }),
                 ) => {
-                    if actual_payload.basis_curve_kind != expected_payload.basis_curve_kind {
-                        return Err(std::io::Error::other(format!(
-                            "{label} revolution basis kind mismatch: actual={:?} expected={:?}",
-                            actual_payload.basis_curve_kind, expected_payload.basis_curve_kind
-                        ))
-                        .into());
-                    }
+                    assert_revolution_payload_close(
+                        actual_payload,
+                        expected_payload,
+                        1.0e-8,
+                        &format!("{label} revolution payload"),
+                    )?;
                     assert_same_variant(&actual_curve, &expected_curve, label)?;
                     assert_edge_geometry_close(
                         actual_basis_geometry,
@@ -1940,10 +1988,16 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
     let summary = kernel.summarize(&revolved)?;
     let occt_summary = kernel.context().describe_shape_occt(&revolved)?;
     let brep = kernel.brep(&revolved)?;
+    let face_shapes = kernel.context().subshapes(&revolved, ShapeKind::Face)?;
     let expected_rust_volume = 35_530.575_843_921_69;
 
     assert_eq!(summary.primary_kind, ShapeKind::Solid);
     assert_eq!(summary.solid_count, 1);
+    assert_eq!(
+        face_shapes.len(),
+        brep.faces.len(),
+        "swept revolution face inventory mismatch"
+    );
     assert!(brep
         .faces
         .iter()
@@ -1952,28 +2006,194 @@ fn ported_brep_summarizes_swept_revolution_solids_in_rust() -> Result<(), Box<dy
         .faces
         .iter()
         .any(|face| face.geometry.kind == SurfaceKind::Revolution));
-    let extrusion_face = brep
+    let extrusion_index = brep
         .faces
         .iter()
-        .find(|face| face.geometry.kind == SurfaceKind::Extrusion)
+        .position(|face| face.geometry.kind == SurfaceKind::Extrusion)
         .ok_or_else(|| std::io::Error::other("expected an extrusion face in the revolved solid"))?;
-    assert!(matches!(
-        extrusion_face.ported_face_surface,
-        Some(PortedFaceSurface::Swept(
-            PortedSweptSurface::Extrusion { .. }
-        ))
-    ));
-    let revolution_face = brep
+    let extrusion_face = &brep.faces[extrusion_index];
+    let extrusion_face_shape = &face_shapes[extrusion_index];
+    let extrusion_surface = extrusion_face
+        .ported_face_surface
+        .ok_or_else(|| std::io::Error::other("expected a ported extrusion descriptor"))?;
+    let (extrusion_payload, extrusion_basis_geometry) = match extrusion_surface {
+        PortedFaceSurface::Swept(PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve: PortedCurve::Ellipse(_),
+            basis_geometry,
+        }) => (payload, basis_geometry),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust-owned ellipse extrusion descriptor, got {other:?}"
+            ))
+            .into())
+        }
+    };
+    assert_eq!(
+        extrusion_payload.basis_curve_kind, extrusion_basis_geometry.kind,
+        "extrusion payload should record the selected Rust topology basis kind"
+    );
+    assert_extrusion_payload_close(
+        extrusion_payload,
+        kernel
+            .context()
+            .face_extrusion_payload(extrusion_face_shape)?,
+        1.0e-8,
+        "swept revolution brep extrusion public payload",
+    )?;
+    assert_extrusion_payload_close(
+        extrusion_payload,
+        kernel
+            .context()
+            .face_extrusion_payload_occt(extrusion_face_shape)?,
+        1.0e-8,
+        "swept revolution brep extrusion occt payload",
+    )?;
+    assert_ported_face_surface_matches_public(
+        "swept revolution brep extrusion descriptor",
+        Some(extrusion_surface),
+        kernel
+            .context()
+            .ported_face_surface_descriptor(extrusion_face_shape)?,
+        extrusion_face.geometry,
+        kernel.context().face_geometry(extrusion_face_shape)?,
+        extrusion_face.orientation,
+    )?;
+    let uv_t = [0.37, 0.61];
+    let extrusion_sample = extrusion_surface.sample_normalized_with_orientation(
+        extrusion_face.geometry,
+        uv_t,
+        extrusion_face.orientation,
+    );
+    let extrusion_occt_sample = kernel
+        .context()
+        .face_sample_normalized_occt(extrusion_face_shape, uv_t)?;
+    assert_vec3_close(
+        extrusion_sample.position,
+        extrusion_occt_sample.position,
+        1.0e-6,
+        "swept revolution brep extrusion sample position",
+    )?;
+    assert_vec3_close(
+        extrusion_sample.normal,
+        extrusion_occt_sample.normal,
+        1.0e-6,
+        "swept revolution brep extrusion sample normal",
+    )?;
+    let extrusion_public_area = kernel
+        .context()
+        .ported_face_area(extrusion_face_shape)?
+        .ok_or_else(|| std::io::Error::other("expected ported extrusion face area"))?;
+    let extrusion_occt_area = kernel
+        .context()
+        .describe_shape_occt(extrusion_face_shape)?
+        .surface_area;
+    assert!(
+        (extrusion_face.area - extrusion_public_area).abs() <= 1.0e-8,
+        "swept revolution brep extrusion area drifted from public ported area: brep={} public={}",
+        extrusion_face.area,
+        extrusion_public_area
+    );
+    assert!(
+        (extrusion_face.area - extrusion_occt_area).abs() <= 2.0e-1,
+        "swept revolution brep extrusion area drifted from OCCT: brep={} occt={}",
+        extrusion_face.area,
+        extrusion_occt_area
+    );
+
+    let revolution_index = brep
         .faces
         .iter()
-        .find(|face| face.geometry.kind == SurfaceKind::Revolution)
+        .position(|face| face.geometry.kind == SurfaceKind::Revolution)
         .ok_or_else(|| std::io::Error::other("expected a revolution face in the revolved solid"))?;
-    assert!(matches!(
-        revolution_face.ported_face_surface,
-        Some(PortedFaceSurface::Swept(
-            PortedSweptSurface::Revolution { .. }
-        ))
-    ));
+    let revolution_face = &brep.faces[revolution_index];
+    let revolution_face_shape = &face_shapes[revolution_index];
+    let revolution_surface = revolution_face
+        .ported_face_surface
+        .ok_or_else(|| std::io::Error::other("expected a ported revolution descriptor"))?;
+    let (revolution_payload, revolution_basis_geometry) = match revolution_surface {
+        PortedFaceSurface::Swept(PortedSweptSurface::Revolution {
+            payload,
+            basis_curve: PortedCurve::Ellipse(_),
+            basis_geometry,
+        }) => (payload, basis_geometry),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust-owned ellipse revolution descriptor, got {other:?}"
+            ))
+            .into())
+        }
+    };
+    assert_eq!(
+        revolution_payload.basis_curve_kind, revolution_basis_geometry.kind,
+        "revolution payload should record the selected Rust topology basis kind"
+    );
+    assert_revolution_payload_close(
+        revolution_payload,
+        kernel
+            .context()
+            .face_revolution_payload(revolution_face_shape)?,
+        1.0e-8,
+        "swept revolution brep revolution public payload",
+    )?;
+    assert_revolution_payload_close(
+        revolution_payload,
+        kernel
+            .context()
+            .face_revolution_payload_occt(revolution_face_shape)?,
+        1.0e-8,
+        "swept revolution brep revolution occt payload",
+    )?;
+    assert_ported_face_surface_matches_public(
+        "swept revolution brep revolution descriptor",
+        Some(revolution_surface),
+        kernel
+            .context()
+            .ported_face_surface_descriptor(revolution_face_shape)?,
+        revolution_face.geometry,
+        kernel.context().face_geometry(revolution_face_shape)?,
+        revolution_face.orientation,
+    )?;
+    let revolution_sample = revolution_surface.sample_normalized_with_orientation(
+        revolution_face.geometry,
+        uv_t,
+        revolution_face.orientation,
+    );
+    let revolution_occt_sample = kernel
+        .context()
+        .face_sample_normalized_occt(revolution_face_shape, uv_t)?;
+    assert_vec3_close(
+        revolution_sample.position,
+        revolution_occt_sample.position,
+        1.0e-6,
+        "swept revolution brep revolution sample position",
+    )?;
+    assert_vec3_close(
+        revolution_sample.normal,
+        revolution_occt_sample.normal,
+        1.0e-6,
+        "swept revolution brep revolution sample normal",
+    )?;
+    let revolution_public_area = kernel
+        .context()
+        .ported_face_area(revolution_face_shape)?
+        .ok_or_else(|| std::io::Error::other("expected ported revolution face area"))?;
+    let revolution_occt_area = kernel
+        .context()
+        .describe_shape_occt(revolution_face_shape)?
+        .surface_area;
+    assert!(
+        (revolution_face.area - revolution_public_area).abs() <= 1.0e-8,
+        "swept revolution brep revolution area drifted from public ported area: brep={} public={}",
+        revolution_face.area,
+        revolution_public_area
+    );
+    assert!(
+        (revolution_face.area - revolution_occt_area).abs() <= 2.0e-1,
+        "swept revolution brep revolution area drifted from OCCT: brep={} occt={}",
+        revolution_face.area,
+        revolution_occt_area
+    );
     assert_eq!(
         brep.summary_bbox_source(),
         SummaryBboxSource::PortedBrep,

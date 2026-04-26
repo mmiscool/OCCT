@@ -579,8 +579,8 @@ pub(super) fn analytic_ported_swept_face_volume(
                 revolution_surface_dv(midpoint_position, payload.axis_origin, axis_direction);
             let sign = oriented_surface_sign(face, midpoint_position, midpoint_du, midpoint_dv);
 
-            Some(
-                sign * signed_scalar_integral(
+            let signed_volume = sign
+                * signed_scalar_integral(
                     basis_geometry.start_parameter,
                     basis_geometry.end_parameter,
                     |parameter| {
@@ -605,8 +605,8 @@ pub(super) fn analytic_ported_swept_face_volume(
                             dot3(position, cross3(du, dv)) / 3.0
                         })
                     },
-                ),
-            )
+                );
+            Some(signed_volume.abs())
         }
     }
 }

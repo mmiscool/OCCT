@@ -35,7 +35,8 @@ use self::topology::{load_ported_topology, ported_topology_snapshot, PreparedShe
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
-    planar_wire_signed_area, revolution_swept_area, PortedFaceSurface, PortedOffsetBasisSurface,
+    planar_wire_signed_area, revolution_swept_area, sample_extrusion_surface_normalized,
+    sample_revolution_surface_normalized, PortedFaceSurface, PortedOffsetBasisSurface,
     PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
