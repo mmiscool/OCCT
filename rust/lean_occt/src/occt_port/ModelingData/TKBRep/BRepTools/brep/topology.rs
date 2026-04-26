@@ -9,7 +9,8 @@ use super::wire_topology::{
 };
 use super::*;
 use crate::{
-    OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind, SweptSurfaceFaceMetadata,
+    AnalyticSurfaceFaceMetadata, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind,
+    SweptSurfaceFaceMetadata,
 };
 
 const OFFSET_METADATA_MATCH_UV_SAMPLES: [[f64; 2]; 4] =
@@ -178,6 +179,9 @@ fn load_root_topology_snapshot(
     let multi_face_offset_metadata = shape
         .multi_face_offset_result_metadata()
         .map(|metadata| metadata.to_vec());
+    let multi_face_analytic_metadata = shape
+        .multi_face_analytic_result_metadata()
+        .map(|metadata| metadata.to_vec());
     let multi_face_swept_metadata = shape
         .multi_face_swept_result_metadata()
         .map(|metadata| metadata.to_vec());
@@ -193,6 +197,12 @@ fn load_root_topology_snapshot(
             let shell_shape = match &multi_face_offset_metadata {
                 Some(metadata) => {
                     shell_shape.with_multi_face_offset_result_metadata(metadata.clone())
+                }
+                None => shell_shape,
+            };
+            let shell_shape = match &multi_face_analytic_metadata {
+                Some(metadata) => {
+                    shell_shape.with_multi_face_analytic_result_metadata(metadata.clone())
                 }
                 None => shell_shape,
             };
@@ -619,6 +629,10 @@ fn load_root_shell_topology_snapshot(
         Some(metadata) => shell_shape.with_multi_face_offset_result_metadata(metadata.to_vec()),
         None => shell_shape,
     };
+    let shell_shape = match shape.multi_face_analytic_result_metadata() {
+        Some(metadata) => shell_shape.with_multi_face_analytic_result_metadata(metadata.to_vec()),
+        None => shell_shape,
+    };
     let shell_shape = match shape.multi_face_swept_result_metadata() {
         Some(metadata) => shell_shape.with_multi_face_swept_result_metadata(metadata.to_vec()),
         None => shell_shape,
@@ -752,6 +766,10 @@ fn load_root_solid_topology_snapshot(
         Some(metadata) => solid_shape.with_multi_face_offset_result_metadata(metadata.to_vec()),
         None => solid_shape,
     };
+    let solid_shape = match shape.multi_face_analytic_result_metadata() {
+        Some(metadata) => solid_shape.with_multi_face_analytic_result_metadata(metadata.to_vec()),
+        None => solid_shape,
+    };
     let face_shapes = match context.root_solid_face_shapes_occt(&solid_shape) {
         Ok(face_shapes) => attach_offset_result_face_metadata(context, shape, face_shapes)?,
         Err(_) => return Ok(None),
@@ -836,10 +854,19 @@ fn load_root_solid_topology_snapshot(
     let multi_face_offset_metadata = shape
         .multi_face_offset_result_metadata()
         .map(|metadata| metadata.to_vec());
+    let multi_face_analytic_metadata = shape
+        .multi_face_analytic_result_metadata()
+        .map(|metadata| metadata.to_vec());
     let mut prepared_shell_shapes = Vec::with_capacity(root_solid_shell_shapes.len());
     for shell_shape in root_solid_shell_shapes {
         let shell_shape = match &multi_face_offset_metadata {
             Some(metadata) => shell_shape.with_multi_face_offset_result_metadata(metadata.clone()),
+            None => shell_shape,
+        };
+        let shell_shape = match &multi_face_analytic_metadata {
+            Some(metadata) => {
+                shell_shape.with_multi_face_analytic_result_metadata(metadata.clone())
+            }
             None => shell_shape,
         };
         let shell_vertex_shapes = match context.root_shell_vertex_shapes_occt(&shell_shape) {
@@ -1096,10 +1123,19 @@ fn load_root_assembly_topology_snapshot(
     let multi_face_offset_metadata = shape
         .multi_face_offset_result_metadata()
         .map(|metadata| metadata.to_vec());
+    let multi_face_analytic_metadata = shape
+        .multi_face_analytic_result_metadata()
+        .map(|metadata| metadata.to_vec());
     let mut prepared_shell_shapes = Vec::with_capacity(root_assembly_shell_shapes.len());
     for shell_shape in root_assembly_shell_shapes {
         let shell_shape = match &multi_face_offset_metadata {
             Some(metadata) => shell_shape.with_multi_face_offset_result_metadata(metadata.clone()),
+            None => shell_shape,
+        };
+        let shell_shape = match &multi_face_analytic_metadata {
+            Some(metadata) => {
+                shell_shape.with_multi_face_analytic_result_metadata(metadata.clone())
+            }
             None => shell_shape,
         };
         let shell_vertex_shapes = match context.root_shell_vertex_shapes_occt(&shell_shape) {
@@ -1373,6 +1409,7 @@ fn attach_offset_result_face_metadata(
     shape: &Shape,
     face_shapes: Vec<Shape>,
 ) -> Result<Vec<Shape>, Error> {
+    let face_shapes = attach_analytic_result_face_metadata(context, shape, face_shapes)?;
     let face_shapes = attach_swept_result_face_metadata(context, shape, face_shapes)?;
 
     if let Some(metadata) = shape.single_face_offset_result_metadata() {
@@ -1385,6 +1422,22 @@ fn attach_offset_result_face_metadata(
 
     if let Some(metadata) = shape.offset_surface_face_metadata() {
         return attach_single_face_offset_metadata(context, metadata, face_shapes);
+    }
+
+    Ok(face_shapes)
+}
+
+fn attach_analytic_result_face_metadata(
+    context: &Context,
+    shape: &Shape,
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
+    if let Some(metadata) = shape.multi_face_analytic_result_metadata() {
+        return attach_multi_face_analytic_metadata(context, metadata, face_shapes);
+    }
+
+    if let Some(metadata) = shape.analytic_surface_face_metadata() {
+        return attach_single_face_analytic_metadata(context, metadata, face_shapes);
     }
 
     Ok(face_shapes)
@@ -1408,6 +1461,62 @@ fn attach_swept_result_face_metadata(
     }
 
     Ok(face_shapes)
+}
+
+fn attach_single_face_analytic_metadata(
+    context: &Context,
+    metadata: AnalyticSurfaceFaceMetadata,
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
+    if face_shapes.len() != 1 {
+        return Ok(face_shapes);
+    }
+    let mut face_shapes = face_shapes;
+    let face_shape = face_shapes
+        .pop()
+        .expect("length was checked before popping single analytic face");
+    match context.ported_analytic_face_geometry_from_metadata(&face_shape, metadata) {
+        Ok(Some(_)) => Ok(vec![
+            face_shape.with_analytic_surface_face_metadata(metadata)
+        ]),
+        Ok(None) | Err(_) => Ok(vec![face_shape]),
+    }
+}
+
+fn attach_multi_face_analytic_metadata(
+    context: &Context,
+    metadata: &[AnalyticSurfaceFaceMetadata],
+    face_shapes: Vec<Shape>,
+) -> Result<Vec<Shape>, Error> {
+    if metadata.is_empty() {
+        return Ok(face_shapes);
+    }
+
+    face_shapes
+        .into_iter()
+        .map(|face_shape| {
+            let mut matched = None;
+            let mut ambiguous = false;
+            for candidate in metadata.iter().copied() {
+                match context.ported_analytic_face_geometry_from_metadata(&face_shape, candidate) {
+                    Ok(Some(_)) => {
+                        if matched.is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                        matched = Some(candidate);
+                    }
+                    Ok(None) | Err(_) => {}
+                }
+            }
+
+            if let Some(metadata) = matched.filter(|_| !ambiguous) {
+                Ok(face_shape.with_analytic_surface_face_metadata(metadata))
+            } else {
+                Ok(face_shape)
+            }
+        })
+        .collect()
 }
 
 fn attach_single_face_swept_metadata(

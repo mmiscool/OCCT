@@ -2337,6 +2337,97 @@ fn ported_face_surface_descriptors_cover_supported_faces() -> Result<(), Box<dyn
 }
 
 #[test]
+fn ported_box_plane_faces_use_rust_analytic_seed_metadata() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let context = kernel.context();
+
+    let box_shape = kernel.make_box(BoxParams {
+        origin: [-11.0, -7.0, 3.0],
+        size: [23.0, 31.0, 43.0],
+    })?;
+    assert_eq!(box_shape.rust_multi_face_analytic_source_count(), Some(3));
+
+    let faces = context.subshapes(&box_shape, ShapeKind::Face)?;
+    assert_eq!(faces.len(), 6);
+
+    for (face_index, face) in faces.iter().enumerate() {
+        assert!(
+            face.has_rust_analytic_surface_face_metadata(),
+            "box face {face_index} should carry Rust analytic seed metadata"
+        );
+
+        let geometry = context.face_geometry(face)?;
+        let ported_geometry = context
+            .ported_face_geometry(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust box plane geometry"))?;
+        let occt_geometry = context.face_geometry_occt(face)?;
+        assert_eq!(geometry.kind, SurfaceKind::Plane);
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("box face {face_index} ported geometry"),
+        )?;
+        assert_face_geometry_close(
+            ported_geometry,
+            occt_geometry,
+            1.0e-12,
+            &format!("box face {face_index} OCCT geometry"),
+        )?;
+
+        let descriptor = context
+            .ported_face_surface_descriptor(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust box plane descriptor"))?;
+        assert!(
+            matches!(
+                descriptor,
+                PortedFaceSurface::Analytic(PortedSurface::Plane(_))
+            ),
+            "box face {face_index} should classify as a Rust plane descriptor"
+        );
+
+        let orientation = context.shape_orientation(face)?;
+        for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+            let rust_sample =
+                descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+            let context_sample = context
+                .ported_face_sample_normalized(face, uv_t)?
+                .ok_or_else(|| std::io::Error::other("expected Rust box plane sample"))?;
+            let occt_sample = context.face_sample_normalized_occt(face, uv_t)?;
+
+            assert_vec3_close(
+                rust_sample.position,
+                occt_sample.position,
+                1.0e-6,
+                &format!("box face {face_index} descriptor sample position"),
+            )?;
+            assert_vec3_close(
+                rust_sample.normal,
+                occt_sample.normal,
+                1.0e-6,
+                &format!("box face {face_index} descriptor sample normal"),
+            )?;
+            assert_vec3_close(
+                context_sample.position,
+                rust_sample.position,
+                1.0e-12,
+                &format!("box face {face_index} context sample position"),
+            )?;
+            assert_vec3_close(
+                context_sample.normal,
+                rust_sample.normal,
+                1.0e-12,
+                &format!("box face {face_index} context sample normal"),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;
@@ -3979,7 +4070,7 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
 }
 
 #[test]
-fn ported_face_geometry_classifies_swept_before_raw_geometry() {
+fn ported_face_geometry_classifies_constructor_metadata_before_raw_geometry() {
     let source = include_str!("../src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs");
     let function = source
         .split("    pub fn ported_face_geometry")
@@ -3992,15 +4083,26 @@ fn ported_face_geometry_classifies_swept_before_raw_geometry() {
         function.contains("ported_swept_surface_from_metadata_face_geometry(self, shape)?"),
         "constructor-owned swept faces should use Rust metadata before raw UV bounds"
     );
-    let metadata_index = function
+    assert!(
+        function.contains("ported_analytic_surface_from_metadata_face_geometry(self, shape)?"),
+        "constructor-owned analytic faces should use Rust metadata before raw UV bounds"
+    );
+    let swept_metadata_index = function
         .find("ported_swept_surface_from_metadata_face_geometry(self, shape)?")
         .expect("swept metadata classifier should be present");
+    let analytic_metadata_index = function
+        .find("ported_analytic_surface_from_metadata_face_geometry(self, shape)?")
+        .expect("analytic metadata classifier should be present");
     let raw_bounds_index = function
         .find("let bounds = self.face_uv_bounds_occt(shape)?;")
         .expect("raw UV bounds fallback should be present");
     assert!(
-        metadata_index < raw_bounds_index,
+        swept_metadata_index < raw_bounds_index,
         "swept metadata classifier should run before raw UV bounds fallback"
+    );
+    assert!(
+        analytic_metadata_index < raw_bounds_index,
+        "analytic metadata classifier should run before raw UV bounds fallback"
     );
     assert!(
         function.contains("ported_swept_face_geometry_candidate(self, shape, bounds)?"),
@@ -4033,6 +4135,18 @@ fn ported_face_geometry_classifies_swept_before_raw_geometry() {
     assert!(
         !swept_metadata_helper.contains("face_uv_bounds_occt"),
         "swept metadata helper must not call the raw UV bounds seed"
+    );
+
+    let analytic_metadata_helper = source
+        .split("fn ported_analytic_surface_from_metadata_face_geometry")
+        .nth(1)
+        .expect("analytic metadata helper source should be present")
+        .split("fn ported_swept_face_geometry_candidate")
+        .next()
+        .expect("analytic metadata helper should end before generic swept candidate");
+    assert!(
+        !analytic_metadata_helper.contains("face_uv_bounds_occt"),
+        "analytic metadata helper must not call the raw UV bounds seed"
     );
 }
 

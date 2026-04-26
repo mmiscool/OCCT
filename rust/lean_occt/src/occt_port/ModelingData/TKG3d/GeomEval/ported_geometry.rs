@@ -15,11 +15,11 @@ use crate::brep::{
     ported_root_edge_geometry as ported_root_edge_geometry_value,
 };
 use crate::{
-    CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry,
-    EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample,
-    FaceUvBounds, LinePayload, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, Orientation,
-    PlanePayload, RevolutionSurfacePayload, Shape, ShapeKind, SpherePayload, SurfaceKind,
-    SweptSurfaceFaceMetadata, TorusPayload,
+    AnalyticSurfaceFaceMetadata, CirclePayload, ConePayload, Context, CurveKind, CylinderPayload,
+    EdgeEndpoints, EdgeGeometry, EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload,
+    FaceGeometry, FaceSample, FaceUvBounds, LinePayload, OffsetSurfaceFaceMetadata,
+    OffsetSurfacePayload, Orientation, PlanePayload, RevolutionSurfacePayload, Shape, ShapeKind,
+    SpherePayload, SurfaceKind, SweptSurfaceFaceMetadata, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -774,6 +774,9 @@ impl Context {
         if let Some(geometry) = ported_swept_surface_from_metadata_face_geometry(self, shape)? {
             return Ok(Some(geometry));
         }
+        if let Some(geometry) = ported_analytic_surface_from_metadata_face_geometry(self, shape)? {
+            return Ok(Some(geometry));
+        }
 
         let bounds = self.face_uv_bounds_occt(shape)?;
         for candidate_kind in ANALYTIC_SURFACE_KINDS {
@@ -962,6 +965,14 @@ impl Context {
     ) -> Result<Option<FaceGeometry>, Error> {
         ported_swept_face_geometry_from_metadata(self, shape, metadata)
     }
+
+    pub(crate) fn ported_analytic_face_geometry_from_metadata(
+        &self,
+        shape: &Shape,
+        metadata: AnalyticSurfaceFaceMetadata,
+    ) -> Result<Option<FaceGeometry>, Error> {
+        ported_analytic_face_geometry_from_metadata(self, shape, metadata)
+    }
 }
 
 pub(crate) fn ported_swept_face_surface_from_samples(
@@ -997,6 +1008,36 @@ fn ported_swept_face_geometry_from_metadata(
     }
     let geometry = ported_swept_face_geometry_from_surface(seed_geometry, surface);
     if ported_swept_surface_matches_occt_samples(context, shape, geometry, surface)? {
+        Ok(Some(geometry))
+    } else {
+        Ok(None)
+    }
+}
+
+fn ported_analytic_surface_from_metadata_face_geometry(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<FaceGeometry>, Error> {
+    let Some(metadata) = shape.analytic_surface_face_metadata() else {
+        return Ok(None);
+    };
+    ported_analytic_face_geometry_from_metadata(context, shape, metadata)
+}
+
+fn ported_analytic_face_geometry_from_metadata(
+    context: &Context,
+    shape: &Shape,
+    metadata: AnalyticSurfaceFaceMetadata,
+) -> Result<Option<FaceGeometry>, Error> {
+    let geometry = metadata.geometry_seed;
+    let Some(surface) = PortedSurface::from_context_with_ported_payloads(context, shape, geometry)?
+    else {
+        return Ok(None);
+    };
+    if ported_analytic_surface_kind(surface) != geometry.kind {
+        return Ok(None);
+    }
+    if ported_analytic_surface_matches_occt_samples(context, shape, geometry, surface)? {
         Ok(Some(geometry))
     } else {
         Ok(None)
@@ -1088,6 +1129,26 @@ fn ported_swept_surface_matches_occt_samples(
     shape: &Shape,
     geometry: FaceGeometry,
     surface: PortedSweptSurface,
+) -> Result<bool, Error> {
+    let orientation = context.shape_orientation(shape)?;
+    for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+        let expected = context.face_sample_normalized_occt(shape, uv_t)?;
+        let actual = surface.sample_normalized_with_orientation(geometry, uv_t, orientation);
+        if !approx_vec3_eq(actual.position, expected.position, 1.0e-6)
+            || !approx_vec3_eq(actual.normal, expected.normal, 1.0e-6)
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn ported_analytic_surface_matches_occt_samples(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+    surface: PortedSurface,
 ) -> Result<bool, Error> {
     let orientation = context.shape_orientation(shape)?;
     for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
