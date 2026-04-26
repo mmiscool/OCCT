@@ -43,6 +43,10 @@ pub(super) fn ported_edge_endpoints(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<EdgeEndpoints>, Error> {
+    if let Some(endpoints) = root_edge_endpoints_from_topology_seed(context, shape)? {
+        return Ok(Some(endpoints));
+    }
+
     let Some(topology) = context.ported_topology(shape)? else {
         return Ok(None);
     };
@@ -62,6 +66,27 @@ pub(super) fn ported_edge_endpoints(
         optional_vertex_position(&topology, edge.end_vertex),
     ) else {
         return Err(Error::new("Edge did not contain two endpoint vertices."));
+    };
+    Ok(Some(EdgeEndpoints { start, end }))
+}
+
+fn root_edge_endpoints_from_topology_seed(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<EdgeEndpoints>, Error> {
+    if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
+        return Ok(None);
+    }
+
+    let topology = context.topology_occt(shape)?;
+    let [edge] = topology.edges.as_slice() else {
+        return Ok(None);
+    };
+    let (Some(start), Some(end)) = (
+        optional_vertex_position(&topology, edge.start_vertex),
+        optional_vertex_position(&topology, edge.end_vertex),
+    ) else {
+        return Ok(None);
     };
     Ok(Some(EdgeEndpoints { start, end }))
 }

@@ -1,4 +1,4 @@
-use super::edge_topology::{oriented_edge_geometry, RootEdgeTopology};
+use super::edge_topology::{oriented_edge_geometry, topology_edge_query, RootEdgeTopology};
 use super::*;
 
 pub(super) struct PreparedRootWireShape {
@@ -27,13 +27,26 @@ pub(super) fn root_wire_topology(
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<RootWireTopology>, Error> {
-    if let Some(topology) = root_wire_topology_from_snapshot(
+    if let Some(topology) = root_wire_topology_from_occurrences(
         context,
         prepared_wire_shape,
         vertex_positions,
         root_edges,
     )? {
         return Ok(Some(topology));
+    }
+
+    root_wire_topology_from_snapshot(context, prepared_wire_shape, vertex_positions, root_edges)
+}
+
+fn root_wire_topology_from_occurrences(
+    context: &Context,
+    prepared_wire_shape: &PreparedRootWireShape,
+    vertex_positions: &[[f64; 3]],
+    root_edges: &[RootEdgeTopology],
+) -> Result<Option<RootWireTopology>, Error> {
+    if prepared_wire_shape.wire_edge_shapes.len() != prepared_wire_shape.wire_shape.edge_count() {
+        return Ok(None);
     }
 
     let occurrences = match ported_wire_occurrences(
@@ -188,8 +201,10 @@ fn root_wire_topology_from_snapshot(
             local_end_index,
         );
 
-        let geometry =
-            oriented_edge_geometry(context.edge_geometry_occt(local_edge_shape)?, orientation);
+        let geometry = oriented_edge_geometry(
+            topology_edge_query(context, local_edge_shape)?.geometry,
+            orientation,
+        );
         let length = edge_length(local_edge_shape);
         let matches = root_edges
             .iter()
@@ -247,12 +262,12 @@ fn wire_occurrence(
     vertex_positions: &[[f64; 3]],
     root_edges: &[RootEdgeTopology],
 ) -> Result<Option<WireOccurrence>, Error> {
-    let geometry = context.edge_geometry_occt(edge_shape)?;
-    let endpoints = context.edge_endpoints_occt(edge_shape)?;
-    let Some(mut start_vertex) = match_vertex_index(vertex_positions, endpoints.start) else {
+    let query = topology_edge_query(context, edge_shape)?;
+    let geometry = query.geometry;
+    let Some(mut start_vertex) = match_vertex_index(vertex_positions, query.endpoints.start) else {
         return Ok(None);
     };
-    let Some(mut end_vertex) = match_vertex_index(vertex_positions, endpoints.end) else {
+    let Some(mut end_vertex) = match_vertex_index(vertex_positions, query.endpoints.end) else {
         return Ok(None);
     };
     let orientation = context.shape_orientation(edge_shape)?;

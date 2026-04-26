@@ -9,17 +9,32 @@ pub(super) struct RootEdgeTopology {
     pub(super) length: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TopologyEdgeQuery {
+    pub(super) geometry: EdgeGeometry,
+    pub(super) endpoints: EdgeEndpoints,
+}
+
+pub(super) fn topology_edge_query(
+    context: &Context,
+    edge_shape: &Shape,
+) -> Result<TopologyEdgeQuery, Error> {
+    Ok(TopologyEdgeQuery {
+        geometry: context.edge_geometry(edge_shape)?,
+        endpoints: context.edge_endpoints(edge_shape)?,
+    })
+}
+
 pub(super) fn root_edge_topology(
     context: &Context,
     edge_shape: &Shape,
     vertex_positions: &[[f64; 3]],
 ) -> Result<RootEdgeTopology, Error> {
-    let geometry = context.edge_geometry_occt(edge_shape)?;
-    let endpoints = context.edge_endpoints_occt(edge_shape)?;
+    let query = topology_edge_query(context, edge_shape)?;
     Ok(RootEdgeTopology {
-        geometry,
-        start_vertex: match_vertex_index(vertex_positions, endpoints.start),
-        end_vertex: match_vertex_index(vertex_positions, endpoints.end),
+        geometry: query.geometry,
+        start_vertex: match_vertex_index(vertex_positions, query.endpoints.start),
+        end_vertex: match_vertex_index(vertex_positions, query.endpoints.end),
         length: edge_length(edge_shape),
     })
 }

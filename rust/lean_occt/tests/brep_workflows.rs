@@ -783,6 +783,180 @@ fn assert_topology_backed_subshapes_match(
     Ok(())
 }
 
+fn topology_vertex_position(
+    topology: &lean_occt::TopologySnapshot,
+    vertex_index: usize,
+    label: &str,
+) -> Result<[f64; 3], Box<dyn std::error::Error>> {
+    topology
+        .vertex_positions
+        .get(vertex_index)
+        .copied()
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} referenced missing topology vertex {vertex_index}"
+            ))
+            .into()
+        })
+}
+
+fn assert_topology_edges_match_public_queries(
+    kernel: &ModelKernel,
+    label: &str,
+    shape: &Shape,
+    topology: &lean_occt::TopologySnapshot,
+    require_supported_edges: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let edge_shapes = kernel.context().subshapes(shape, ShapeKind::Edge)?;
+    if edge_shapes.len() != topology.edges.len() {
+        return Err(std::io::Error::other(format!(
+            "{label} topology edge inventory mismatch: public={} topology={}",
+            edge_shapes.len(),
+            topology.edges.len()
+        ))
+        .into());
+    }
+
+    let mut supported_edges = 0usize;
+    for (index, edge_shape) in edge_shapes.iter().enumerate() {
+        let public_geometry = kernel.context().edge_geometry(edge_shape)?;
+        let public_endpoints = kernel.context().edge_endpoints(edge_shape)?;
+        if matches!(
+            public_geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ) {
+            supported_edges += 1;
+        }
+
+        let topology_edge = topology.edges.get(index).ok_or_else(|| {
+            std::io::Error::other(format!("{label} missing topology edge {index}"))
+        })?;
+        let start_vertex = topology_edge.start_vertex.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} topology edge {index} missing start vertex"
+            ))
+        })?;
+        let end_vertex = topology_edge.end_vertex.ok_or_else(|| {
+            std::io::Error::other(format!("{label} topology edge {index} missing end vertex"))
+        })?;
+        let start = topology_vertex_position(
+            topology,
+            start_vertex,
+            &format!("{label} topology edge {index} start"),
+        )?;
+        let end = topology_vertex_position(
+            topology,
+            end_vertex,
+            &format!("{label} topology edge {index} end"),
+        )?;
+        assert_vec3_close(
+            start,
+            public_endpoints.start,
+            1.0e-7,
+            &format!("{label} topology edge {index} public start"),
+        )?;
+        assert_vec3_close(
+            end,
+            public_endpoints.end,
+            1.0e-7,
+            &format!("{label} topology edge {index} public end"),
+        )?;
+    }
+
+    if require_supported_edges && supported_edges == 0 {
+        return Err(std::io::Error::other(format!(
+            "{label} topology did not exercise supported line/circle/ellipse edges"
+        ))
+        .into());
+    }
+
+    for (wire_index, wire_range) in topology.wires.iter().enumerate() {
+        let vertex_range = topology.wire_vertices.get(wire_index).ok_or_else(|| {
+            std::io::Error::other(format!("{label} missing wire vertex range {wire_index}"))
+        })?;
+        if wire_range.count == 0 {
+            continue;
+        }
+        if vertex_range.count != wire_range.count + 1 {
+            return Err(std::io::Error::other(format!(
+                "{label} wire {wire_index} vertex chain length mismatch: vertices={} edges={}",
+                vertex_range.count, wire_range.count
+            ))
+            .into());
+        }
+
+        for occurrence_offset in 0..wire_range.count {
+            let edge_offset = wire_range.offset + occurrence_offset;
+            let edge_index = *topology.wire_edge_indices.get(edge_offset).ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} wire {wire_index} missing edge occurrence {occurrence_offset}"
+                ))
+            })?;
+            let orientation = *topology
+                .wire_edge_orientations
+                .get(edge_offset)
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "{label} wire {wire_index} missing edge orientation {occurrence_offset}"
+                    ))
+                })?;
+            let edge_shape = edge_shapes.get(edge_index).ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} wire {wire_index} referenced missing edge {edge_index}"
+                ))
+            })?;
+            let endpoints = kernel.context().edge_endpoints(edge_shape)?;
+            let (expected_start, expected_end) =
+                if matches!(orientation, lean_occt::Orientation::Reversed) {
+                    (endpoints.end, endpoints.start)
+                } else {
+                    (endpoints.start, endpoints.end)
+                };
+
+            let start_vertex_index = *topology
+                .wire_vertex_indices
+                .get(vertex_range.offset + occurrence_offset)
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "{label} wire {wire_index} missing start vertex occurrence {occurrence_offset}"
+                    ))
+                })?;
+            let end_vertex_index = *topology
+                .wire_vertex_indices
+                .get(vertex_range.offset + occurrence_offset + 1)
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "{label} wire {wire_index} missing end vertex occurrence {occurrence_offset}"
+                    ))
+                })?;
+            let start = topology_vertex_position(
+                topology,
+                start_vertex_index,
+                &format!("{label} wire {wire_index} occurrence {occurrence_offset} start"),
+            )?;
+            let end = topology_vertex_position(
+                topology,
+                end_vertex_index,
+                &format!("{label} wire {wire_index} occurrence {occurrence_offset} end"),
+            )?;
+            assert_vec3_close(
+                start,
+                expected_start,
+                1.0e-7,
+                &format!("{label} wire {wire_index} occurrence {occurrence_offset} public start"),
+            )?;
+            assert_vec3_close(
+                end,
+                expected_end,
+                1.0e-7,
+                &format!("{label} wire {wire_index} occurrence {occurrence_offset} public end"),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn assert_summary_backed_subshape_counts_match(
     kernel: &ModelKernel,
     label: &str,
@@ -1753,6 +1927,13 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_edges_match_public_queries(
+            &kernel,
+            label,
+            shape,
+            &rust_topology,
+            label != "helix",
+        )?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
@@ -1822,6 +2003,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_edges_match_public_queries(&kernel, label, shape, &rust_topology, true)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
@@ -1974,6 +2156,7 @@ fn ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids(
         assert_topology_matches(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
+        assert_topology_edges_match_public_queries(&kernel, label, shape, &rust_topology, true)?;
         assert_summary_backed_subshape_counts_match(&kernel, label, shape)?;
         assert_topology_matches(label, &brep.topology, &rust_topology)?;
         assert_brep_edge_geometries_match_public(&kernel, label, shape, &brep)?;
