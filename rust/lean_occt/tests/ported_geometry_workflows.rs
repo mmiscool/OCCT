@@ -3,10 +3,10 @@ mod support;
 use std::f64::consts::PI;
 
 use lean_occt::{
-    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, OffsetParams,
-    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedOffsetSurface, PortedSurface,
-    PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind,
-    ThroughHoleCut, TorusParams,
+    BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, HelixParams, ModelKernel,
+    OffsetParams, PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedOffsetSurface,
+    PortedSurface, PortedSweptSurface, PrismParams, RevolutionParams, Shape, ShapeKind,
+    SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -1241,6 +1241,63 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             "{label} ported root topology vertex count should match OCCT"
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn unsupported_root_edge_does_not_use_generic_raw_topology_inventory(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let helix = kernel.make_helix(HelixParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 8.0,
+        height: 24.0,
+        pitch: 6.0,
+    })?;
+    let edge = kernel.context().subshape_occt(&helix, ShapeKind::Edge, 0)?;
+    let summary = kernel.context().describe_shape_occt(&edge)?;
+    assert_eq!(
+        summary.root_kind,
+        ShapeKind::Edge,
+        "helix child should be tested as a root edge"
+    );
+
+    let geometry = kernel.context().edge_geometry_occt(&edge)?;
+    assert!(
+        !matches!(
+            geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ),
+        "helix edge fixture should exercise unsupported root-edge classification, got {:?}",
+        geometry.kind
+    );
+    assert!(
+        kernel.context().ported_topology(&edge)?.is_none(),
+        "unsupported root edge must not fall through to the generic raw topology inventory"
+    );
+    assert!(
+        kernel.context().ported_edge_endpoints(&edge)?.is_none(),
+        "unsupported root edge endpoints must stay outside the ported endpoint path"
+    );
+
+    let public_endpoints = kernel.context().edge_endpoints(&edge)?;
+    let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
+    assert_vec3_close(
+        public_endpoints.start,
+        occt_endpoints.start,
+        1.0e-12,
+        "unsupported root edge public/occt start",
+    )?;
+    assert_vec3_close(
+        public_endpoints.end,
+        occt_endpoints.end,
+        1.0e-12,
+        "unsupported root edge public/occt end",
+    )?;
 
     Ok(())
 }

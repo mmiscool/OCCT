@@ -62,6 +62,12 @@ enum RootAssemblyTopologyInventory {
     NotAssembly,
 }
 
+enum RootEdgeTopologyInventory {
+    Supported(TopologySnapshotRootFields),
+    UnsupportedRootEdge,
+    NotRootEdge,
+}
+
 struct RootEdgeVertexSeed {
     vertex_shapes: Vec<Shape>,
     vertex_positions: Vec<[f64; 3]>,
@@ -86,8 +92,12 @@ fn load_root_topology_snapshot(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<TopologySnapshotRootFields>, Error> {
-    if let Some(root_edge_fields) = load_root_edge_topology_snapshot(context, shape)? {
-        return Ok(Some(root_edge_fields));
+    match load_root_edge_topology_inventory(context, shape)? {
+        RootEdgeTopologyInventory::Supported(root_edge_fields) => {
+            return Ok(Some(root_edge_fields))
+        }
+        RootEdgeTopologyInventory::UnsupportedRootEdge => return Ok(None),
+        RootEdgeTopologyInventory::NotRootEdge => {}
     }
     if root_vertex_topology_inventory_required(context, shape)? {
         return load_root_vertex_topology_snapshot(context, shape);
@@ -279,12 +289,24 @@ fn load_root_edge_topology_snapshot(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    match load_root_edge_topology_inventory(context, shape)? {
+        RootEdgeTopologyInventory::Supported(fields) => Ok(Some(fields)),
+        RootEdgeTopologyInventory::UnsupportedRootEdge | RootEdgeTopologyInventory::NotRootEdge => {
+            Ok(None)
+        }
+    }
+}
+
+fn load_root_edge_topology_inventory(
+    context: &Context,
+    shape: &Shape,
+) -> Result<RootEdgeTopologyInventory, Error> {
     if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
-        return Ok(None);
+        return Ok(RootEdgeTopologyInventory::NotRootEdge);
     }
 
     let Some((geometry, vertex_seed)) = root_edge_topology_bootstrap_seed(context, shape)? else {
-        return Ok(None);
+        return Ok(RootEdgeTopologyInventory::UnsupportedRootEdge);
     };
 
     let RootEdgeVertexSeed {
@@ -308,24 +330,26 @@ fn load_root_edge_topology_snapshot(
         length,
     }];
 
-    Ok(Some(TopologySnapshotRootFields {
-        vertex_shapes,
-        vertex_positions,
-        edge_shapes: vec![edge_shape],
-        solid_shapes: Vec::new(),
-        wire_shapes: Vec::new(),
-        prepared_shell_shapes: Vec::new(),
-        face_shapes: Vec::new(),
-        prepared_face_shapes: Vec::new(),
-        edges,
-        root_edges,
-        root_wires: Vec::new(),
-        wires: Vec::new(),
-        wire_edge_indices: Vec::new(),
-        wire_edge_orientations: Vec::new(),
-        wire_vertices: Vec::new(),
-        wire_vertex_indices: Vec::new(),
-    }))
+    Ok(RootEdgeTopologyInventory::Supported(
+        TopologySnapshotRootFields {
+            vertex_shapes,
+            vertex_positions,
+            edge_shapes: vec![edge_shape],
+            solid_shapes: Vec::new(),
+            wire_shapes: Vec::new(),
+            prepared_shell_shapes: Vec::new(),
+            face_shapes: Vec::new(),
+            prepared_face_shapes: Vec::new(),
+            edges,
+            root_edges,
+            root_wires: Vec::new(),
+            wires: Vec::new(),
+            wire_edge_indices: Vec::new(),
+            wire_edge_orientations: Vec::new(),
+            wire_vertices: Vec::new(),
+            wire_vertex_indices: Vec::new(),
+        },
+    ))
 }
 
 fn root_edge_topology_bootstrap_seed(

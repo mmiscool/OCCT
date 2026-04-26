@@ -44,12 +44,6 @@ pub(super) fn ported_edge_endpoints(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<EdgeEndpoints>, Error> {
-    match root_edge_endpoint_topology_support(context, shape)? {
-        RootEdgeEndpointTopologySupport::UnsupportedRootEdge => return Ok(None),
-        RootEdgeEndpointTopologySupport::SupportedRootEdge
-        | RootEdgeEndpointTopologySupport::NotRootEdge => {}
-    }
-
     let Some(loaded) = load_ported_topology(context, shape)? else {
         return Ok(None);
     };
@@ -72,31 +66,6 @@ pub(super) fn ported_edge_endpoints(
         return Err(Error::new("Edge did not contain two endpoint vertices."));
     };
     Ok(Some(EdgeEndpoints { start, end }))
-}
-
-enum RootEdgeEndpointTopologySupport {
-    NotRootEdge,
-    SupportedRootEdge,
-    UnsupportedRootEdge,
-}
-
-fn root_edge_endpoint_topology_support(
-    context: &Context,
-    shape: &Shape,
-) -> Result<RootEdgeEndpointTopologySupport, Error> {
-    if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
-        return Ok(RootEdgeEndpointTopologySupport::NotRootEdge);
-    }
-
-    let geometry = context.edge_geometry_occt(shape)?;
-    if !matches!(
-        geometry.kind,
-        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
-    ) {
-        return Ok(RootEdgeEndpointTopologySupport::UnsupportedRootEdge);
-    }
-
-    Ok(RootEdgeEndpointTopologySupport::SupportedRootEdge)
 }
 
 pub(super) fn ported_subshape_count(
