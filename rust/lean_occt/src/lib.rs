@@ -1270,7 +1270,7 @@ pub struct Shape {
 pub(crate) struct OffsetSurfaceFaceMetadata {
     pub(crate) offset_value: f64,
     pub(crate) basis_geometry: FaceGeometry,
-    pub(crate) basis_surface: PortedSurface,
+    pub(crate) basis: PortedOffsetBasisSurface,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3484,19 +3484,60 @@ impl Context {
         }
 
         let basis_geometry = self.face_geometry(basis_face)?;
-        let Some(basis_surface) =
-            PortedSurface::from_context_with_ported_payloads(self, basis_face, basis_geometry)?
-        else {
-            return Err(unsupported_ported_surface_payload_error(
-                raw_basis_geometry.kind,
-                basis_geometry.kind,
-            ));
+        let basis = match raw_basis_geometry.kind {
+            SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus => {
+                let Some(surface) = PortedSurface::from_context_with_ported_payloads(
+                    self,
+                    basis_face,
+                    basis_geometry,
+                )?
+                else {
+                    return Err(unsupported_ported_surface_payload_error(
+                        raw_basis_geometry.kind,
+                        basis_geometry.kind,
+                    ));
+                };
+                let actual = ported_surface_kind(surface);
+                if actual != raw_basis_geometry.kind {
+                    return Err(mismatched_ported_surface_payload_error(
+                        raw_basis_geometry.kind,
+                        actual,
+                    ));
+                }
+                PortedOffsetBasisSurface::Analytic(surface)
+            }
+            SurfaceKind::Revolution | SurfaceKind::Extrusion => {
+                match brep::ported_face_surface_descriptor(self, basis_face, basis_geometry)? {
+                    Some(PortedFaceSurface::Swept(surface))
+                        if ported_swept_surface_kind(surface) == raw_basis_geometry.kind =>
+                    {
+                        PortedOffsetBasisSurface::Swept(surface)
+                    }
+                    Some(surface) => {
+                        return Err(mismatched_ported_surface_payload_error(
+                            raw_basis_geometry.kind,
+                            ported_face_surface_descriptor_kind(surface),
+                        ));
+                    }
+                    None => {
+                        return Err(unsupported_ported_surface_payload_error(
+                            raw_basis_geometry.kind,
+                            basis_geometry.kind,
+                        ));
+                    }
+                }
+            }
+            _ => return Ok(None),
         };
 
         Ok(Some(OffsetSurfaceFaceMetadata {
             offset_value,
             basis_geometry,
-            basis_surface,
+            basis,
         }))
     }
 
@@ -3601,6 +3642,8 @@ fn offset_surface_face_metadata_supports_basis(kind: SurfaceKind) -> bool {
             | SurfaceKind::Cone
             | SurfaceKind::Sphere
             | SurfaceKind::Torus
+            | SurfaceKind::Revolution
+            | SurfaceKind::Extrusion
     )
 }
 

@@ -259,6 +259,34 @@ fn assert_edge_geometry_close(
     Ok(())
 }
 
+fn assert_edge_geometry_span_close(
+    lhs: lean_occt::EdgeGeometry,
+    rhs: lean_occt::EdgeGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind || lhs.is_closed != rhs.is_closed || lhs.is_periodic != rhs.is_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    assert_scalar_close(
+        (lhs.end_parameter - lhs.start_parameter).abs(),
+        (rhs.end_parameter - rhs.start_parameter).abs(),
+        tolerance,
+        &format!("{label} parameter span"),
+    )?;
+    assert_scalar_close(
+        lhs.period,
+        rhs.period,
+        tolerance,
+        &format!("{label} period"),
+    )?;
+    Ok(())
+}
+
 fn assert_line_payload_close(
     lhs: lean_occt::LinePayload,
     rhs: lean_occt::LinePayload,
@@ -611,6 +639,29 @@ fn assert_offset_payload_close(
         "{label} basis_surface_kind mismatch"
     );
     Ok(())
+}
+
+fn assert_ported_curve_close(
+    lhs: PortedCurve,
+    rhs: PortedCurve,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (lhs, rhs) {
+        (PortedCurve::Line(lhs), PortedCurve::Line(rhs)) => {
+            assert_line_payload_close(lhs, rhs, tolerance, label)
+        }
+        (PortedCurve::Circle(lhs), PortedCurve::Circle(rhs)) => {
+            assert_circle_payload_close(lhs, rhs, tolerance, label)
+        }
+        (PortedCurve::Ellipse(lhs), PortedCurve::Ellipse(rhs)) => {
+            assert_ellipse_payload_close(lhs, rhs, tolerance, label)
+        }
+        (lhs, rhs) => Err(std::io::Error::other(format!(
+            "{label} curve kind mismatch: {lhs:?} vs {rhs:?}"
+        ))
+        .into()),
+    }
 }
 
 fn assert_offset_swept_basis_curve_close(
@@ -2367,6 +2418,171 @@ fn public_offset_basis_queries_match_occt() -> Result<(), Box<dyn std::error::Er
             tolerance: 1.0e-4,
         },
     )?;
+
+    for (label, basis_kind, source_face, offset_face) in [
+        (
+            "extrusion-direct",
+            SurfaceKind::Extrusion,
+            &extrusion_source_face,
+            &extrusion_direct_offset_face,
+        ),
+        (
+            "revolution-direct",
+            SurfaceKind::Revolution,
+            &revolution_source_face,
+            &revolution_direct_offset_face,
+        ),
+    ] {
+        let offset_payload = context.face_offset_payload(offset_face)?;
+        assert_eq!(offset_payload.basis_surface_kind, basis_kind);
+        assert!(
+            (offset_payload.offset_value - 1.25).abs() <= 1.0e-12,
+            "{label} direct swept offset value mismatch"
+        );
+
+        let source_geometry = context.face_geometry(source_face)?;
+        assert_face_geometry_close(
+            context.face_offset_basis_geometry(offset_face)?,
+            source_geometry,
+            1.0e-12,
+            &format!("{label} direct swept offset basis geometry"),
+        )?;
+
+        let source_surface = require_ported_swept_face_surface(
+            context.ported_face_surface_descriptor(source_face)?,
+            basis_kind,
+            &format!("{label} source basis"),
+        )?;
+        let offset_surface = require_ported_offset_face_surface(
+            context.ported_face_surface_descriptor(offset_face)?,
+            &format!("{label} direct offset basis"),
+        )?;
+        assert_offset_payload_close(
+            offset_surface.payload,
+            offset_payload,
+            1.0e-12,
+            &format!("{label} direct offset descriptor payload"),
+        )?;
+        assert_face_geometry_close(
+            offset_surface.basis_geometry,
+            source_geometry,
+            1.0e-12,
+            &format!("{label} direct offset descriptor basis geometry"),
+        )?;
+
+        match (basis_kind, source_surface, offset_surface.basis) {
+            (
+                SurfaceKind::Extrusion,
+                PortedSweptSurface::Extrusion {
+                    payload: source_payload,
+                    basis_curve: source_basis_curve,
+                    basis_geometry: source_basis_geometry,
+                },
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                    payload,
+                    basis_curve,
+                    basis_geometry,
+                }),
+            ) => {
+                assert_extrusion_payload_close(
+                    context.face_offset_basis_extrusion_payload(offset_face)?,
+                    context.face_extrusion_payload(source_face)?,
+                    1.0e-12,
+                    &format!("{label} public offset basis mirrors source payload"),
+                )?;
+                assert_extrusion_payload_close(
+                    payload,
+                    source_payload,
+                    1.0e-12,
+                    &format!("{label} descriptor swept payload mirrors source"),
+                )?;
+                let public_basis_geometry =
+                    context.face_offset_basis_curve_geometry(offset_face)?;
+                assert_edge_geometry_close(
+                    public_basis_geometry,
+                    basis_geometry,
+                    1.0e-12,
+                    &format!("{label} public offset basis curve geometry matches descriptor"),
+                )?;
+                assert_edge_geometry_span_close(
+                    public_basis_geometry,
+                    source_basis_geometry,
+                    1.0e-12,
+                    &format!("{label} offset basis curve span mirrors source"),
+                )?;
+                assert_edge_geometry_close(
+                    basis_geometry,
+                    public_basis_geometry,
+                    1.0e-12,
+                    &format!("{label} descriptor basis curve geometry matches public query"),
+                )?;
+                assert_ported_curve_close(
+                    basis_curve,
+                    source_basis_curve,
+                    1.0e-12,
+                    &format!("{label} descriptor basis curve mirrors source"),
+                )?;
+            }
+            (
+                SurfaceKind::Revolution,
+                PortedSweptSurface::Revolution {
+                    payload: source_payload,
+                    basis_curve: source_basis_curve,
+                    basis_geometry: source_basis_geometry,
+                },
+                PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                    payload,
+                    basis_curve,
+                    basis_geometry,
+                }),
+            ) => {
+                assert_revolution_payload_close(
+                    context.face_offset_basis_revolution_payload(offset_face)?,
+                    context.face_revolution_payload(source_face)?,
+                    1.0e-12,
+                    &format!("{label} public offset basis mirrors source payload"),
+                )?;
+                assert_revolution_payload_close(
+                    payload,
+                    source_payload,
+                    1.0e-12,
+                    &format!("{label} descriptor swept payload mirrors source"),
+                )?;
+                let public_basis_geometry =
+                    context.face_offset_basis_curve_geometry(offset_face)?;
+                assert_edge_geometry_close(
+                    public_basis_geometry,
+                    basis_geometry,
+                    1.0e-12,
+                    &format!("{label} public offset basis curve geometry matches descriptor"),
+                )?;
+                assert_edge_geometry_span_close(
+                    public_basis_geometry,
+                    source_basis_geometry,
+                    1.0e-12,
+                    &format!("{label} offset basis curve span mirrors source"),
+                )?;
+                assert_edge_geometry_close(
+                    basis_geometry,
+                    public_basis_geometry,
+                    1.0e-12,
+                    &format!("{label} descriptor basis curve geometry matches public query"),
+                )?;
+                assert_ported_curve_close(
+                    basis_curve,
+                    source_basis_curve,
+                    1.0e-12,
+                    &format!("{label} descriptor basis curve mirrors source"),
+                )?;
+            }
+            (expected, source, basis) => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected {label} direct swept metadata: expected {expected:?}, source {source:?}, basis {basis:?}"
+                ))
+                .into())
+            }
+        }
+    }
 
     for (label, basis_kind, offset_face) in [
         ("plane", SurfaceKind::Plane, plane_offset_face),

@@ -105,6 +105,20 @@ fn ported_analytic_surface_kind(surface: PortedSurface) -> SurfaceKind {
     }
 }
 
+fn ported_swept_surface_kind(surface: PortedSweptSurface) -> SurfaceKind {
+    match surface {
+        PortedSweptSurface::Revolution { .. } => SurfaceKind::Revolution,
+        PortedSweptSurface::Extrusion { .. } => SurfaceKind::Extrusion,
+    }
+}
+
+fn ported_offset_basis_surface_kind(basis: PortedOffsetBasisSurface) -> SurfaceKind {
+    match basis {
+        PortedOffsetBasisSurface::Analytic(surface) => ported_analytic_surface_kind(surface),
+        PortedOffsetBasisSurface::Swept(surface) => ported_swept_surface_kind(surface),
+    }
+}
+
 impl PortedCurve {
     pub fn from_context(context: &Context, shape: &Shape) -> Result<Option<Self>, Error> {
         let geometry = context.edge_geometry(shape)?;
@@ -962,13 +976,32 @@ fn ported_offset_surface_from_metadata(
     shape: &Shape,
     metadata: OffsetSurfaceFaceMetadata,
 ) -> Result<Option<PortedOffsetSurface>, Error> {
+    let basis = match metadata.basis {
+        PortedOffsetBasisSurface::Analytic(surface) => PortedOffsetBasisSurface::Analytic(surface),
+        PortedOffsetBasisSurface::Swept(source_surface) => {
+            let expected_kind = ported_swept_surface_kind(source_surface);
+            let Some(surface) = ported_offset_basis_swept_surface_payload(
+                context,
+                shape,
+                metadata.offset_value,
+                metadata.basis_geometry,
+            )?
+            else {
+                return Ok(None);
+            };
+            if ported_swept_surface_kind(surface) != expected_kind {
+                return Ok(None);
+            }
+            PortedOffsetBasisSurface::Swept(surface)
+        }
+    };
     let surface = PortedOffsetSurface {
         payload: OffsetSurfacePayload {
             offset_value: metadata.offset_value,
-            basis_surface_kind: ported_analytic_surface_kind(metadata.basis_surface),
+            basis_surface_kind: ported_offset_basis_surface_kind(basis),
         },
         basis_geometry: metadata.basis_geometry,
-        basis: PortedOffsetBasisSurface::Analytic(metadata.basis_surface),
+        basis,
     };
 
     if ported_offset_surface_matches_occt_samples(context, shape, surface)? {
