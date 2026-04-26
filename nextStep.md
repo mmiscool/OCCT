@@ -4,42 +4,35 @@ Current milestone: `M49. Rust-Owned Face UV Bounds Seed Narrowing` from `porting
 
 ## Completed Evidence
 
-- `M48. Rust-Owned Swept Face Geometry Classifier Narrowing` is complete.
-- `Context::ported_face_geometry()` no longer calls `face_geometry_occt(shape)` at all. The old post-raw `SurfaceKind::Revolution | SurfaceKind::Extrusion` branch and `PortedFaceSurface::Swept` descriptor dispatch are removed.
-- Exercised extrusion and revolution faces now classify through `ported_swept_face_geometry_candidate()` before any raw face-geometry classifier. The helper seeds candidate swept geometry, validates the Rust-owned swept descriptor from samples, and rebuilds closed/periodic flags from the selected swept basis curve and swept family.
-- Analytic candidates run before swept candidates, so analytic faces still claim planes, cylinders, cones, spheres, and tori before the generic swept recognizer can treat them as swept-like surfaces.
-- `ported_face_geometry_classifies_swept_before_raw_geometry` guards the source and fails if `ported_face_geometry()` regains a raw `face_geometry_occt(shape)` call, a post-raw swept kind branch, or raw swept descriptor dispatch.
-- Verification passed with `(cd rust/lean_occt && cargo fmt)`, `cmake --build build --target LeanOcctCAPI`, `(cd rust/lean_occt && cargo check)`, focused swept geometry/public payload/BRep swept/offset regressions, source guards proving the raw face-geometry classifier is absent from `ported_face_geometry()`, full `(cd rust/lean_occt && cargo test)`, and `git diff --check`.
+- M49 direct single-face swept seed cut is complete for exercised edge-source `make_prism()` and `make_revolution()` faces.
+- `make_prism()` and `make_revolution()` now retain `SingleFaceSweptResult` metadata when the source is a supported Rust-owned line/circle/ellipse edge. Extrusion seeds use the source edge parameter span on U and OCCT-compatible `-direction_length..0` bounds on V; revolution seeds use `0..angle_radians` on U and the source edge parameter span on V.
+- Ported topology face enumeration attaches `SweptSurfaceFaceMetadata` only when a swept result exposes exactly one face, avoiding ambiguous multi-face side/cap inventories for this cut.
+- `Context::ported_face_geometry()` now tries `ported_swept_surface_from_metadata_face_geometry(self, shape)?` before `face_uv_bounds_occt(shape)`. The metadata helper validates the swept descriptor from samples using the Rust seed and does not call the raw UV-bounds helper.
+- `ported_swept_surface_sampling_matches_occt` asserts constructor-owned direct swept faces carry Rust swept metadata. `ported_face_geometry_classifies_swept_before_raw_geometry` proves metadata classification runs before the raw UV-bounds seed and blocks raw face-geometry/swept descriptor regressions.
+- Verification passed with the exact commands listed below, including the full Rust suite and `git diff --check`.
 
 ## Target
 
-Narrow the remaining OCCT-backed bounds seed in `Context::ported_face_geometry()`.
+Narrow the remaining M49 raw bounds fallback beyond direct single-face edge sweeps.
 
-After M48, the raw kind classifier is gone, but this universal bounds read remains before analytic and swept candidates:
-
-```rust
-let bounds = self.face_uv_bounds_occt(shape)?;
-```
-
-`face_uv_bounds_occt(shape)` still uses OCCT adaptor geometry to provide the parameter bounds that seed supported Rust-owned analytic and swept classification.
+`face_uv_bounds_occt(shape)` still seeds metadata-free, imported, unsupported, analytic, and multi-face constructor-owned swept faces. The next useful cut is to carry Rust-owned swept UV seeds onto validated side faces from multi-face constructor-owned swept results while leaving caps on their current analytic/raw-seed path.
 
 ## Next Bounded Cut
 
 1. Read `portingMilestones.md` and `nextStep.md` before editing.
-2. Start with constructor-owned swept faces from `make_prism()` and `make_revolution()`.
-3. Carry or derive Rust-owned UV bounds/geometry seeds through swept face enumeration for exercised extrusion and revolution faces.
-4. Use those seeds in `ported_swept_face_geometry_candidate()` before falling back to `face_uv_bounds_occt(shape)`.
-5. Strictly narrow `face_uv_bounds_occt(shape)` to metadata-missing, imported, or unsupported faces, not the normal exercised swept path.
-6. Strengthen source or workflow coverage so constructor-owned swept faces fail if their geometry classification silently needs the raw bounds seed again.
-7. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
+2. Extend swept metadata inventory to validated multi-face constructor-owned swept side faces from face-source `make_revolution()` and `make_prism()` fixtures.
+3. Derive source edge parameter spans and sweep ranges in Rust, match generated side faces by descriptor/sample validation, and attach `SweptSurfaceFaceMetadata` only to uniquely validated side faces.
+4. Keep cap and analytic faces on the existing path until a separate analytic seed cut; do not attach swept metadata to caps, imported faces, unsupported faces, or ambiguous matches.
+5. Strengthen regression/source coverage so matched multi-face swept side faces classify before `face_uv_bounds_occt(shape)`.
+6. Update both control files with completed evidence, active milestone, next bounded cut, and exact verification commands.
 
 ## Guardrails
 
 - Do not reintroduce `face_geometry_occt(shape)` inside `Context::ported_face_geometry()`.
-- Do not classify metadata-free, imported, invalid, or unsupported swept-like faces as Rust-owned unless a Rust descriptor/topology path proves support.
-- Keep analytic-first ordering before the generic swept recognizer to avoid misclassifying planes, cylinders, cones, spheres, or tori as swept.
+- Keep offset metadata first, swept metadata before `face_uv_bounds_occt(shape)`, and analytic candidates before the generic swept recognizer.
+- Do not silently attach swept metadata to metadata-free, imported, invalid, unsupported, cap, or ambiguous faces.
 - Preserve explicit raw/oracle face geometry, UV bounds, swept payload, offset payload, basis, and sampling APIs.
-- Keep direct swept, swept BRep solid, swept-offset metadata, multi-source swept offset, and offset-solid volume regressions green.
+- Keep direct swept, public payload, swept BRep solid, swept-offset metadata, multi-source swept offset, offset-solid volume, source-guard, and full-suite regressions green.
 
 ## Verification
 
@@ -47,11 +40,13 @@ let bounds = self.face_uv_bounds_occt(shape)?;
 - `cmake --build build --target LeanOcctCAPI`
 - `(cd rust/lean_occt && cargo check)`
 - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_geometry_classifies_swept_before_raw_geometry -- --nocapture)`
-- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_swept_surface_sampling_matches_occt -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_face_surface_descriptors_cover_supported_faces -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture)`
+- `(cd rust/lean_occt && cargo test --test ported_geometry_workflows ported_swept_surface_sampling_matches_occt -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_summarizes_swept_revolution_solids_in_rust -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_maps_multi_source_swept_offsets_in_rust -- --nocapture)`
 - `(cd rust/lean_occt && cargo test --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture)`
-- A source guard proving constructor-owned swept geometry uses a Rust bounds seed before `face_uv_bounds_occt(shape)`.
+- `perl -0ne 'print $1 if /(pub fn ported_face_geometry[\s\S]*?)\n\n    pub fn ported_edge_curve/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'ported_swept_surface_from_metadata_face_geometry|face_uv_bounds_occt|ported_swept_face_geometry_candidate'`
+- `! perl -0ne 'print $1 if /(pub fn ported_face_geometry[\s\S]*?)\n\n    pub fn ported_edge_curve/' rust/lean_occt/src/occt_port/ModelingData/TKG3d/GeomEval/ported_geometry.rs | rg -n 'face_geometry_occt\(shape\)|SurfaceKind::Revolution \| SurfaceKind::Extrusion|PortedFaceSurface::Swept|ported_face_surface_descriptor_value'`
 - `(cd rust/lean_occt && cargo test)`
 - `git diff --check`

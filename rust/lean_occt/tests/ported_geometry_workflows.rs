@@ -3771,6 +3771,10 @@ fn ported_swept_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error
         (&revolution, SurfaceKind::Revolution),
     ] {
         let occt_face = find_first_face_by_kind(&kernel, shape, kind)?;
+        assert!(
+            occt_face.has_rust_swept_surface_face_metadata(),
+            "constructor-owned {kind:?} face should carry a Rust UV seed"
+        );
         let geometry = kernel.context().face_geometry(&occt_face)?;
         let geometry_occt = kernel.context().face_geometry_occt(&occt_face)?;
         let ported_geometry = kernel
@@ -3870,6 +3874,20 @@ fn ported_face_geometry_classifies_swept_before_raw_geometry() {
         .next()
         .expect("ported_face_geometry source should end before ported_edge_curve");
     assert!(
+        function.contains("ported_swept_surface_from_metadata_face_geometry(self, shape)?"),
+        "constructor-owned swept faces should use Rust metadata before raw UV bounds"
+    );
+    let metadata_index = function
+        .find("ported_swept_surface_from_metadata_face_geometry(self, shape)?")
+        .expect("swept metadata classifier should be present");
+    let raw_bounds_index = function
+        .find("let bounds = self.face_uv_bounds_occt(shape)?;")
+        .expect("raw UV bounds fallback should be present");
+    assert!(
+        metadata_index < raw_bounds_index,
+        "swept metadata classifier should run before raw UV bounds fallback"
+    );
+    assert!(
         function.contains("ported_swept_face_geometry_candidate(self, shape, bounds)?"),
         "ported_face_geometry should try Rust swept geometry"
     );
@@ -3888,6 +3906,18 @@ fn ported_face_geometry_classifies_swept_before_raw_geometry() {
     assert!(
         !function.contains("ported_face_surface_descriptor_value"),
         "raw geometry must not own swept descriptor validation"
+    );
+
+    let swept_metadata_helper = source
+        .split("fn ported_swept_surface_from_metadata_face_geometry")
+        .nth(1)
+        .expect("swept metadata helper source should be present")
+        .split("fn ported_swept_face_geometry_candidate")
+        .next()
+        .expect("swept metadata helper should end before generic swept candidate");
+    assert!(
+        !swept_metadata_helper.contains("face_uv_bounds_occt"),
+        "swept metadata helper must not call the raw UV bounds seed"
     );
 }
 

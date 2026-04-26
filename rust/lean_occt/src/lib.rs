@@ -1484,12 +1484,19 @@ pub(crate) struct OffsetSurfaceFaceMetadata {
     pub(crate) direct_surface_face: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SweptSurfaceFaceMetadata {
+    pub(crate) geometry_seed: FaceGeometry,
+}
+
 #[derive(Clone, Debug)]
 enum ShapeRustMetadata {
     None,
     OffsetSurfaceFace(OffsetSurfaceFaceMetadata),
     SingleFaceOffsetResult(OffsetSurfaceFaceMetadata),
     MultiFaceOffsetResult(Vec<OffsetSurfaceFaceMetadata>),
+    SweptSurfaceFace(SweptSurfaceFaceMetadata),
+    SingleFaceSweptResult(SweptSurfaceFaceMetadata),
 }
 
 struct MeshHandle {
@@ -1758,6 +1765,7 @@ impl Context {
     }
 
     pub fn make_prism(&self, shape: &Shape, params: PrismParams) -> Result<Shape, Error> {
+        let rust_metadata = self.prism_swept_result_metadata_candidate(shape, params)?;
         let raw_params = ffi::LeanOcctPrismParams {
             dx: params.direction[0],
             dy: params.direction[1],
@@ -1767,10 +1775,11 @@ impl Context {
         let raw = unsafe {
             ffi::lean_occt_shape_make_prism(self.raw.as_ptr(), shape.raw.as_ptr(), &raw_params)
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_revolution(&self, shape: &Shape, params: RevolutionParams) -> Result<Shape, Error> {
+        let rust_metadata = self.revolution_swept_result_metadata_candidate(shape, params)?;
         let raw_params = ffi::LeanOcctRevolutionParams {
             x: params.origin[0],
             y: params.origin[1],
@@ -1784,7 +1793,7 @@ impl Context {
         let raw = unsafe {
             ffi::lean_occt_shape_make_revolution(self.raw.as_ptr(), shape.raw.as_ptr(), &raw_params)
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_compound(&self, shapes: &[Shape]) -> Result<Shape, Error> {
@@ -4368,6 +4377,76 @@ impl Context {
         }))
     }
 
+    fn prism_swept_result_metadata_candidate(
+        &self,
+        source: &Shape,
+        params: PrismParams,
+    ) -> Result<ShapeRustMetadata, Error> {
+        let Some(basis_geometry) = self.swept_source_edge_geometry_candidate(source)? else {
+            return Ok(ShapeRustMetadata::None);
+        };
+        let sweep_length = vector_norm3(params.direction);
+        if !sweep_length.is_finite() || sweep_length <= 1.0e-12 {
+            return Ok(ShapeRustMetadata::None);
+        }
+
+        Ok(ShapeRustMetadata::SingleFaceSweptResult(
+            SweptSurfaceFaceMetadata {
+                geometry_seed: swept_face_geometry_seed(
+                    SurfaceKind::Extrusion,
+                    basis_geometry.start_parameter,
+                    basis_geometry.end_parameter,
+                    -sweep_length,
+                    0.0,
+                ),
+            },
+        ))
+    }
+
+    fn revolution_swept_result_metadata_candidate(
+        &self,
+        source: &Shape,
+        params: RevolutionParams,
+    ) -> Result<ShapeRustMetadata, Error> {
+        let Some(basis_geometry) = self.swept_source_edge_geometry_candidate(source)? else {
+            return Ok(ShapeRustMetadata::None);
+        };
+        let angle = params.angle_radians;
+        if !angle.is_finite() || angle.abs() <= 1.0e-12 {
+            return Ok(ShapeRustMetadata::None);
+        }
+
+        Ok(ShapeRustMetadata::SingleFaceSweptResult(
+            SweptSurfaceFaceMetadata {
+                geometry_seed: swept_face_geometry_seed(
+                    SurfaceKind::Revolution,
+                    0.0,
+                    angle,
+                    basis_geometry.start_parameter,
+                    basis_geometry.end_parameter,
+                ),
+            },
+        ))
+    }
+
+    fn swept_source_edge_geometry_candidate(
+        &self,
+        source: &Shape,
+    ) -> Result<Option<EdgeGeometry>, Error> {
+        if self.describe_shape_occt(source)?.root_kind != ShapeKind::Edge {
+            return Ok(None);
+        }
+        let geometry = self.edge_geometry(source)?;
+        if matches!(
+            geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ) {
+            Ok(Some(geometry))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn offset_result_metadata(
         &self,
         source: &Shape,
@@ -4419,6 +4498,32 @@ impl Context {
         let raw = NonNull::new(raw).ok_or_else(|| Error::new(self.last_error()))?;
         Ok(Shape { raw, rust_metadata })
     }
+}
+
+fn swept_face_geometry_seed(
+    kind: SurfaceKind,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
+) -> FaceGeometry {
+    FaceGeometry {
+        kind,
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+        is_u_closed: false,
+        is_v_closed: false,
+        is_u_periodic: false,
+        is_v_periodic: false,
+        u_period: 0.0,
+        v_period: 0.0,
+    }
+}
+
+fn vector_norm3(value: [f64; 3]) -> f64 {
+    (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt()
 }
 
 fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
@@ -4718,7 +4823,10 @@ impl Shape {
         match &self.rust_metadata {
             ShapeRustMetadata::OffsetSurfaceFace(metadata) => Some(metadata),
             ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
-            ShapeRustMetadata::None | ShapeRustMetadata::MultiFaceOffsetResult(_) => None,
+            ShapeRustMetadata::None
+            | ShapeRustMetadata::MultiFaceOffsetResult(_)
+            | ShapeRustMetadata::SweptSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceSweptResult(_) => None,
         }
         .copied()
     }
@@ -4728,7 +4836,9 @@ impl Shape {
             ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
             ShapeRustMetadata::OffsetSurfaceFace(_)
             | ShapeRustMetadata::None
-            | ShapeRustMetadata::MultiFaceOffsetResult(_) => None,
+            | ShapeRustMetadata::MultiFaceOffsetResult(_)
+            | ShapeRustMetadata::SweptSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceSweptResult(_) => None,
         }
         .copied()
     }
@@ -4738,8 +4848,34 @@ impl Shape {
             ShapeRustMetadata::MultiFaceOffsetResult(metadata) => Some(metadata.as_slice()),
             ShapeRustMetadata::OffsetSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::SweptSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::None => None,
         }
+    }
+
+    pub(crate) fn swept_surface_face_metadata(&self) -> Option<SweptSurfaceFaceMetadata> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::SweptSurfaceFace(metadata) => Some(metadata),
+            ShapeRustMetadata::SingleFaceSweptResult(metadata) => Some(metadata),
+            ShapeRustMetadata::OffsetSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::MultiFaceOffsetResult(_)
+            | ShapeRustMetadata::None => None,
+        }
+        .copied()
+    }
+
+    pub(crate) fn single_face_swept_result_metadata(&self) -> Option<SweptSurfaceFaceMetadata> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::SingleFaceSweptResult(metadata) => Some(metadata),
+            ShapeRustMetadata::SweptSurfaceFace(_)
+            | ShapeRustMetadata::OffsetSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::MultiFaceOffsetResult(_)
+            | ShapeRustMetadata::None => None,
+        }
+        .copied()
     }
 
     #[doc(hidden)]
@@ -4751,11 +4887,21 @@ impl Shape {
     }
 
     #[doc(hidden)]
+    pub fn has_rust_swept_surface_face_metadata(&self) -> bool {
+        matches!(
+            self.rust_metadata,
+            ShapeRustMetadata::SweptSurfaceFace(_) | ShapeRustMetadata::SingleFaceSweptResult(_)
+        )
+    }
+
+    #[doc(hidden)]
     pub fn rust_multi_face_offset_source_count(&self) -> Option<usize> {
         match &self.rust_metadata {
             ShapeRustMetadata::MultiFaceOffsetResult(metadata) => Some(metadata.len()),
             ShapeRustMetadata::OffsetSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::SweptSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -4773,6 +4919,14 @@ impl Shape {
         metadata: OffsetSurfaceFaceMetadata,
     ) -> Self {
         self.rust_metadata = ShapeRustMetadata::OffsetSurfaceFace(metadata);
+        self
+    }
+
+    pub(crate) fn with_swept_surface_face_metadata(
+        mut self,
+        metadata: SweptSurfaceFaceMetadata,
+    ) -> Self {
+        self.rust_metadata = ShapeRustMetadata::SweptSurfaceFace(metadata);
         self
     }
 

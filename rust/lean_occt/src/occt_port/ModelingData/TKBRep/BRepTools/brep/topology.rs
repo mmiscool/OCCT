@@ -8,7 +8,9 @@ use super::wire_topology::{
     match_vertex_index, pack_wire_topology, root_wire_topology, PreparedRootWireShape,
 };
 use super::*;
-use crate::{OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind};
+use crate::{
+    OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind, SweptSurfaceFaceMetadata,
+};
 
 const OFFSET_METADATA_MATCH_UV_SAMPLES: [[f64; 2]; 4] =
     [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]];
@@ -1358,6 +1360,8 @@ fn attach_offset_result_face_metadata(
     shape: &Shape,
     face_shapes: Vec<Shape>,
 ) -> Result<Vec<Shape>, Error> {
+    let face_shapes = attach_swept_result_face_metadata(shape, face_shapes);
+
     if let Some(metadata) = shape.single_face_offset_result_metadata() {
         return attach_single_face_offset_metadata(context, metadata, face_shapes);
     }
@@ -1371,6 +1375,32 @@ fn attach_offset_result_face_metadata(
     }
 
     Ok(face_shapes)
+}
+
+fn attach_swept_result_face_metadata(shape: &Shape, face_shapes: Vec<Shape>) -> Vec<Shape> {
+    if let Some(metadata) = shape.single_face_swept_result_metadata() {
+        return attach_single_face_swept_metadata(metadata, face_shapes);
+    }
+
+    if let Some(metadata) = shape.swept_surface_face_metadata() {
+        return attach_single_face_swept_metadata(metadata, face_shapes);
+    }
+
+    face_shapes
+}
+
+fn attach_single_face_swept_metadata(
+    metadata: SweptSurfaceFaceMetadata,
+    face_shapes: Vec<Shape>,
+) -> Vec<Shape> {
+    if face_shapes.len() != 1 {
+        return face_shapes;
+    }
+    let mut face_shapes = face_shapes;
+    let face_shape = face_shapes
+        .pop()
+        .expect("length was checked before popping single swept face");
+    vec![face_shape.with_swept_surface_face_metadata(metadata)]
 }
 
 pub(super) fn offset_result_face_shapes(

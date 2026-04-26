@@ -19,7 +19,7 @@ use crate::{
     EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample,
     FaceUvBounds, LinePayload, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, Orientation,
     PlanePayload, RevolutionSurfacePayload, Shape, ShapeKind, SpherePayload, SurfaceKind,
-    TorusPayload,
+    SweptSurfaceFaceMetadata, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -771,6 +771,9 @@ impl Context {
         if let Some(geometry) = ported_offset_surface_from_metadata_face_geometry(self, shape)? {
             return Ok(Some(geometry));
         }
+        if let Some(geometry) = ported_swept_surface_from_metadata_face_geometry(self, shape)? {
+            return Ok(Some(geometry));
+        }
 
         let bounds = self.face_uv_bounds_occt(shape)?;
         for candidate_kind in ANALYTIC_SURFACE_KINDS {
@@ -959,6 +962,35 @@ pub(crate) fn ported_swept_face_surface_from_samples(
     geometry: FaceGeometry,
 ) -> Result<Option<PortedSweptSurface>, Error> {
     ported_offset_basis_swept_surface_payload(context, shape, 0.0, geometry)
+}
+
+fn ported_swept_surface_from_metadata_face_geometry(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<FaceGeometry>, Error> {
+    let Some(metadata) = shape.swept_surface_face_metadata() else {
+        return Ok(None);
+    };
+    ported_swept_face_geometry_from_metadata(context, shape, metadata)
+}
+
+fn ported_swept_face_geometry_from_metadata(
+    context: &Context,
+    shape: &Shape,
+    metadata: SweptSurfaceFaceMetadata,
+) -> Result<Option<FaceGeometry>, Error> {
+    let seed_geometry = metadata.geometry_seed;
+    let Some(surface) = ported_swept_face_surface_from_samples(context, shape, seed_geometry)?
+    else {
+        return Ok(None);
+    };
+    if ported_swept_surface_kind(surface) != seed_geometry.kind {
+        return Ok(None);
+    }
+    Ok(Some(ported_swept_face_geometry_from_surface(
+        seed_geometry,
+        surface,
+    )))
 }
 
 fn ported_swept_face_geometry_candidate(
