@@ -1,40 +1,40 @@
 # Next Task
 
-Current milestone: `M3. Rust-Backed Traversal for Documents and Selectors` from `portingMilestones.md`.
+Current milestone: `M4. Public Query Fallback Cleanup` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs` now promotes fully loaded analytic, swept, and offset face inventories into the Rust-owned summary requirement set. Supported bbox summaries must resolve through exact primitive, ported topology, offset, or mesh candidates before failing; supported closed-solid volumes must resolve through exact primitive formulas, face contributions, or whole-shape mesh before failing.
-- The surviving generic `fallback_summary()` bbox and volume branches are no longer normal continuation paths. They are gated by `unsupported_bbox_summary_fallback_allowed()` and `unsupported_volume_summary_fallback_allowed()`, so only explicitly unsupported or unclassified shapes can still reach `SummaryBboxSource::OcctFallback` or `SummaryVolumeSource::OcctFallback`.
-- `rust/lean_occt/tests/brep_workflows.rs` now asserts exact primitive bbox and volume sources are `SummaryBboxSource::ExactPrimitive` and `SummaryVolumeSource::ExactPrimitive`, supported single-face analytic bboxes stay Rust-owned, and supported multi-face analytic solid bbox/volume summaries do not slide to `OcctFallback`. The through-hole boolean volume remains an explicit unsupported fallback case because that shape is not a fully loaded supported face inventory.
-- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --exact`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --exact`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml`.
-- `M2. Whole-Shape Summary Fallback Reduction` is complete. The remaining active work has moved to `M3`.
+- `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs` now requires `Context::ported_topology(shape)?` before `ported_subshape()`, `ported_subshapes()`, `ported_vertex_point()`, or `ported_edge_endpoints()` claim a Rust-owned result. Unsupported topology returns `Ok(None)` so the public OCCT fallback is explicit at the API boundary instead of being hidden inside `Context::topology()`.
+- `rust/lean_occt/src/lib.rs` now makes `Context::subshape_count()` use `ported_topology()` for face, wire, edge, and vertex counts. It calls `subshape_count_occt()` only when no Rust topology snapshot is available.
+- `rust/lean_occt/tests/selector_workflows.rs` now pins the selector box to ported topology, asserts public face/edge handle inventories match that topology, and checks `ModelDocument` descriptors/selectors remain aligned with `BrepShape` descriptors carrying ported face surfaces and curves.
+- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test recipe_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, and `cargo test --manifest-path rust/lean_occt/Cargo.toml`.
+- `M3. Rust-Backed Traversal for Documents and Selectors` is complete. The active work has moved to `M4`.
 
 ## Target
 
-Replace or strictly narrow the remaining OCCT-backed face/edge traversal boundary used by public shape queries, while keeping `ModelDocument`, selectors, and high-level reports backed by `BrepShape`/`TopologySnapshot` for supported shapes.
+Replace or strictly narrow broad public geometry query fallbacks where a Rust descriptor already identifies a supported analytic, swept, or offset kind but the public API can still fall through to an OCCT payload helper.
 
 ## Next Bounded Cut
 
-1. In `rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep/shape_queries.rs`, change `ported_subshape()` and `ported_subshapes()` so the supported path is keyed off `Context::ported_topology(shape)?` rather than `Context::topology(shape)?`; do not let the ported query path silently inherit OCCT topology fallback.
-2. Keep returning real `Shape` handles where the public API requires handles, but isolate that OCCT handle materialization behind an explicit supported-topology validation step and return `Ok(None)` for unsupported topology so the outer fallback is visible and bounded.
-3. Strengthen `document_workflows` and/or `selector_workflows` around face/edge selector behavior that is already descriptor-backed through `BrepShape`, so regressions toward raw `subshapes_occt()` traversal have a user-visible test.
-4. If this tightening exposes a supported selector/report path that still depends on raw OCCT face/edge enumeration, replace that path with `BrepShape` descriptors in the same turn instead of weakening the guard.
+1. In `rust/lean_occt/src/lib.rs`, tighten `edge_line_payload()`, `edge_circle_payload()`, and `edge_ellipse_payload()` so a matching `PortedCurve` returns the Rust-owned payload, a mismatched `Some(PortedCurve::...)` returns an explicit Rust error, and only `None` reaches the OCCT fallback.
+2. Apply the same pattern to the primitive face payload accessors backed by `ported_face_surface()`: plane, cylinder, cone, sphere, and torus payloads should not fall through to OCCT after Rust has already identified a different supported surface kind.
+3. Strengthen `rust/lean_occt/tests/ported_geometry_workflows.rs` so public payload APIs are asserted against the ported descriptors for supported line/circle/ellipse curves and primitive analytic faces, including at least one mismatched supported-kind request that errors without relying on OCCT.
+4. Keep swept and offset payload cleanup bounded for a follow-up if the primitive analytic cut is already large; do not weaken any M2/M3 guards to make public payload tests pass.
 
 ## Guardrails
 
 - Read `portingMilestones.md` and `nextStep.md` at the start of the next turn before editing.
 - Do not reintroduce `face_bboxes_occt()`, `OffsetFaceBboxSource::OcctFaceUnion`, `offset_shape_bbox_occt()`, or `SummaryBboxSource::OffsetOcctSubshapeUnion`.
-- Do not weaken the new `unsupported_bbox_summary_fallback_allowed()` or `unsupported_volume_summary_fallback_allowed()` guards unless the same turn lands a Rust-owned replacement that keeps supported summaries off `OcctFallback`.
-- Keep `ModelDocument::edges()`, `ModelDocument::faces()`, `select_edge()`, and `select_face()` centered on `BrepShape`; do not route selectors through `Context::subshapes()` just to get handles.
-- Preserve OCCT `Shape` handle materialization only for APIs that must return or consume handles; traversal decisions and counts for supported face/edge families should come from Rust topology.
+- Do not weaken `unsupported_bbox_summary_fallback_allowed()` or `unsupported_volume_summary_fallback_allowed()`.
+- Preserve OCCT fallback only for `None`/unsupported descriptor cases in public query APIs. Once a Rust descriptor returns `Some(...)`, mismatched payload requests should fail explicitly in Rust instead of trying another OCCT helper.
+- Keep `ModelDocument::edges()`, `ModelDocument::faces()`, `select_edge()`, and `select_face()` centered on `BrepShape`.
 
 ## Verification
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test recipe_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`

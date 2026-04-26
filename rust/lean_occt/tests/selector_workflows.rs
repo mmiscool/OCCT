@@ -31,6 +31,23 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
         document.select_edge("base", EdgeSelector::LongestByCurveKind(CurveKind::Line))?;
     let shortest_edge =
         document.select_edge("base", EdgeSelector::ShortestByCurveKind(CurveKind::Line))?;
+    let base_shape = document.shape("base")?;
+    let ported_topology = document
+        .kernel()
+        .context()
+        .ported_topology(base_shape)?
+        .ok_or_else(|| std::io::Error::other("expected base box to have ported topology"))?;
+    let public_face_shapes = document
+        .kernel()
+        .context()
+        .subshapes(base_shape, ShapeKind::Face)?;
+    let public_edge_shapes = document
+        .kernel()
+        .context()
+        .subshapes(base_shape, ShapeKind::Edge)?;
+    let brep = document.brep("base")?;
+    let faces = document.faces("base")?;
+    let edges = document.edges("base")?;
 
     let base_step = support::export_document_shape(
         &mut document,
@@ -47,6 +64,30 @@ fn selectors_choose_expected_faces_and_edges() -> Result<(), Box<dyn std::error:
     assert_eq!(shortest_edge.geometry.kind, CurveKind::Line);
     assert!((longest_edge.length - 60.0).abs() <= 1.0e-9);
     assert!((shortest_edge.length - 10.0).abs() <= 1.0e-9);
+    assert_eq!(faces.len(), ported_topology.faces.len());
+    assert_eq!(edges.len(), ported_topology.edges.len());
+    assert_eq!(public_face_shapes.len(), ported_topology.faces.len());
+    assert_eq!(public_edge_shapes.len(), ported_topology.edges.len());
+    assert_eq!(faces.len(), brep.faces.len());
+    assert_eq!(edges.len(), brep.edges.len());
+    assert!(faces.iter().all(|face| face.ported_face_surface.is_some()));
+    assert!(edges.iter().all(|edge| edge.ported_curve.is_some()));
+    assert_eq!(
+        faces
+            .get(largest_plane.index)
+            .ok_or_else(|| std::io::Error::other("largest face index missing"))?
+            .geometry
+            .kind,
+        largest_plane.geometry.kind
+    );
+    assert_eq!(
+        edges
+            .get(longest_edge.index)
+            .ok_or_else(|| std::io::Error::other("longest edge index missing"))?
+            .geometry
+            .kind,
+        longest_edge.geometry.kind
+    );
     assert!(base_step.is_file());
 
     Ok(())

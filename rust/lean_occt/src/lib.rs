@@ -3084,14 +3084,16 @@ impl Context {
     pub fn subshape_count(&self, shape: &Shape, kind: ShapeKind) -> Result<usize, Error> {
         match kind {
             ShapeKind::Face | ShapeKind::Wire | ShapeKind::Edge | ShapeKind::Vertex => {
-                let topology = self.topology(shape)?;
-                Ok(match kind {
-                    ShapeKind::Face => topology.faces.len(),
-                    ShapeKind::Wire => topology.wires.len(),
-                    ShapeKind::Edge => topology.edges.len(),
-                    ShapeKind::Vertex => topology.vertex_positions.len(),
-                    _ => unreachable!("handled by the outer match"),
-                })
+                match self.ported_topology(shape)? {
+                    Some(topology) => Ok(match kind {
+                        ShapeKind::Face => topology.faces.len(),
+                        ShapeKind::Wire => topology.wires.len(),
+                        ShapeKind::Edge => topology.edges.len(),
+                        ShapeKind::Vertex => topology.vertex_positions.len(),
+                        _ => unreachable!("handled by the outer match"),
+                    }),
+                    None => self.subshape_count_occt(shape, kind),
+                }
             }
             ShapeKind::Compound | ShapeKind::CompSolid | ShapeKind::Solid | ShapeKind::Shell => {
                 let summary = self.describe_shape(shape)?;

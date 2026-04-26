@@ -16,7 +16,9 @@ pub(super) fn ported_vertex_point(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<[f64; 3]>, Error> {
-    let topology = context.topology(shape)?;
+    let Some(topology) = context.ported_topology(shape)? else {
+        return Ok(None);
+    };
     let counts = shape_counts(context, shape, &topology)?;
     if classify_root_kind(counts) != ShapeKind::Vertex {
         return Ok(None);
@@ -35,7 +37,9 @@ pub(super) fn ported_edge_endpoints(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<EdgeEndpoints>, Error> {
-    let topology = context.topology(shape)?;
+    let Some(topology) = context.ported_topology(shape)? else {
+        return Ok(None);
+    };
     let counts = shape_counts(context, shape, &topology)?;
     if classify_root_kind(counts) != ShapeKind::Edge {
         return Ok(None);
@@ -62,7 +66,9 @@ pub(super) fn ported_subshape(
     kind: ShapeKind,
     index: usize,
 ) -> Result<Option<Shape>, Error> {
-    let topology = context.topology(shape)?;
+    let Some(topology) = context.ported_topology(shape)? else {
+        return Ok(None);
+    };
     let Some(count) = topology_backed_subshape_count(&topology, kind) else {
         return Ok(None);
     };
@@ -79,7 +85,9 @@ pub(super) fn ported_subshapes(
     shape: &Shape,
     kind: ShapeKind,
 ) -> Result<Option<Vec<Shape>>, Error> {
-    let topology = context.topology(shape)?;
+    let Some(topology) = context.ported_topology(shape)? else {
+        return Ok(None);
+    };
     let Some(expected_count) = topology_backed_subshape_count(&topology, kind) else {
         return Ok(None);
     };
