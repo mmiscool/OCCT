@@ -2539,6 +2539,118 @@ fn ported_cylinder_faces_use_rust_analytic_seed_metadata() -> Result<(), Box<dyn
 }
 
 #[test]
+fn ported_cone_faces_use_rust_analytic_seed_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    let kernel = ModelKernel::new()?;
+    let context = kernel.context();
+
+    let cone = kernel.make_cone(ConeParams {
+        origin: [-6.0, 5.0, 2.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 15.0,
+    })?;
+    assert_eq!(cone.rust_multi_face_analytic_source_count(), Some(3));
+
+    let faces = context.subshapes(&cone, ShapeKind::Face)?;
+    assert_eq!(faces.len(), 3);
+
+    let mut cone_face_count = 0;
+    let mut cap_face_count = 0;
+    for (face_index, face) in faces.iter().enumerate() {
+        assert!(
+            face.has_rust_analytic_surface_face_metadata(),
+            "cone face {face_index} should carry Rust analytic seed metadata"
+        );
+
+        let geometry = context.face_geometry(face)?;
+        let ported_geometry = context
+            .ported_face_geometry(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust cone analytic geometry"))?;
+        let occt_geometry = context.face_geometry_occt(face)?;
+        match geometry.kind {
+            SurfaceKind::Cone => cone_face_count += 1,
+            SurfaceKind::Plane => cap_face_count += 1,
+            kind => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected cone constructor face kind {kind:?}"
+                ))
+                .into())
+            }
+        }
+        assert_face_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("cone face {face_index} ported geometry"),
+        )?;
+        assert_face_geometry_close(
+            ported_geometry,
+            occt_geometry,
+            1.0e-12,
+            &format!("cone face {face_index} OCCT geometry"),
+        )?;
+
+        let descriptor = context
+            .ported_face_surface_descriptor(face)?
+            .ok_or_else(|| std::io::Error::other("expected Rust cone analytic descriptor"))?;
+        match descriptor {
+            PortedFaceSurface::Analytic(surface) => {
+                assert_eq!(ported_surface_kind(surface), geometry.kind);
+            }
+            descriptor => {
+                return Err(std::io::Error::other(format!(
+                    "cone face {face_index} should classify as analytic, got {descriptor:?}"
+                ))
+                .into())
+            }
+        }
+
+        let orientation = context.shape_orientation(face)?;
+        for uv_t in [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]] {
+            let rust_sample =
+                descriptor.sample_normalized_with_orientation(geometry, uv_t, orientation);
+            let context_sample = context
+                .ported_face_sample_normalized(face, uv_t)?
+                .ok_or_else(|| std::io::Error::other("expected Rust cone analytic sample"))?;
+            let occt_sample = context.face_sample_normalized_occt(face, uv_t)?;
+
+            assert_vec3_close(
+                rust_sample.position,
+                occt_sample.position,
+                1.0e-6,
+                &format!("cone face {face_index} descriptor sample position"),
+            )?;
+            assert_vec3_close(
+                rust_sample.normal,
+                occt_sample.normal,
+                1.0e-6,
+                &format!("cone face {face_index} descriptor sample normal"),
+            )?;
+            assert_vec3_close(
+                context_sample.position,
+                rust_sample.position,
+                1.0e-12,
+                &format!("cone face {face_index} context sample position"),
+            )?;
+            assert_vec3_close(
+                context_sample.normal,
+                rust_sample.normal,
+                1.0e-12,
+                &format!("cone face {face_index} context sample normal"),
+            )?;
+        }
+    }
+
+    assert_eq!(cone_face_count, 1);
+    assert_eq!(cap_face_count, 2);
+
+    Ok(())
+}
+
+#[test]
 fn public_swept_and_offset_payload_queries_match_occt() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = support::test_guard();
     let kernel = ModelKernel::new()?;

@@ -1603,6 +1603,7 @@ impl Context {
     }
 
     pub fn make_cone(&self, params: ConeParams) -> Result<Shape, Error> {
+        let rust_metadata = cone_analytic_result_metadata(params);
         let raw_params = ffi::LeanOcctConeParams {
             x: params.origin[0],
             y: params.origin[1],
@@ -1619,7 +1620,7 @@ impl Context {
         };
 
         let raw = unsafe { ffi::lean_occt_shape_make_cone(self.raw.as_ptr(), &raw_params) };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
     pub fn make_sphere(&self, params: SphereParams) -> Result<Shape, Error> {
@@ -4700,6 +4701,96 @@ fn cylinder_size_component_supported(value: f64) -> bool {
 fn cylinder_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
     FaceGeometry {
         kind: SurfaceKind::Cylinder,
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+        is_u_closed: true,
+        is_v_closed: false,
+        is_u_periodic: true,
+        is_v_periodic: false,
+        u_period: TAU,
+        v_period: 0.0,
+    }
+}
+
+fn cone_analytic_result_metadata(params: ConeParams) -> ShapeRustMetadata {
+    match cone_analytic_face_metadata_inventory(params) {
+        Some(inventory) if !inventory.is_empty() => {
+            ShapeRustMetadata::MultiFaceAnalyticResult(inventory)
+        }
+        _ => ShapeRustMetadata::None,
+    }
+}
+
+fn cone_analytic_face_metadata_inventory(
+    params: ConeParams,
+) -> Option<Vec<AnalyticSurfaceFaceMetadata>> {
+    if !params.origin.iter().all(|value| value.is_finite())
+        || !params.axis.iter().all(|value| value.is_finite())
+        || !params.x_direction.iter().all(|value| value.is_finite())
+        || vector_norm3(params.axis) <= 1.0e-12
+        || vector_norm3(params.x_direction) <= 1.0e-12
+        || !cone_radius_component_supported(params.base_radius)
+        || !cone_radius_component_supported(params.top_radius)
+        || !cone_height_supported(params.height)
+    {
+        return None;
+    }
+
+    let radius_delta = params.top_radius - params.base_radius;
+    if radius_delta.abs() <= 1.0e-12 {
+        return None;
+    }
+    if params.base_radius <= 1.0e-12 && params.top_radius <= 1.0e-12 {
+        return None;
+    }
+
+    let slant_height = params.height.hypot(radius_delta);
+    if !slant_height.is_finite() || slant_height <= 1.0e-12 {
+        return None;
+    }
+
+    let mut inventory = Vec::new();
+    push_unique_analytic_face_metadata(
+        &mut inventory,
+        AnalyticSurfaceFaceMetadata {
+            geometry_seed: cone_face_geometry_seed(0.0, TAU, 0.0, slant_height),
+        },
+    );
+    push_cone_cap_analytic_face_metadata(&mut inventory, params.base_radius);
+    push_cone_cap_analytic_face_metadata(&mut inventory, params.top_radius);
+
+    Some(inventory)
+}
+
+fn cone_radius_component_supported(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+fn cone_height_supported(value: f64) -> bool {
+    value.is_finite() && value > 1.0e-12
+}
+
+fn push_cone_cap_analytic_face_metadata(
+    inventory: &mut Vec<AnalyticSurfaceFaceMetadata>,
+    radius: f64,
+) {
+    if radius <= 1.0e-12 {
+        return;
+    }
+
+    push_unique_analytic_face_metadata(
+        inventory,
+        AnalyticSurfaceFaceMetadata {
+            geometry_seed: plane_face_geometry_seed(-radius, radius, -radius, radius),
+        },
+    );
+}
+
+fn cone_face_geometry_seed(u_min: f64, u_max: f64, v_min: f64, v_max: f64) -> FaceGeometry {
+    FaceGeometry {
+        kind: SurfaceKind::Cone,
         u_min,
         u_max,
         v_min,
