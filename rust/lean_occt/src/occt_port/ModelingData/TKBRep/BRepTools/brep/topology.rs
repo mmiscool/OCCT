@@ -1,4 +1,4 @@
-use super::edge_topology::root_edge_topology;
+use super::edge_topology::{root_edge_topology, topology_edge_length, RootEdgeTopology};
 use super::face_snapshot::{
     load_ported_face_snapshot, PreparedFaceShape, TopologySnapshotFaceFields,
 };
@@ -48,6 +48,10 @@ fn load_root_topology_snapshot(
     context: &Context,
     shape: &Shape,
 ) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    if let Some(root_edge_fields) = load_root_edge_topology_snapshot(context, shape)? {
+        return Ok(Some(root_edge_fields));
+    }
+
     let vertex_shapes = context.subshapes_occt(shape, ShapeKind::Vertex)?;
     let vertex_positions = vertex_shapes
         .iter()
@@ -167,6 +171,79 @@ fn load_root_topology_snapshot(
         wire_vertices,
         wire_vertex_indices,
     }))
+}
+
+fn load_root_edge_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
+        return Ok(None);
+    }
+
+    let Some(endpoints) = ported_edge_endpoints(context, shape)? else {
+        return Ok(None);
+    };
+    let geometry = context.edge_geometry(shape)?;
+    if !matches!(
+        geometry.kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    ) {
+        return Ok(None);
+    }
+
+    let (vertex_shapes, vertex_positions, start_vertex, end_vertex) =
+        root_edge_vertices_from_ported_seed(context, shape, endpoints)?;
+    let edge_shape = context.duplicate_shape_occt(shape)?;
+    let length = topology_edge_length(context, shape, geometry)?;
+    let root_edges = vec![RootEdgeTopology {
+        geometry,
+        start_vertex,
+        end_vertex,
+        length,
+    }];
+    let edges = vec![crate::TopologyEdge {
+        start_vertex,
+        end_vertex,
+        length,
+    }];
+
+    Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes,
+        vertex_positions,
+        edge_shapes: vec![edge_shape],
+        wire_shapes: Vec::new(),
+        prepared_shell_shapes: Vec::new(),
+        face_shapes: Vec::new(),
+        prepared_face_shapes: Vec::new(),
+        edges,
+        root_edges,
+        root_wires: Vec::new(),
+        wires: Vec::new(),
+        wire_edge_indices: Vec::new(),
+        wire_edge_orientations: Vec::new(),
+        wire_vertices: Vec::new(),
+        wire_vertex_indices: Vec::new(),
+    }))
+}
+
+fn root_edge_vertices_from_ported_seed(
+    context: &Context,
+    shape: &Shape,
+    endpoints: EdgeEndpoints,
+) -> Result<(Vec<Shape>, Vec<[f64; 3]>, Option<usize>, Option<usize>), Error> {
+    let start_shape = context.root_edge_vertex_shape_occt(shape, 0)?;
+    let end_shape = context.root_edge_vertex_shape_occt(shape, 1)?;
+    if context.shape_is_same_occt(&start_shape, &end_shape)? {
+        return Ok((vec![start_shape], vec![endpoints.start], Some(0), Some(0)));
+    }
+
+    Ok((
+        vec![start_shape, end_shape],
+        vec![endpoints.start, endpoints.end],
+        Some(0),
+        Some(1),
+    ))
 }
 
 fn attach_offset_result_face_metadata(

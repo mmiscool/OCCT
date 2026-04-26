@@ -563,6 +563,10 @@ mod ffi {
             shape: *const LeanOcctShape,
             path_utf8: *const c_char,
         ) -> LeanOcctResult;
+        pub fn lean_occt_shape_clone(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_orientation(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -773,6 +777,11 @@ mod ffi {
             shape: *const LeanOcctShape,
             kind: LeanOcctShapeKind,
             index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_edge_vertex(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            endpoint_index: usize,
         ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_wire_edge_occurrence_count(
             context: *mut LeanOcctContext,
@@ -3408,6 +3417,26 @@ impl Context {
                 shape.raw.as_ptr(),
                 kind.to_ffi(),
                 index,
+            )
+        };
+        self.wrap_shape(raw)
+    }
+
+    pub(crate) fn duplicate_shape_occt(&self, shape: &Shape) -> Result<Shape, Error> {
+        let raw = unsafe { ffi::lean_occt_shape_clone(self.raw.as_ptr(), shape.raw.as_ptr()) };
+        self.wrap_shape(raw)
+    }
+
+    pub(crate) fn root_edge_vertex_shape_occt(
+        &self,
+        shape: &Shape,
+        endpoint_index: usize,
+    ) -> Result<Shape, Error> {
+        let raw = unsafe {
+            ffi::lean_occt_shape_root_edge_vertex(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                endpoint_index,
             )
         };
         self.wrap_shape(raw)

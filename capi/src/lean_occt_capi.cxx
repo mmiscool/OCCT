@@ -2353,6 +2353,15 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_write_step(
   });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_clone(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return requireShape(the_shape);
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT void lean_occt_shape_destroy(LeanOcctShape* the_shape)
 {
   delete the_shape;
@@ -2991,6 +3000,32 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_subshape(
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireShape(the_shape), the_kind, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_endpoint_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    const TopoDS_Edge an_edge = requireEdgeShape(the_shape);
+    TopoDS_Vertex     a_first_vertex;
+    TopoDS_Vertex     a_last_vertex;
+    TopExp::Vertices(an_edge, a_first_vertex, a_last_vertex);
+    if (a_first_vertex.IsNull() || a_last_vertex.IsNull())
+    {
+      throw std::runtime_error("Edge did not contain two endpoint vertices.");
+    }
+    if (the_endpoint_index == 0)
+    {
+      return a_first_vertex;
+    }
+    if (the_endpoint_index == 1)
+    {
+      return a_last_vertex;
+    }
+    throw std::out_of_range("Root edge vertex endpoint index was out of range.");
   });
 }
 

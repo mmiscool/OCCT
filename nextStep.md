@@ -1,50 +1,55 @@
 # Next Task
 
-Current milestone: `M23. Rust-Owned Root Edge Topology Inventory` from `portingMilestones.md`.
+Current milestone: `M24. Rust-Owned Face-Free Root Wire Inventory` from `portingMilestones.md`.
 
 ## Completed Evidence
 
-- `Context::ported_brep()` now calls `strict_brep_raw_topology_fallback_allowed()` before the raw `self.topology_occt(shape)?` materialization branch.
-- The strict classifier requires Rust topology for supported root `Line`, `Circle`, and `Ellipse` edges, face-free wires, and face inventories whose surfaces are supported analytic, swept, or offset kinds.
-- Supported roots now return an explicit Rust-owned topology/materialization error when `load_ported_topology()` returns `None` instead of silently switching to `FaceSurfaceRoute::Raw`.
-- `supported_brep_materialization_requires_ported_topology` covers representative analytic box, face-free ellipse and helix, swept extrusion and revolution, and offset-surface roots, asserting BRep topology comes from `ported_topology()`.
-- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_multi_face_solids -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `awk '/pub fn ported_brep\(&self, shape: &Shape\)/,/let vertices =/' rust/lean_occt/src/occt_port/ModelingData/TKBRep/BRepTools/brep.rs | rg -n 'strict_brep_raw_topology_fallback_allowed|self\.topology_occt\(shape\)\?|FaceSurfaceRoute::Raw'`, and `git diff --check`.
+- `M23. Rust-Owned Root Edge Topology Inventory` is complete.
+- `load_root_topology_snapshot()` now calls `load_root_edge_topology_snapshot()` before the generic raw root-inventory sweep.
+- Supported root `Line`, `Circle`, and `Ellipse` edges build topology from the Rust-owned endpoint seed, public/Rust-owned edge geometry, and ported curve length instead of `subshapes_occt(shape, Vertex/Edge/Wire/Face/Shell)` plus `vertex_point_occt()`.
+- The root-edge branch carries only a cloned root edge handle and narrow endpoint vertex handles through the C ABI via `lean_occt_shape_clone()` and `lean_occt_shape_root_edge_vertex()`.
+- `root_edge_topology()` and `wire_occurrence()` now share `topology_edge_length()`, so supported edge topology and wire occurrence identity use `PortedCurve::from_context_with_ported_payloads()` lengths. Raw `edge_length(edge_shape)` remains only for unsupported curve kinds.
+- `root_edge_endpoints_and_topology_use_ported_seed` now checks root topology length against `ported_edge_length()`, public root-edge edge/vertex subshape handles, public vertex points, and empty wire/face/shell inventories.
+- `brep_workflows` now validates topology edge lengths against public ported edge length instead of treating raw OCCT mass-property edge length as the canonical value for supported ellipse topology.
+- Verification passed: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI -j 8`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, source guards for the root-edge branch and shared topology edge length path, and `git diff --check`.
 
 ## Target
 
-Replace the supported root-edge side of `load_root_topology_snapshot()`:
+Replace the face-free root-wire side of `load_root_topology_snapshot()`:
 
-`subshapes_occt(shape, Vertex/Edge/Wire/Shell/Face)` plus `vertex_point_occt()` for a root `Edge`
+`subshapes_occt(shape, Vertex/Edge/Wire/Shell/Face)` plus `vertex_point_occt()` for a root `Wire`
 
-Root line, circle, and ellipse topology construction should use the Rust-owned endpoint seed and supported edge geometry/length data before the generic raw inventory loader is considered.
+Face-free root wires should derive their root wire handle, edge occurrence handles, edge inventory, vertex positions, and packed wire topology from narrow wire occurrence handles plus Rust-owned edge geometry/endpoints/length before the generic raw inventory loader is considered.
 
 ## Next Bounded Cut
 
-1. Add a root-edge-specific topology inventory entry before the generic `load_root_topology_snapshot()` path.
-2. Construct supported root edge vertex positions from the existing Rust-owned endpoint seed and construct the single topology edge from Rust-owned edge geometry/length data.
-3. Thread the root-edge inventory through `load_ported_topology()` so `ported_topology()`, BRep materialization, public root-edge subshape counts, and root-edge topology parity use the Rust-owned branch.
-4. Keep unsupported root edges on explicit raw/oracle APIs rather than recursively forcing ported topology.
-5. Add or strengthen regression coverage that would fail if supported root edge topology reaches the generic raw `subshapes_occt()`/`vertex_point_occt()` inventory path.
-6. Add a source guard proving the supported root-edge topology branch avoids the generic raw inventory calls once the branch is named.
+1. Add a root-wire-specific topology inventory entry after the root-edge branch and before the generic `load_root_topology_snapshot()` path.
+2. Guard it to root `ShapeKind::Wire` values with no faces, so face-bearing topology keeps the existing path until a separate face-inventory cut.
+3. Seed the branch with a cloned root wire handle and `wire_edge_occurrences_occt()` occurrence handles; do not use the generic root `subshapes_occt(shape, ...)` sweep for supported face-free wires.
+4. Build root edge shapes from occurrence identity, edge geometry/endpoints from `topology_edge_query()`, and edge lengths from `topology_edge_length()`.
+5. Deduplicate vertex positions from occurrence endpoints and construct the single packed root wire with existing occurrence ordering.
+6. Thread the root-wire inventory through `load_ported_topology()` so `ported_topology()`, BRep materialization, public root-wire subshape counts, and public root-wire subshape handles use the Rust-owned branch.
+7. Strengthen `ported_brep_uses_rust_owned_topology_for_face_free_shapes` around the helix/root-wire case so it checks public edge/wire/vertex handles and topology edge lengths.
+8. Add a named source guard proving the root-wire branch avoids `subshapes_occt(shape, Vertex/Edge/Wire/Face/Shell)`, `vertex_point_occt()`, and `topology_occt()`.
 
 ## Guardrails
 
 - Read `portingMilestones.md` and `nextStep.md` at the start of the next turn before editing.
 - Do not loosen `strict_brep_raw_topology_fallback_allowed()` or let supported `ported_brep()` roots silently enter `FaceSurfaceRoute::Raw`.
-- Do not reintroduce `root_edge_endpoints_from_topology_seed()` or `context.topology_occt(shape)?` inside the root endpoint seed.
+- Keep the completed M23 root-edge branch ahead of the generic loader and free of `subshapes_occt()`, `vertex_point_occt()`, and `topology_occt()`.
+- Keep unsupported root edges and ambiguous root wires on explicit raw/oracle APIs rather than recursive forced ported topology.
 - Do not reintroduce `root_wire_topology_from_snapshot()` or `context.topology_occt(&prepared_wire_shape.wire_shape)` in the wire topology path.
 - Keep explicit `*_occt()` helpers available as oracle APIs for tests and unsupported/imported shapes.
-- Keep `SingleFaceOffsetResult`, `MultiFaceOffsetResult`, signed offset matching, deterministic multi-source offset scoring, repeated wire occurrence identity matching, and unsupported root-edge raw endpoint escape behavior intact.
 
 ## Verification
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
+- `cmake --build build --target LeanOcctCAPI -j 8` if C ABI glue changes
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_curve_sampling_matches_occt -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows root_edge_endpoints_and_topology_use_ported_seed -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
-- Add the named root-edge topology source guard after implementing the branch.
+- Add the named root-wire topology source guard after implementing the branch.
 - `git diff --check`

@@ -1,4 +1,4 @@
-use super::edge_topology::{topology_edge_query, RootEdgeTopology};
+use super::edge_topology::{topology_edge_length, topology_edge_query, RootEdgeTopology};
 use super::*;
 
 pub(super) struct PreparedRootWireShape {
@@ -153,7 +153,7 @@ fn wire_occurrence(
     if matches!(orientation, Orientation::Reversed) {
         std::mem::swap(&mut start_vertex, &mut end_vertex);
     }
-    let length = edge_length(edge_shape);
+    let length = topology_edge_length(context, edge_shape, geometry)?;
     let Some(edge_index) = matched_root_edge_index(
         context,
         edge_shape,

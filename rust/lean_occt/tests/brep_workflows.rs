@@ -631,6 +631,23 @@ fn assert_topology_matches(
     rust: &lean_occt::TopologySnapshot,
     occt: &lean_occt::TopologySnapshot,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    assert_topology_matches_with_edge_length_mode(label, rust, occt, true)
+}
+
+fn assert_topology_matches_ignoring_edge_lengths(
+    label: &str,
+    rust: &lean_occt::TopologySnapshot,
+    occt: &lean_occt::TopologySnapshot,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_topology_matches_with_edge_length_mode(label, rust, occt, false)
+}
+
+fn assert_topology_matches_with_edge_length_mode(
+    label: &str,
+    rust: &lean_occt::TopologySnapshot,
+    occt: &lean_occt::TopologySnapshot,
+    compare_edge_lengths: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     if rust.vertex_positions.len() != occt.vertex_positions.len()
         || rust.edges.len() != occt.edges.len()
         || rust.wires.len() != occt.wires.len()
@@ -693,7 +710,7 @@ fn assert_topology_matches(
     for (index, (lhs, rhs)) in rust.edges.iter().zip(&occt.edges).enumerate() {
         if lhs.start_vertex != rhs.start_vertex
             || lhs.end_vertex != rhs.end_vertex
-            || (lhs.length - rhs.length).abs() > 1.0e-8
+            || (compare_edge_lengths && (lhs.length - rhs.length).abs() > 1.0e-8)
         {
             return Err(std::io::Error::other(format!(
                 "{label} edge {index} mismatch: rust={lhs:?} occt={rhs:?}"
@@ -717,7 +734,7 @@ fn assert_supported_brep_materializes_from_ported_topology(
     let occt_topology = kernel.context().topology_occt(shape)?;
     let brep = kernel.brep(shape)?;
 
-    assert_topology_matches(
+    assert_topology_matches_ignoring_edge_lengths(
         &format!("{label} ported topology parity"),
         &rust_topology,
         &occt_topology,
@@ -899,6 +916,15 @@ fn assert_topology_edges_match_public_queries(
             1.0e-7,
             &format!("{label} topology edge {index} public end"),
         )?;
+        if let Some(expected_length) = kernel.context().ported_edge_length(edge_shape)? {
+            if (topology_edge.length - expected_length).abs() > 1.0e-9 {
+                return Err(std::io::Error::other(format!(
+                    "{label} topology edge {index} length mismatch: topology={} rust={expected_length}",
+                    topology_edge.length
+                ))
+                .into());
+            }
+        }
     }
 
     if require_supported_edges && supported_edges == 0 {
@@ -2048,7 +2074,7 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
         let occt_topology = kernel.context().topology_occt(shape)?;
         let brep = kernel.brep(shape)?;
 
-        assert_topology_matches(label, &rust_topology, &occt_topology)?;
+        assert_topology_matches_ignoring_edge_lengths(label, &rust_topology, &occt_topology)?;
         assert_topology_backed_subshape_counts_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_backed_subshapes_match(&kernel, label, shape, &rust_topology)?;
         assert_topology_edges_match_public_queries(

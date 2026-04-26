@@ -1038,6 +1038,16 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             .edges
             .first()
             .ok_or_else(|| std::io::Error::other(format!("{label} missing topology edge")))?;
+        let ported_length = kernel
+            .context()
+            .ported_edge_length(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported length")))?;
+        assert_scalar_close(
+            topology_edge.length,
+            ported_length,
+            1.0e-10,
+            &format!("{label} topology length"),
+        )?;
         let start_index = topology_edge.start_vertex.ok_or_else(|| {
             std::io::Error::other(format!("{label} missing topology start vertex"))
         })?;
@@ -1077,6 +1087,38 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             topology.vertex_positions.len(),
             "{label} public vertex count should come from ported root topology"
         );
+        let edge_shapes = kernel.context().subshapes(&edge, ShapeKind::Edge)?;
+        assert_eq!(
+            edge_shapes.len(),
+            1,
+            "{label} public edge handles should come from ported root topology"
+        );
+        assert_eq!(
+            kernel.context().edge_geometry(&edge_shapes[0])?.kind,
+            expected_kind,
+            "{label} ported root edge handle geometry"
+        );
+        let vertex_shapes = kernel.context().subshapes(&edge, ShapeKind::Vertex)?;
+        assert_eq!(
+            vertex_shapes.len(),
+            topology.vertex_positions.len(),
+            "{label} public vertex handles should come from ported root topology"
+        );
+        for (vertex_index, vertex_shape) in vertex_shapes.iter().enumerate() {
+            assert_vec3_close(
+                kernel.context().vertex_point(vertex_shape)?,
+                topology.vertex_positions[vertex_index],
+                1.0e-12,
+                &format!("{label} ported root vertex handle {vertex_index}"),
+            )?;
+        }
+        for empty_kind in [ShapeKind::Wire, ShapeKind::Face, ShapeKind::Shell] {
+            assert_eq!(
+                kernel.context().subshapes(&edge, empty_kind)?.len(),
+                0,
+                "{label} public {empty_kind:?} handles should be empty from ported root topology"
+            );
+        }
         assert_eq!(
             kernel
                 .context()

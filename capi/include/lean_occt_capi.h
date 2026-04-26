@@ -458,6 +458,8 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_read_step(LeanOcctContext* 
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_write_step(LeanOcctContext*     the_context,
                                                                 const LeanOcctShape* the_shape,
                                                                 const char* the_path_utf8);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_clone(LeanOcctContext*     the_context,
+                                                            const LeanOcctShape* the_shape);
 LEAN_OCCT_CAPI_EXPORT void lean_occt_shape_destroy(LeanOcctShape* the_shape);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_orientation(
   LeanOcctContext*        the_context,
@@ -620,6 +622,10 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_subshape(LeanOcctContext*  
                                                               const LeanOcctShape*  the_shape,
                                                               LeanOcctShapeKind     the_kind,
                                                               size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  size_t               the_endpoint_index);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,

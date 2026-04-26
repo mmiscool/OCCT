@@ -35,8 +35,35 @@ pub(super) fn root_edge_topology(
         geometry: query.geometry,
         start_vertex: match_vertex_index(vertex_positions, query.endpoints.start),
         end_vertex: match_vertex_index(vertex_positions, query.endpoints.end),
-        length: edge_length(edge_shape),
+        length: topology_edge_length(context, edge_shape, query.geometry)?,
     })
+}
+
+pub(super) fn topology_edge_length(
+    context: &Context,
+    edge_shape: &Shape,
+    geometry: EdgeGeometry,
+) -> Result<f64, Error> {
+    let Some(curve) =
+        PortedCurve::from_context_with_ported_payloads(context, edge_shape, geometry)?
+    else {
+        if rust_owned_topology_curve_required(geometry.kind) {
+            return Err(Error::new(format!(
+                "Rust-owned topology did not cover {:?} edge length",
+                geometry.kind
+            )));
+        }
+        return Ok(edge_length(edge_shape));
+    };
+
+    Ok(curve.length_with_geometry(geometry))
+}
+
+fn rust_owned_topology_curve_required(kind: CurveKind) -> bool {
+    matches!(
+        kind,
+        CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+    )
 }
 
 pub(super) fn oriented_edge_geometry(
