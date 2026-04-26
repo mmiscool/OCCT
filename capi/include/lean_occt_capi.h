@@ -730,6 +730,26 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_vertex(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,
   size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compound_subshape_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctShapeKind     the_kind,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compound_subshape(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctShapeKind     the_kind,
+  size_t                the_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compsolid_subshape_count(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctShapeKind     the_kind,
+  size_t*               the_count);
+LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compsolid_subshape(
+  LeanOcctContext*      the_context,
+  const LeanOcctShape*  the_shape,
+  LeanOcctShapeKind     the_kind,
+  size_t                the_index);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,

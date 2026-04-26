@@ -67,6 +67,8 @@
 #include <TopLoc_Location.hxx>
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_CompSolid.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
@@ -538,6 +540,26 @@ static TopoDS_Solid requireSolidShape(const LeanOcctShape* the_shape)
     throw std::invalid_argument("LeanOcctShape was not a solid.");
   }
   return TopoDS::Solid(a_shape);
+}
+
+static TopoDS_Compound requireCompoundShape(const LeanOcctShape* the_shape)
+{
+  const TopoDS_Shape& a_shape = requireShape(the_shape);
+  if (a_shape.ShapeType() != TopAbs_COMPOUND)
+  {
+    throw std::invalid_argument("LeanOcctShape was not a compound.");
+  }
+  return TopoDS::Compound(a_shape);
+}
+
+static TopoDS_CompSolid requireCompSolidShape(const LeanOcctShape* the_shape)
+{
+  const TopoDS_Shape& a_shape = requireShape(the_shape);
+  if (a_shape.ShapeType() != TopAbs_COMPSOLID)
+  {
+    throw std::invalid_argument("LeanOcctShape was not a compsolid.");
+  }
+  return TopoDS::CompSolid(a_shape);
 }
 
 static LeanOcctShape* makeBooleanResult(const TopoDS_Shape& the_lhs,
@@ -3343,6 +3365,50 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_solid_verte
 {
   return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
     return indexedSubshape(requireSolidShape(the_shape), LEAN_OCCT_SHAPE_KIND_VERTEX, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compound_subshape_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctShapeKind    the_kind,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root compound subshape count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireCompoundShape(the_shape), the_kind);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compound_subshape(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctShapeKind    the_kind,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireCompoundShape(the_shape), the_kind, the_index);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_compsolid_subshape_count(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctShapeKind    the_kind,
+  size_t*              the_count)
+{
+  return writeOutput(the_context, the_count, "Root compsolid subshape count output pointer was null.", [&](size_t& the_result) {
+    the_result = countIndexedSubshapes(requireCompSolidShape(the_shape), the_kind);
+  });
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_compsolid_subshape(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctShapeKind    the_kind,
+  size_t               the_index)
+{
+  return guardShapeCall(the_context, [&]() -> TopoDS_Shape {
+    return indexedSubshape(requireCompSolidShape(the_shape), the_kind, the_index);
   });
 }
 

@@ -117,6 +117,7 @@ pub(super) fn ported_shape_summary(
     edges: &[BrepEdge],
     faces: &[BrepFace],
     prepared_shell_shapes: &[PreparedShellShape],
+    solid_shapes: &[Shape],
     face_shapes: &[Shape],
     edge_shapes: &[Shape],
 ) -> Result<
@@ -232,6 +233,7 @@ pub(super) fn ported_shape_summary(
     } else {
         None
     };
+    let child_solid_volume = child_solid_assembly_volume(context, counts, solid_shapes);
     let whole_shape_mesh_volume = if closed_volume_topology {
         mesh_shape_volume(context, shape, counts)
     } else {
@@ -239,6 +241,9 @@ pub(super) fn ported_shape_summary(
     };
     let volume_resolution = exact_primitive
         .map(|summary| (summary.volume, SummaryVolumeSource::ExactPrimitive))
+        .or_else(|| {
+            child_solid_volume.map(|volume| (volume, SummaryVolumeSource::FaceContributions))
+        })
         .or_else(|| {
             face_contributions_volume.map(|volume| (volume, SummaryVolumeSource::FaceContributions))
         })
@@ -305,6 +310,29 @@ fn has_closed_volume_topology(faces: &[BrepFace], edges: &[BrepEdge]) -> bool {
         || edges
             .iter()
             .all(|edge| edge.adjacent_face_indices.len() == 2)
+}
+
+fn child_solid_assembly_volume(
+    context: &Context,
+    counts: ShapeCounts,
+    solid_shapes: &[Shape],
+) -> Option<f64> {
+    if counts.solid_count <= 1
+        || solid_shapes.len() != counts.solid_count
+        || (counts.compound_count == 0 && counts.compsolid_count == 0)
+    {
+        return None;
+    }
+
+    let mut volume = 0.0;
+    for solid_shape in solid_shapes {
+        let summary = context.ported_brep(solid_shape).ok()?.summary;
+        if summary.root_kind != ShapeKind::Solid || summary.solid_count != 1 {
+            return None;
+        }
+        volume += summary.volume.abs();
+    }
+    Some(volume)
 }
 
 fn analytic_shape_volume(

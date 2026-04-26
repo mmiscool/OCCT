@@ -279,11 +279,12 @@ impl Context {
     }
 
     pub fn ported_brep(&self, shape: &Shape) -> Result<BrepShape, Error> {
-        let (topology, edge_shapes, prepared_shell_shapes, face_shapes, face_route) =
+        let (topology, edge_shapes, solid_shapes, prepared_shell_shapes, face_shapes, face_route) =
             match load_ported_topology(self, shape)? {
                 Some(loaded) => (
                     loaded.topology,
                     loaded.edge_shapes,
+                    loaded.solid_shapes,
                     loaded.prepared_shell_shapes,
                     loaded.face_shapes,
                     FaceSurfaceRoute::Public,
@@ -311,6 +312,7 @@ impl Context {
                     (
                         self.topology_occt(shape)?,
                         self.subshapes_occt(shape, ShapeKind::Edge)?,
+                        self.subshapes_occt(shape, ShapeKind::Solid)?,
                         prepared_shell_shapes,
                         self.subshapes_occt(shape, ShapeKind::Face)?,
                         FaceSurfaceRoute::Raw,
@@ -339,6 +341,7 @@ impl Context {
                 &edges,
                 &faces,
                 &prepared_shell_shapes,
+                &solid_shapes,
                 &face_shapes,
                 &edge_shapes,
             )?;

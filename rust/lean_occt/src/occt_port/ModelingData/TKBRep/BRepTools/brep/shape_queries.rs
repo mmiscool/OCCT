@@ -14,6 +14,7 @@ fn topology_backed_subshape_count(
         ShapeKind::Edge => Some(topology.edges.len()),
         ShapeKind::Vertex => Some(topology.vertex_positions.len()),
         ShapeKind::Shell => loaded.map(|loaded| loaded.prepared_shell_shapes.len()),
+        ShapeKind::Solid => loaded.map(|loaded| loaded.solid_shapes.len()),
         _ => None,
     }
 }
@@ -150,6 +151,7 @@ pub(super) fn ported_subshapes(
         ShapeKind::Wire => loaded.wire_shapes,
         ShapeKind::Edge => loaded.edge_shapes,
         ShapeKind::Vertex => loaded.vertex_shapes,
+        ShapeKind::Solid => loaded.solid_shapes,
         ShapeKind::Shell => loaded
             .prepared_shell_shapes
             .into_iter()

@@ -913,6 +913,30 @@ mod ffi {
             shape: *const LeanOcctShape,
             index: usize,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_compound_subshape_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            kind: LeanOcctShapeKind,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_compound_subshape(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            kind: LeanOcctShapeKind,
+            index: usize,
+        ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_compsolid_subshape_count(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            kind: LeanOcctShapeKind,
+            count: *mut usize,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_root_compsolid_subshape(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            kind: LeanOcctShapeKind,
+            index: usize,
+        ) -> *mut LeanOcctShape;
         pub fn lean_occt_shape_wire_edge_occurrence_count(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -3951,6 +3975,72 @@ impl Context {
                 ffi::lean_occt_shape_root_solid_vertex(
                     self.raw.as_ptr(),
                     solid_shape.raw.as_ptr(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_compound_subshapes_occt(
+        &self,
+        compound_shape: &Shape,
+        kind: ShapeKind,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_compound_subshape_count(
+                self.raw.as_ptr(),
+                compound_shape.raw.as_ptr(),
+                kind.to_ffi(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_compound_subshape(
+                    self.raw.as_ptr(),
+                    compound_shape.raw.as_ptr(),
+                    kind.to_ffi(),
+                    index,
+                )
+            };
+            shapes.push(self.wrap_shape(raw)?);
+        }
+        Ok(shapes)
+    }
+
+    pub(crate) fn root_compsolid_subshapes_occt(
+        &self,
+        compsolid_shape: &Shape,
+        kind: ShapeKind,
+    ) -> Result<Vec<Shape>, Error> {
+        let mut count = 0_usize;
+        let result = unsafe {
+            ffi::lean_occt_shape_root_compsolid_subshape_count(
+                self.raw.as_ptr(),
+                compsolid_shape.raw.as_ptr(),
+                kind.to_ffi(),
+                &mut count,
+            )
+        };
+        if result != ffi::LeanOcctResult::Ok {
+            return Err(Error::new(self.last_error()));
+        }
+
+        let mut shapes = Vec::with_capacity(count);
+        for index in 0..count {
+            let raw = unsafe {
+                ffi::lean_occt_shape_root_compsolid_subshape(
+                    self.raw.as_ptr(),
+                    compsolid_shape.raw.as_ptr(),
+                    kind.to_ffi(),
                     index,
                 )
             };
