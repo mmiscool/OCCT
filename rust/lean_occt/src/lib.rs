@@ -1273,11 +1273,12 @@ pub(crate) struct OffsetSurfaceFaceMetadata {
     pub(crate) basis: PortedOffsetBasisSurface,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum ShapeRustMetadata {
     None,
     OffsetSurfaceFace(OffsetSurfaceFaceMetadata),
     SingleFaceOffsetResult(OffsetSurfaceFaceMetadata),
+    MultiFaceOffsetResult(Vec<OffsetSurfaceFaceMetadata>),
 }
 
 struct MeshHandle {
@@ -1461,10 +1462,7 @@ impl Context {
     }
 
     pub fn make_offset(&self, shape: &Shape, params: OffsetParams) -> Result<Shape, Error> {
-        let rust_metadata = self
-            .offset_surface_face_metadata_candidate(shape, params.offset)?
-            .map(ShapeRustMetadata::SingleFaceOffsetResult)
-            .unwrap_or(ShapeRustMetadata::None);
+        let rust_metadata = self.offset_result_metadata(shape, params.offset)?;
         let raw_params = ffi::LeanOcctOffsetParams {
             offset: params.offset,
             tolerance: params.tolerance,
@@ -3546,6 +3544,45 @@ impl Context {
         }))
     }
 
+    fn offset_result_metadata(
+        &self,
+        source: &Shape,
+        offset_value: f64,
+    ) -> Result<ShapeRustMetadata, Error> {
+        if let Some(metadata) = self.offset_surface_face_metadata_candidate(source, offset_value)? {
+            return Ok(ShapeRustMetadata::SingleFaceOffsetResult(metadata));
+        }
+
+        let inventory = self.offset_result_face_metadata_inventory(source, offset_value)?;
+        if inventory.is_empty() {
+            Ok(ShapeRustMetadata::None)
+        } else {
+            Ok(ShapeRustMetadata::MultiFaceOffsetResult(inventory))
+        }
+    }
+
+    fn offset_result_face_metadata_inventory(
+        &self,
+        source: &Shape,
+        offset_value: f64,
+    ) -> Result<Vec<OffsetSurfaceFaceMetadata>, Error> {
+        let source_faces = match self.subshapes_occt(source, ShapeKind::Face) {
+            Ok(source_faces) => source_faces,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut inventory = Vec::new();
+        for source_face in source_faces {
+            if let Some(metadata) =
+                self.offset_surface_face_metadata_candidate(&source_face, offset_value)?
+            {
+                inventory.push(metadata);
+            }
+        }
+
+        Ok(inventory)
+    }
+
     fn wrap_shape(&self, raw: *mut ffi::LeanOcctShape) -> Result<Shape, Error> {
         self.wrap_shape_with_metadata(raw, ShapeRustMetadata::None)
     }
@@ -3836,18 +3873,39 @@ impl From<ffi::LeanOcctSurfaceKind> for SurfaceKind {
 
 impl Shape {
     pub(crate) fn offset_surface_face_metadata(&self) -> Option<OffsetSurfaceFaceMetadata> {
-        match self.rust_metadata {
+        match &self.rust_metadata {
             ShapeRustMetadata::OffsetSurfaceFace(metadata) => Some(metadata),
             ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
-            ShapeRustMetadata::None => None,
+            ShapeRustMetadata::None | ShapeRustMetadata::MultiFaceOffsetResult(_) => None,
         }
+        .copied()
     }
 
     pub(crate) fn single_face_offset_result_metadata(&self) -> Option<OffsetSurfaceFaceMetadata> {
-        match self.rust_metadata {
+        match &self.rust_metadata {
             ShapeRustMetadata::SingleFaceOffsetResult(metadata) => Some(metadata),
-            ShapeRustMetadata::OffsetSurfaceFace(_) | ShapeRustMetadata::None => None,
+            ShapeRustMetadata::OffsetSurfaceFace(_)
+            | ShapeRustMetadata::None
+            | ShapeRustMetadata::MultiFaceOffsetResult(_) => None,
         }
+        .copied()
+    }
+
+    pub(crate) fn multi_face_offset_result_metadata(&self) -> Option<&[OffsetSurfaceFaceMetadata]> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::MultiFaceOffsetResult(metadata) => Some(metadata.as_slice()),
+            ShapeRustMetadata::OffsetSurfaceFace(_)
+            | ShapeRustMetadata::SingleFaceOffsetResult(_)
+            | ShapeRustMetadata::None => None,
+        }
+    }
+
+    pub(crate) fn with_multi_face_offset_result_metadata(
+        mut self,
+        metadata: Vec<OffsetSurfaceFaceMetadata>,
+    ) -> Self {
+        self.rust_metadata = ShapeRustMetadata::MultiFaceOffsetResult(metadata);
+        self
     }
 
     pub(crate) fn with_offset_surface_face_metadata(

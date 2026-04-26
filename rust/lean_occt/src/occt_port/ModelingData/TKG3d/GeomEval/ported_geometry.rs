@@ -969,6 +969,14 @@ impl Context {
             basis,
         }))
     }
+
+    pub(crate) fn ported_offset_surface_from_metadata(
+        &self,
+        shape: &Shape,
+        metadata: OffsetSurfaceFaceMetadata,
+    ) -> Result<Option<PortedOffsetSurface>, Error> {
+        ported_offset_surface_from_metadata(self, shape, metadata)
+    }
 }
 
 fn ported_offset_surface_from_metadata(

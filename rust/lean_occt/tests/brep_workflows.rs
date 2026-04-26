@@ -2769,6 +2769,104 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         !offset_faces.is_empty(),
         "expected offset solid to retain offset faces"
     );
+    let offset_face_shapes = kernel
+        .context()
+        .subshapes(&offset, ShapeKind::Face)?
+        .into_iter()
+        .filter_map(
+            |face_shape| match kernel.context().face_geometry(&face_shape) {
+                Ok(geometry) if geometry.kind == SurfaceKind::Offset => Some(Ok(face_shape)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        offset_face_shapes.len(),
+        offset_faces.len(),
+        "public Rust topology should expose the same generated offset faces as BRep materialization"
+    );
+    let mut public_swept_offset_descriptors = 0usize;
+    for (offset_index, face_shape) in offset_face_shapes.iter().enumerate() {
+        let descriptor = match kernel
+            .context()
+            .ported_face_surface_descriptor(face_shape)?
+        {
+            Some(PortedFaceSurface::Offset(surface)) => surface,
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "offset solid public face {offset_index} did not expose a ported offset descriptor: {other:?}"
+                ))
+                .into());
+            }
+        };
+        assert!(
+            (descriptor.payload.offset_value.abs() - 2.5).abs() <= 1.0e-9,
+            "offset solid public face {offset_index} payload offset drifted: {:?}",
+            descriptor.payload
+        );
+        assert!(
+            matches!(
+                descriptor.payload.basis_surface_kind,
+                SurfaceKind::Revolution | SurfaceKind::Extrusion
+            ),
+            "offset solid public face {offset_index} should map to the swept source family, got {:?}",
+            descriptor.payload.basis_surface_kind
+        );
+
+        let public_payload = kernel.context().face_offset_payload(face_shape)?;
+        assert!(
+            (public_payload.offset_value - descriptor.payload.offset_value).abs() <= 1.0e-9,
+            "offset solid public face {offset_index} public payload offset drifted from descriptor"
+        );
+        assert_eq!(
+            public_payload.basis_surface_kind, descriptor.payload.basis_surface_kind,
+            "offset solid public face {offset_index} public payload basis drifted from descriptor"
+        );
+        assert_eq!(
+            kernel
+                .context()
+                .face_offset_basis_geometry(face_shape)?
+                .kind,
+            descriptor.payload.basis_surface_kind,
+            "offset solid public face {offset_index} public basis geometry drifted from descriptor"
+        );
+
+        if matches!(descriptor.basis, PortedOffsetBasisSurface::Swept(_)) {
+            public_swept_offset_descriptors += 1;
+            assert_eq!(
+                kernel
+                    .context()
+                    .face_offset_basis_curve_geometry(face_shape)?
+                    .kind,
+                CurveKind::Ellipse,
+                "offset solid public face {offset_index} swept basis curve should mirror the source ellipse"
+            );
+        }
+
+        let orientation = kernel.context().shape_orientation(face_shape)?;
+        let descriptor_sample =
+            descriptor.sample_normalized_with_orientation([0.37, 0.61], orientation);
+        let occt_sample = kernel
+            .context()
+            .face_sample_normalized_occt(face_shape, [0.37, 0.61])?;
+        assert_vec3_close(
+            descriptor_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("offset solid public face {offset_index} descriptor sample position"),
+        )?;
+        assert_vec3_close(
+            descriptor_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("offset solid public face {offset_index} descriptor sample normal"),
+        )?;
+    }
+    assert!(
+        public_swept_offset_descriptors > 0,
+        "expected public generated offset faces to expose swept offset descriptors"
+    );
     assert!(
         offset_faces.iter().any(|face| matches!(
             face.ported_face_surface,
@@ -2831,6 +2929,7 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
         occt_summary.bbox_max,
         5.0e-2,
     )?;
+    let mut shell_swept_offset_descriptors = 0usize;
     for (shell_index, shell_shape) in shell_shapes.iter().enumerate() {
         let shell_brep = kernel.context().ported_brep(shell_shape)?;
         let shell_occt = kernel.context().describe_shape_occt(shell_shape)?;
@@ -2854,7 +2953,47 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
             shell_occt.bbox_max,
             5.0e-2,
         )?;
+        for (face_index, shell_face_shape) in kernel
+            .context()
+            .subshapes(shell_shape, ShapeKind::Face)?
+            .into_iter()
+            .enumerate()
+        {
+            if kernel.context().face_geometry(&shell_face_shape)?.kind != SurfaceKind::Offset {
+                continue;
+            }
+            let descriptor = match kernel
+                .context()
+                .ported_face_surface_descriptor(&shell_face_shape)?
+            {
+                Some(PortedFaceSurface::Offset(surface)) => surface,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "offset solid shell {shell_index} face {face_index} did not expose a ported offset descriptor: {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert!(
+                (kernel
+                    .context()
+                    .face_offset_payload(&shell_face_shape)?
+                    .offset_value
+                    .abs()
+                    - 2.5)
+                    .abs()
+                    <= 1.0e-9,
+                "offset solid shell {shell_index} face {face_index} public offset payload drifted"
+            );
+            if matches!(descriptor.basis, PortedOffsetBasisSurface::Swept(_)) {
+                shell_swept_offset_descriptors += 1;
+            }
+        }
     }
+    assert!(
+        shell_swept_offset_descriptors >= public_swept_offset_descriptors,
+        "shell subshape topology should preserve the generated swept offset descriptors"
+    );
     assert!(artifact.is_file());
 
     Ok(())
