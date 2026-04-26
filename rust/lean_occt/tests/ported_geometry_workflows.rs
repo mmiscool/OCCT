@@ -1161,6 +1161,75 @@ fn ported_vertex_points_match_occt() -> Result<(), Box<dyn std::error::Error>> {
             1.0e-12,
             &format!("vertex {index}"),
         )?;
+        let topology = kernel.context().topology(&vertex)?;
+        assert_eq!(
+            topology.vertex_positions.len(),
+            1,
+            "vertex {index} public topology should contain the root vertex"
+        );
+        assert_vec3_close(
+            topology.vertex_positions[0],
+            context_point,
+            1.0e-12,
+            &format!("vertex {index} topology point"),
+        )?;
+        assert!(
+            topology.edges.is_empty()
+                && topology.edge_faces.is_empty()
+                && topology.edge_face_indices.is_empty()
+                && topology.wires.is_empty()
+                && topology.wire_edge_indices.is_empty()
+                && topology.wire_edge_orientations.is_empty()
+                && topology.wire_vertices.is_empty()
+                && topology.wire_vertex_indices.is_empty()
+                && topology.faces.is_empty()
+                && topology.face_wire_indices.is_empty()
+                && topology.face_wire_orientations.is_empty()
+                && topology.face_wire_roles.is_empty(),
+            "vertex {index} public topology should have no edge/wire/face inventory"
+        );
+        assert_eq!(
+            kernel
+                .context()
+                .subshape_count(&vertex, ShapeKind::Vertex)?,
+            1,
+            "vertex {index} public vertex count should come from root topology"
+        );
+        let public_vertices = kernel.context().subshapes(&vertex, ShapeKind::Vertex)?;
+        assert_eq!(
+            public_vertices.len(),
+            1,
+            "vertex {index} public vertex handle should come from root topology"
+        );
+        let indexed_vertex = kernel.context().subshape(&vertex, ShapeKind::Vertex, 0)?;
+        for (label, public_vertex) in [
+            ("subshapes", &public_vertices[0]),
+            ("subshape", &indexed_vertex),
+        ] {
+            assert_vec3_close(
+                kernel.context().vertex_point(public_vertex)?,
+                context_point,
+                1.0e-12,
+                &format!("vertex {index} {label} handle point"),
+            )?;
+        }
+        for empty_kind in [
+            ShapeKind::Edge,
+            ShapeKind::Wire,
+            ShapeKind::Face,
+            ShapeKind::Shell,
+        ] {
+            assert_eq!(
+                kernel.context().subshape_count(&vertex, empty_kind)?,
+                0,
+                "vertex {index} public {empty_kind:?} count should be empty from root topology"
+            );
+            assert_eq!(
+                kernel.context().subshapes(&vertex, empty_kind)?.len(),
+                0,
+                "vertex {index} public {empty_kind:?} handles should be empty from root topology"
+            );
+        }
     }
 
     Ok(())

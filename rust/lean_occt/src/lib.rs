@@ -783,6 +783,11 @@ mod ffi {
             shape: *const LeanOcctShape,
             endpoint_index: usize,
         ) -> *mut LeanOcctShape;
+        pub fn lean_occt_shape_root_vertex_point(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            xyz3: *mut f64,
+        ) -> LeanOcctResult;
         pub fn lean_occt_shape_wire_edge_occurrence_count(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -3440,6 +3445,22 @@ impl Context {
             )
         };
         self.wrap_shape(raw)
+    }
+
+    pub(crate) fn root_vertex_point_seed_occt(&self, shape: &Shape) -> Result<[f64; 3], Error> {
+        let mut xyz = [0.0_f64; 3];
+        let result = unsafe {
+            ffi::lean_occt_shape_root_vertex_point(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                xyz.as_mut_ptr(),
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok(xyz)
+        } else {
+            Err(Error::new(self.last_error()))
+        }
     }
 
     pub fn subshapes(&self, shape: &Shape, kind: ShapeKind) -> Result<Vec<Shape>, Error> {

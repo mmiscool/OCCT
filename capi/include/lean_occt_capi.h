@@ -626,6 +626,10 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,
   size_t               the_endpoint_index);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_vertex_point(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  double*              the_xyz3);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,

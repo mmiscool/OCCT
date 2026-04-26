@@ -3029,6 +3029,26 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctShape* lean_occt_shape_root_edge_vertex
   });
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_root_vertex_point(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  double*              the_xyz3)
+{
+  return guardCall(the_context, [&]() -> LeanOcctResult {
+    if (the_context == nullptr)
+    {
+      throw std::invalid_argument(nullContextError());
+    }
+    if (the_xyz3 == nullptr)
+    {
+      throw std::invalid_argument("Root vertex point output pointer was null.");
+    }
+
+    writePoint(the_xyz3, BRep_Tool::Pnt(requireVertexShape(the_shape)));
+    return LEAN_OCCT_RESULT_OK;
+  });
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_wire_edge_occurrence_count(
   LeanOcctContext*     the_context,
   const LeanOcctShape* the_shape,

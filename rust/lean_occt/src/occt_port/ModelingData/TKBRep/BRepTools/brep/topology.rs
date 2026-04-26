@@ -55,6 +55,9 @@ fn load_root_topology_snapshot(
     if let Some(root_edge_fields) = load_root_edge_topology_snapshot(context, shape)? {
         return Ok(Some(root_edge_fields));
     }
+    if root_vertex_topology_inventory_required(context, shape)? {
+        return load_root_vertex_topology_snapshot(context, shape);
+    }
     if root_wire_topology_inventory_required(context, shape)? {
         return load_root_wire_topology_snapshot(context, shape);
     }
@@ -177,6 +180,45 @@ fn load_root_topology_snapshot(
         wire_edge_orientations,
         wire_vertices,
         wire_vertex_indices,
+    }))
+}
+
+fn root_vertex_topology_inventory_required(
+    context: &Context,
+    shape: &Shape,
+) -> Result<bool, Error> {
+    Ok(context.describe_shape_occt(shape)?.root_kind == ShapeKind::Vertex)
+}
+
+fn load_root_vertex_topology_snapshot(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<TopologySnapshotRootFields>, Error> {
+    let vertex_position = match context.root_vertex_point_seed_occt(shape) {
+        Ok(point) => point,
+        Err(_) => return Ok(None),
+    };
+    let vertex_shape = match context.duplicate_shape_occt(shape) {
+        Ok(vertex_shape) => vertex_shape,
+        Err(_) => return Ok(None),
+    };
+
+    Ok(Some(TopologySnapshotRootFields {
+        vertex_shapes: vec![vertex_shape],
+        vertex_positions: vec![vertex_position],
+        edge_shapes: Vec::new(),
+        wire_shapes: Vec::new(),
+        prepared_shell_shapes: Vec::new(),
+        face_shapes: Vec::new(),
+        prepared_face_shapes: Vec::new(),
+        edges: Vec::new(),
+        root_edges: Vec::new(),
+        root_wires: Vec::new(),
+        wires: Vec::new(),
+        wire_edge_indices: Vec::new(),
+        wire_edge_orientations: Vec::new(),
+        wire_vertices: Vec::new(),
+        wire_vertex_indices: Vec::new(),
     }))
 }
 
