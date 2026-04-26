@@ -34,8 +34,8 @@ use self::shape_queries::{
 use self::summary::{ported_offset_shell_bbox_sources, ported_shape_summary};
 pub(crate) use self::topology::ported_root_edge_geometry;
 use self::topology::{
-    load_ported_topology, ported_topology_snapshot, root_assembly_requires_ported_topology,
-    PreparedShellShape,
+    load_ported_topology, offset_result_face_shapes, ported_topology_snapshot,
+    root_assembly_requires_ported_topology, PreparedShellShape,
 };
 
 use crate::ported_geometry::{
@@ -243,7 +243,7 @@ fn strict_brep_face_inventory_requires_ported_topology(
     shape: &Shape,
     face_count: usize,
 ) -> Result<bool, Error> {
-    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    let face_shapes = offset_result_face_shapes(context, shape)?;
     if face_shapes.len() != face_count {
         return Ok(false);
     }
@@ -403,7 +403,8 @@ impl Context {
 mod tests {
     use super::*;
     use crate::{
-        BoxParams, EllipseEdgeParams, HelixParams, OffsetParams, PrismParams, SurfaceKind,
+        BoxParams, EllipseEdgeParams, HelixParams, OffsetParams, PrismParams, RevolutionParams,
+        SurfaceKind,
     };
     use std::sync::Mutex;
 
@@ -553,6 +554,37 @@ mod tests {
             &context,
             &offset_surface,
             offset_summary.face_count,
+        )?);
+
+        let revolution = context.make_revolution(
+            &ellipse,
+            RevolutionParams {
+                origin: [0.0, 0.0, 0.0],
+                axis: [0.0, 0.0, 1.0],
+                angle_radians: PI,
+            },
+        )?;
+        let revolution_face = offset_result_face_shapes(&context, &revolution)?
+            .into_iter()
+            .find(|face| {
+                matches!(
+                    context.face_geometry(face).map(|geometry| geometry.kind),
+                    Ok(SurfaceKind::Revolution)
+                )
+            })
+            .ok_or_else(|| Error::new("expected revolution to expose a basis face"))?;
+        let generated_offset = context.make_offset(
+            &revolution_face,
+            OffsetParams {
+                offset: 1.75,
+                tolerance: 1.0e-4,
+            },
+        )?;
+        let generated_offset_summary = context.describe_shape_occt(&generated_offset)?;
+        assert!(strict_brep_face_inventory_requires_ported_topology(
+            &context,
+            &generated_offset,
+            generated_offset_summary.face_count,
         )?);
 
         Ok(())

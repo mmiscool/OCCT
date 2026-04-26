@@ -1480,6 +1480,7 @@ pub(crate) struct OffsetSurfaceFaceMetadata {
     pub(crate) offset_value: f64,
     pub(crate) basis_geometry: FaceGeometry,
     pub(crate) basis: PortedOffsetBasisSurface,
+    pub(crate) generated_geometry: Option<FaceGeometry>,
     pub(crate) direct_surface_face: bool,
 }
 
@@ -4362,6 +4363,7 @@ impl Context {
             offset_value,
             basis_geometry,
             basis,
+            generated_geometry: None,
             direct_surface_face: false,
         }))
     }

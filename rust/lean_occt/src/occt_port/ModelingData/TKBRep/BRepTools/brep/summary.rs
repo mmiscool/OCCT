@@ -6,6 +6,11 @@ use super::*;
 
 use crate::{EdgeSample, SurfaceKind};
 
+const PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS: [f64; 17] = [
+    0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.4375, 0.5, 0.5625, 0.625, 0.6875, 0.75,
+    0.8125, 0.875, 0.9375, 1.0,
+];
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeshFaceProperties {
     pub(super) area: f64,
@@ -137,7 +142,7 @@ pub(super) fn ported_shape_summary(
     let closed_volume_topology = has_closed_volume_topology(faces, edges);
     let fallback_summary = || context.describe_shape_occt(shape).ok();
     let exact_primitive_bbox = exact_primitive.and_then(|summary| summary.bbox);
-    let ported_topological_bbox = ported_shape_bbox(vertices, edges, faces);
+    let ported_brep_bbox = ported_shape_bbox(vertices, edges, faces);
     let contains_offset_faces = faces
         .iter()
         .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
@@ -156,7 +161,7 @@ pub(super) fn ported_shape_summary(
         contains_offset_faces && counts.solid_count == 0 && counts.compsolid_count == 0;
     let supports_rust_owned_offset_root_bbox = contains_offset_faces && !face_shapes.is_empty();
     let requires_rust_owned_bbox = exact_primitive_bbox.is_some()
-        || ported_topological_bbox.is_some()
+        || ported_brep_bbox.is_some()
         || supports_rust_owned_offset_root_bbox
         || has_loaded_supported_face_inventory;
     let allow_occt_bbox_fallback =
@@ -176,11 +181,11 @@ pub(super) fn ported_shape_summary(
     };
     let bbox_resolution = exact_primitive_bbox
         .map(|bbox| (bbox, SummaryBboxSource::ExactPrimitive))
-        .or_else(|| ported_topological_bbox.map(|bbox| (bbox, SummaryBboxSource::PortedBrep)))
         .or_else(|| {
             offset_face_bbox_resolution
                 .map(|resolution| (resolution.bbox, SummaryBboxSource::OffsetFaceUnion))
         })
+        .or_else(|| ported_brep_bbox.map(|bbox| (bbox, SummaryBboxSource::PortedBrep)))
         .or_else(|| {
             if offset_non_solid {
                 let shape_occt_bbox = shape_bbox_occt(context, shape)?;
@@ -910,6 +915,7 @@ fn ported_shape_bbox(
     faces: &[BrepFace],
 ) -> Option<([f64; 3], [f64; 3])> {
     topological_shape_bbox(vertices, edges, faces)
+        .or_else(|| ported_single_face_shape_bbox(vertices, edges, faces))
 }
 
 pub(super) fn shape_counts(
@@ -987,6 +993,21 @@ fn topological_shape_bbox(
     }
 
     None
+}
+
+fn ported_single_face_shape_bbox(
+    vertices: &[BrepVertex],
+    edges: &[BrepEdge],
+    faces: &[BrepFace],
+) -> Option<([f64; 3], [f64; 3])> {
+    let [face] = faces else {
+        return None;
+    };
+    let face_bbox = ported_face_surface_bbox(face)?;
+    Some(match boundary_shape_bbox(vertices, edges) {
+        Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
+        None => face_bbox,
+    })
 }
 
 fn offset_faces_bbox(
@@ -1175,9 +1196,37 @@ fn face_brep_bbox_candidate(context: &Context, face_shape: &Shape) -> Option<([f
         boundary_bbox,
     );
     Some(merge_optional_bbox(
-        summary_bbox,
+        merge_optional_bbox(
+            summary_bbox,
+            reconstructed_cap_surface_bbox(context, face_shape, &brep),
+        ),
         degenerate_plane_cap_surface_bbox(context, face_shape, &brep),
     ))
+}
+
+fn reconstructed_cap_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+    brep: &BrepShape,
+) -> Option<([f64; 3], [f64; 3])> {
+    let [face] = brep.faces.as_slice() else {
+        return None;
+    };
+    if matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_)))
+        || !matches!(
+            brep.summary_bbox_source(),
+            SummaryBboxSource::PortedBrep | SummaryBboxSource::Mesh
+        )
+    {
+        return None;
+    }
+
+    let raw_geometry = context.face_geometry_occt(face_shape).ok()?;
+    if raw_geometry.kind == face.geometry.kind {
+        return None;
+    }
+
+    single_face_surface_bbox(context, face_shape)
 }
 
 fn degenerate_plane_cap_surface_bbox(
@@ -1291,12 +1340,55 @@ fn analytic_face_surface_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> 
     let [face] = brep.faces.as_slice() else {
         return None;
     };
-    let surface = match face.ported_face_surface {
+    ported_face_surface_bbox(face)
+}
+
+fn ported_face_surface_bbox(face: &BrepFace) -> Option<([f64; 3], [f64; 3])> {
+    if let Some(bbox) = analytic_bbox_surface(face)
+        .and_then(|surface| analytic_surface_bbox(surface, face.geometry))
+    {
+        return Some(bbox);
+    }
+
+    match face.ported_face_surface {
+        Some(PortedFaceSurface::Swept(_) | PortedFaceSurface::Offset(_)) => {
+            sampled_ported_face_surface_bbox(
+                face.ported_face_surface?,
+                face.geometry,
+                face.orientation,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn analytic_bbox_surface(face: &BrepFace) -> Option<PortedSurface> {
+    match face.ported_face_surface {
         Some(PortedFaceSurface::Analytic(surface)) => Some(surface),
         Some(PortedFaceSurface::Offset(surface)) => surface.equivalent_analytic_surface(),
         _ => face.ported_surface,
-    }?;
-    analytic_surface_bbox(surface, face.geometry)
+    }
+}
+
+fn sampled_ported_face_surface_bbox(
+    surface: PortedFaceSurface,
+    geometry: FaceGeometry,
+    orientation: Orientation,
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut points = Vec::with_capacity(
+        PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS.len() * PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS.len(),
+    );
+    for &u in &PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS {
+        for &v in &PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS {
+            let point = surface
+                .sample_normalized_with_orientation(geometry, [u, v], orientation)
+                .position;
+            if point.iter().all(|coordinate| coordinate.is_finite()) {
+                points.push(point);
+            }
+        }
+    }
+    bbox_from_points(points)
 }
 
 fn analytic_surface_bbox(

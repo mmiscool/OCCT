@@ -8,7 +8,7 @@ use super::wire_topology::{
     match_vertex_index, pack_wire_topology, root_wire_topology, PreparedRootWireShape,
 };
 use super::*;
-use crate::{OffsetSurfaceFaceMetadata, OffsetSurfacePayload};
+use crate::{OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind};
 
 const OFFSET_METADATA_MATCH_UV_SAMPLES: [[f64; 2]; 4] =
     [[0.23, 0.31], [0.37, 0.61], [0.58, 0.47], [0.79, 0.73]];
@@ -1366,7 +1366,19 @@ fn attach_offset_result_face_metadata(
         return attach_multi_face_offset_metadata(context, metadata, face_shapes);
     }
 
+    if let Some(metadata) = shape.offset_surface_face_metadata() {
+        return attach_single_face_offset_metadata(context, metadata, face_shapes);
+    }
+
     Ok(face_shapes)
+}
+
+pub(super) fn offset_result_face_shapes(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Vec<Shape>, Error> {
+    let face_shapes = context.subshapes_occt(shape, ShapeKind::Face)?;
+    attach_offset_result_face_metadata(context, shape, face_shapes)
 }
 
 fn attach_single_face_offset_metadata(
@@ -1382,7 +1394,10 @@ fn attach_single_face_offset_metadata(
         .pop()
         .expect("length was checked before popping single offset face");
     match context.ported_offset_surface_from_metadata(&face_shape, metadata) {
-        Ok(Some(_)) => Ok(vec![face_shape.with_offset_surface_face_metadata(metadata)]),
+        Ok(Some(_)) => {
+            let metadata = metadata_with_generated_geometry(context, &face_shape, metadata);
+            Ok(vec![face_shape.with_offset_surface_face_metadata(metadata)])
+        }
         Ok(None) | Err(_) => Ok(vec![face_shape]),
     }
 }
@@ -1440,12 +1455,28 @@ fn attach_multi_face_offset_metadata(
             }
 
             if let Some((_, matched)) = best_match.filter(|_| !tied_best_match) {
-                Ok(face_shape.with_offset_surface_face_metadata(matched))
+                let metadata = metadata_with_generated_geometry(context, &face_shape, matched);
+                Ok(face_shape.with_offset_surface_face_metadata(metadata))
             } else {
                 Ok(face_shape)
             }
         })
         .collect()
+}
+
+fn metadata_with_generated_geometry(
+    context: &Context,
+    face_shape: &Shape,
+    mut metadata: OffsetSurfaceFaceMetadata,
+) -> OffsetSurfaceFaceMetadata {
+    if !metadata.direct_surface_face {
+        if let Ok(geometry) = context.face_geometry_occt(face_shape) {
+            if geometry.kind == SurfaceKind::Offset {
+                metadata.generated_geometry = Some(geometry);
+            }
+        }
+    }
+    metadata
 }
 
 fn offset_metadata_match_score(

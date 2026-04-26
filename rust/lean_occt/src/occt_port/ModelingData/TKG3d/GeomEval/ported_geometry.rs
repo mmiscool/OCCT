@@ -787,7 +787,7 @@ impl Context {
 
         if matches!(
             raw_geometry.kind,
-            SurfaceKind::Revolution | SurfaceKind::Extrusion | SurfaceKind::Offset
+            SurfaceKind::Revolution | SurfaceKind::Extrusion
         ) {
             let descriptor = ported_face_surface_descriptor_value(self, shape, raw_geometry)?;
             return match (raw_geometry.kind, descriptor) {
@@ -798,10 +798,7 @@ impl Context {
                 | (
                     SurfaceKind::Extrusion,
                     Some(PortedFaceSurface::Swept(PortedSweptSurface::Extrusion { .. })),
-                )
-                | (SurfaceKind::Offset, Some(PortedFaceSurface::Offset(_))) => {
-                    Ok(Some(raw_geometry))
-                }
+                ) => Ok(Some(raw_geometry)),
                 _ => Ok(None),
             };
         }
@@ -1007,6 +1004,9 @@ fn ported_offset_surface_from_metadata_face_geometry(
         Ok(Some(surface)) => surface,
         Ok(None) | Err(_) => return Ok(None),
     };
+    if let Some(geometry) = metadata.generated_geometry {
+        return Ok(Some(geometry));
+    }
     Ok(Some(ported_offset_surface_face_geometry(
         surface,
         metadata.direct_surface_face,

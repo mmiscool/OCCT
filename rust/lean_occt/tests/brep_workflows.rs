@@ -563,6 +563,21 @@ fn assert_offset_brep_uses_rust_basis(
             tolerance: 1.0e-4,
         },
     )?;
+    let offset_faces = kernel.context().subshapes(&offset_shape, ShapeKind::Face)?;
+    assert_eq!(
+        offset_faces.len(),
+        1,
+        "{label} direct offset surface should expose exactly one face"
+    );
+    assert!(
+        offset_faces[0].has_rust_offset_surface_face_metadata(),
+        "{label} direct offset surface face should retain Rust metadata on the enumerated face"
+    );
+    assert_eq!(
+        kernel.context().face_geometry(&offset_faces[0])?.kind,
+        SurfaceKind::Offset,
+        "{label} direct offset surface face should classify through retained Rust metadata"
+    );
     let brep = kernel.brep(&offset_shape)?;
     let offset_face = brep
         .faces
