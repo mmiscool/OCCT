@@ -1748,7 +1748,11 @@ impl Context {
     pub fn edge_line_payload(&self, shape: &Shape) -> Result<LinePayload, Error> {
         match self.ported_edge_curve(shape)? {
             Some(PortedCurve::Line(payload)) => Ok(payload),
-            _ => self.edge_line_payload_occt(shape),
+            Some(curve) => Err(mismatched_ported_curve_payload_error(
+                CurveKind::Line,
+                ported_curve_kind(curve),
+            )),
+            None => self.edge_line_payload_occt(shape),
         }
     }
 
@@ -1777,7 +1781,11 @@ impl Context {
     pub fn edge_circle_payload(&self, shape: &Shape) -> Result<CirclePayload, Error> {
         match self.ported_edge_curve(shape)? {
             Some(PortedCurve::Circle(payload)) => Ok(payload),
-            _ => self.edge_circle_payload_occt(shape),
+            Some(curve) => Err(mismatched_ported_curve_payload_error(
+                CurveKind::Circle,
+                ported_curve_kind(curve),
+            )),
+            None => self.edge_circle_payload_occt(shape),
         }
     }
 
@@ -1812,7 +1820,11 @@ impl Context {
     pub fn edge_ellipse_payload(&self, shape: &Shape) -> Result<EllipsePayload, Error> {
         match self.ported_edge_curve(shape)? {
             Some(PortedCurve::Ellipse(payload)) => Ok(payload),
-            _ => self.edge_ellipse_payload_occt(shape),
+            Some(curve) => Err(mismatched_ported_curve_payload_error(
+                CurveKind::Ellipse,
+                ported_curve_kind(curve),
+            )),
+            None => self.edge_ellipse_payload_occt(shape),
         }
     }
 
@@ -2031,7 +2043,11 @@ impl Context {
     pub fn face_plane_payload(&self, shape: &Shape) -> Result<PlanePayload, Error> {
         match self.ported_face_surface(shape)? {
             Some(PortedSurface::Plane(payload)) => Ok(payload),
-            _ => self.face_plane_payload_occt(shape),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Plane,
+                ported_surface_kind(surface),
+            )),
+            None => self.face_plane_payload_occt(shape),
         }
     }
 
@@ -2064,7 +2080,11 @@ impl Context {
     pub fn face_cylinder_payload(&self, shape: &Shape) -> Result<CylinderPayload, Error> {
         match self.ported_face_surface(shape)? {
             Some(PortedSurface::Cylinder(payload)) => Ok(payload),
-            _ => self.face_cylinder_payload_occt(shape),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Cylinder,
+                ported_surface_kind(surface),
+            )),
+            None => self.face_cylinder_payload_occt(shape),
         }
     }
 
@@ -2099,7 +2119,11 @@ impl Context {
     pub fn face_cone_payload(&self, shape: &Shape) -> Result<ConePayload, Error> {
         match self.ported_face_surface(shape)? {
             Some(PortedSurface::Cone(payload)) => Ok(payload),
-            _ => self.face_cone_payload_occt(shape),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Cone,
+                ported_surface_kind(surface),
+            )),
+            None => self.face_cone_payload_occt(shape),
         }
     }
 
@@ -2136,7 +2160,11 @@ impl Context {
     pub fn face_sphere_payload(&self, shape: &Shape) -> Result<SpherePayload, Error> {
         match self.ported_face_surface(shape)? {
             Some(PortedSurface::Sphere(payload)) => Ok(payload),
-            _ => self.face_sphere_payload_occt(shape),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Sphere,
+                ported_surface_kind(surface),
+            )),
+            None => self.face_sphere_payload_occt(shape),
         }
     }
 
@@ -2171,7 +2199,11 @@ impl Context {
     pub fn face_torus_payload(&self, shape: &Shape) -> Result<TorusPayload, Error> {
         match self.ported_face_surface(shape)? {
             Some(PortedSurface::Torus(payload)) => Ok(payload),
-            _ => self.face_torus_payload_occt(shape),
+            Some(surface) => Err(mismatched_ported_surface_payload_error(
+                SurfaceKind::Torus,
+                ported_surface_kind(surface),
+            )),
+            None => self.face_torus_payload_occt(shape),
         }
     }
 
@@ -3244,6 +3276,36 @@ impl Context {
         let raw = NonNull::new(raw).ok_or_else(|| Error::new(self.last_error()))?;
         Ok(Shape { raw })
     }
+}
+
+fn ported_curve_kind(curve: PortedCurve) -> CurveKind {
+    match curve {
+        PortedCurve::Line(_) => CurveKind::Line,
+        PortedCurve::Circle(_) => CurveKind::Circle,
+        PortedCurve::Ellipse(_) => CurveKind::Ellipse,
+    }
+}
+
+fn ported_surface_kind(surface: PortedSurface) -> SurfaceKind {
+    match surface {
+        PortedSurface::Plane(_) => SurfaceKind::Plane,
+        PortedSurface::Cylinder(_) => SurfaceKind::Cylinder,
+        PortedSurface::Cone(_) => SurfaceKind::Cone,
+        PortedSurface::Sphere(_) => SurfaceKind::Sphere,
+        PortedSurface::Torus(_) => SurfaceKind::Torus,
+    }
+}
+
+fn mismatched_ported_curve_payload_error(expected: CurveKind, actual: CurveKind) -> Error {
+    Error::new(format!(
+        "requested {expected:?} payload for ported {actual:?} edge"
+    ))
+}
+
+fn mismatched_ported_surface_payload_error(expected: SurfaceKind, actual: SurfaceKind) -> Error {
+    Error::new(format!(
+        "requested {expected:?} payload for ported {actual:?} face"
+    ))
 }
 
 impl Drop for Context {

@@ -4,8 +4,9 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, CurveKind, CylinderParams, EllipseEdgeParams, ModelKernel, OffsetParams,
-    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSweptSurface, PrismParams,
-    RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut, TorusParams,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
+    PrismParams, RevolutionParams, Shape, ShapeKind, SphereParams, SurfaceKind, ThroughHoleCut,
+    TorusParams,
 };
 
 fn default_cut() -> ThroughHoleCut {
@@ -157,6 +158,297 @@ fn assert_edge_geometry_close(
     Ok(())
 }
 
+fn assert_line_payload_close(
+    lhs: lean_occt::LinePayload,
+    rhs: lean_occt::LinePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(
+        lhs.direction,
+        rhs.direction,
+        tolerance,
+        &format!("{label} direction"),
+    )?;
+    Ok(())
+}
+
+fn assert_circle_payload_close(
+    lhs: lean_occt::CirclePayload,
+    rhs: lean_occt::CirclePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.radius,
+        rhs.radius,
+        tolerance,
+        &format!("{label} radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_ellipse_payload_close(
+    lhs: lean_occt::EllipsePayload,
+    rhs: lean_occt::EllipsePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.major_radius,
+        rhs.major_radius,
+        tolerance,
+        &format!("{label} major_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.minor_radius,
+        rhs.minor_radius,
+        tolerance,
+        &format!("{label} minor_radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_plane_payload_close(
+    lhs: lean_occt::PlanePayload,
+    rhs: lean_occt::PlanePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    Ok(())
+}
+
+fn assert_cylinder_payload_close(
+    lhs: lean_occt::CylinderPayload,
+    rhs: lean_occt::CylinderPayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(lhs.axis, rhs.axis, tolerance, &format!("{label} axis"))?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.radius,
+        rhs.radius,
+        tolerance,
+        &format!("{label} radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_cone_payload_close(
+    lhs: lean_occt::ConePayload,
+    rhs: lean_occt::ConePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(lhs.axis, rhs.axis, tolerance, &format!("{label} axis"))?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.reference_radius,
+        rhs.reference_radius,
+        tolerance,
+        &format!("{label} reference_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.semi_angle,
+        rhs.semi_angle,
+        tolerance,
+        &format!("{label} semi_angle"),
+    )?;
+    Ok(())
+}
+
+fn assert_sphere_payload_close(
+    lhs: lean_occt::SpherePayload,
+    rhs: lean_occt::SpherePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.radius,
+        rhs.radius,
+        tolerance,
+        &format!("{label} radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_torus_payload_close(
+    lhs: lean_occt::TorusPayload,
+    rhs: lean_occt::TorusPayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(lhs.axis, rhs.axis, tolerance, &format!("{label} axis"))?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.major_radius,
+        rhs.major_radius,
+        tolerance,
+        &format!("{label} major_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.minor_radius,
+        rhs.minor_radius,
+        tolerance,
+        &format!("{label} minor_radius"),
+    )?;
+    Ok(())
+}
+
 fn normalized_uv_to_uv(geometry: lean_occt::FaceGeometry, uv_t: [f64; 2]) -> [f64; 2] {
     [
         geometry.u_min + (geometry.u_max - geometry.u_min) * uv_t[0],
@@ -289,6 +581,50 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             .edge_sample_at_parameter_occt(&edge, parameter)?;
         let occt_normalized_sample = kernel.context().edge_sample_occt(&edge, 0.5)?;
         let occt_length = kernel.context().describe_shape_occt(&edge)?.linear_length;
+
+        match ported {
+            PortedCurve::Line(payload) => {
+                let public_payload = kernel.context().edge_line_payload(&edge)?;
+                assert_line_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+                let error = kernel
+                    .context()
+                    .edge_circle_payload(&edge)
+                    .expect_err("line edge should reject circle payload requests in Rust");
+                assert!(error
+                    .to_string()
+                    .contains("requested Circle payload for ported Line edge"));
+            }
+            PortedCurve::Circle(payload) => {
+                let public_payload = kernel.context().edge_circle_payload(&edge)?;
+                assert_circle_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+                let error = kernel
+                    .context()
+                    .edge_line_payload(&edge)
+                    .expect_err("circle edge should reject line payload requests in Rust");
+                assert!(error
+                    .to_string()
+                    .contains("requested Line payload for ported Circle edge"));
+            }
+            PortedCurve::Ellipse(payload) => {
+                let public_payload = kernel.context().edge_ellipse_payload(&edge)?;
+                assert_ellipse_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+            }
+        }
 
         assert_edge_geometry_close(geometry, geometry_occt, 1.0e-8, label)?;
         assert_vec3_close(
@@ -451,6 +787,72 @@ fn ported_surface_sampling_matches_occt() -> Result<(), Box<dyn std::error::Erro
             .context()
             .face_sample_normalized_occt(&face, [0.5, 0.5])?;
         let occt_uv_sample = kernel.context().face_sample_occt(&face, uv)?;
+        let ported_surface = kernel
+            .context()
+            .ported_face_surface(&face)?
+            .ok_or_else(|| std::io::Error::other(format!("expected ported {label} payload")))?;
+
+        match ported_surface {
+            PortedSurface::Plane(payload) => {
+                let public_payload = kernel.context().face_plane_payload(&face)?;
+                assert_plane_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+                let error = kernel
+                    .context()
+                    .face_cylinder_payload(&face)
+                    .expect_err("plane face should reject cylinder payload requests in Rust");
+                assert!(error
+                    .to_string()
+                    .contains("requested Cylinder payload for ported Plane face"));
+            }
+            PortedSurface::Cylinder(payload) => {
+                let public_payload = kernel.context().face_cylinder_payload(&face)?;
+                assert_cylinder_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+                let error = kernel
+                    .context()
+                    .face_plane_payload(&face)
+                    .expect_err("cylinder face should reject plane payload requests in Rust");
+                assert!(error
+                    .to_string()
+                    .contains("requested Plane payload for ported Cylinder face"));
+            }
+            PortedSurface::Cone(payload) => {
+                let public_payload = kernel.context().face_cone_payload(&face)?;
+                assert_cone_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+            }
+            PortedSurface::Sphere(payload) => {
+                let public_payload = kernel.context().face_sphere_payload(&face)?;
+                assert_sphere_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+            }
+            PortedSurface::Torus(payload) => {
+                let public_payload = kernel.context().face_torus_payload(&face)?;
+                assert_torus_payload_close(
+                    public_payload,
+                    payload,
+                    1.0e-12,
+                    &format!("{label} public payload"),
+                )?;
+            }
+        }
 
         assert!(
             (context_bounds.u_min - geometry.u_min).abs() <= 1.0e-12
