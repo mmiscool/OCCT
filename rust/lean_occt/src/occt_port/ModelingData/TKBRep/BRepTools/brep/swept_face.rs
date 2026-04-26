@@ -437,7 +437,8 @@ pub(super) fn append_root_edge_sample_points(
     geometry: EdgeGeometry,
     out_points: &mut Vec<[f64; 3]>,
 ) -> Result<(), Error> {
-    let ported_curve = PortedCurve::from_context_with_geometry(context, edge_shape, edge.geometry)?;
+    let ported_curve =
+        PortedCurve::from_context_with_ported_payloads(context, edge_shape, edge.geometry)?;
     let segment_count = root_edge_sample_count(edge.geometry.kind, geometry);
     for step in 0..=segment_count {
         if !out_points.is_empty() && step == 0 {

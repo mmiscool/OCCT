@@ -119,18 +119,11 @@ impl PreparedFaceTopologyBuilder {
 
                     let oriented_geometry =
                         oriented_edge_geometry(root_edge.geometry, edge_orientation);
-                    if let Some(curve) = match PortedCurve::from_context_with_ported_payloads(
+                    if let Some(curve) = PortedCurve::from_context_with_ported_payloads(
                         context,
                         edge_shape,
                         root_edge.geometry,
-                    ) {
-                        Ok(curve) => curve,
-                        Err(_) => PortedCurve::from_context_with_geometry(
-                            context,
-                            edge_shape,
-                            root_edge.geometry,
-                        )?,
-                    } {
+                    )? {
                         curve_segments.push((curve, oriented_geometry));
                     }
 

@@ -1431,6 +1431,48 @@ fn ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes(
                     .face_wire_roles
                     .iter()
                     .any(|&role| role == LoopRole::Inner));
+                let face = brep
+                    .faces
+                    .first()
+                    .ok_or_else(|| std::io::Error::other("missing holed planar BRep face"))?;
+                let expected_holed_area = 60.0 * 60.0 - PI * 12.0 * 12.0;
+                assert!(
+                    (face.area - expected_holed_area).abs() <= 1.0e-6,
+                    "holed planar face area should come from reconstructed Rust loops: brep={} expected={expected_holed_area}",
+                    face.area
+                );
+                assert_eq!(face.loops.len(), rust_topology.wires.len());
+
+                let mut analytic_loop_edges = 0usize;
+                for face_loop in &face.loops {
+                    let wire = brep.wires.get(face_loop.wire_index).ok_or_else(|| {
+                        std::io::Error::other(format!(
+                            "missing BRep wire {} for holed planar face loop",
+                            face_loop.wire_index
+                        ))
+                    })?;
+                    for &edge_index in &wire.edge_indices {
+                        let edge = brep.edges.get(edge_index).ok_or_else(|| {
+                            std::io::Error::other(format!(
+                                "missing BRep edge {edge_index} for holed planar face loop"
+                            ))
+                        })?;
+                        if matches!(
+                            edge.geometry.kind,
+                            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+                        ) {
+                            analytic_loop_edges += 1;
+                            assert!(
+                                edge.ported_curve.is_some(),
+                                "holed planar face edge {edge_index} should use a Rust-owned ported curve"
+                            );
+                        }
+                    }
+                }
+                assert!(
+                    analytic_loop_edges > 0,
+                    "holed planar face did not expose analytic loop edges"
+                );
             }
             _ => {
                 assert_eq!(rust_topology.wires.len(), 1);
