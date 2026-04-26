@@ -1,6 +1,7 @@
 #include <lean_occt_capi.h>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Curve2d.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -28,7 +29,13 @@
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <BndLib_Add3dCurve.hxx>
+#include <BndLib_AddSurface.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom2d_Curve.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_BezierCurve.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
 #include <GeomAbs_Shape.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
@@ -72,6 +79,7 @@
 #include <gp_Lin.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Pnt2d.hxx>
 #include <gp_Sphere.hxx>
 #include <gp_Torus.hxx>
 #include <gp_Trsf.hxx>
@@ -190,7 +198,10 @@ static void writeDir(double* the_xyz3, const gp_Dir& the_dir)
 }
 
 static void fillCurveGeometry(const Adaptor3d_Curve& the_curve, LeanOcctEdgeGeometry& the_geometry);
+static void fillEdgeCurveBbox(const TopoDS_Edge& the_edge, LeanOcctBbox& the_bbox);
 static void fillFaceGeometry(const Adaptor3d_Surface& the_surface, LeanOcctFaceGeometry& the_geometry);
+static void fillFacePcurveControlPolygonBbox(const TopoDS_Face& the_face, LeanOcctBbox& the_bbox);
+static void fillFaceSurfaceBbox(const TopoDS_Face& the_face, LeanOcctBbox& the_bbox);
 static void fillLinePayload(const Adaptor3d_Curve& the_curve, LeanOcctLinePayload& the_payload);
 static void fillCirclePayload(const Adaptor3d_Curve& the_curve, LeanOcctCirclePayload& the_payload);
 static void fillEllipsePayload(const Adaptor3d_Curve& the_curve, LeanOcctEllipsePayload& the_payload);
@@ -936,6 +947,56 @@ static void fillEdgeGeometry(const TopoDS_Edge& the_edge, LeanOcctEdgeGeometry& 
   the_geometry.period = the_geometry.is_periodic != 0 ? a_curve.Period() : 0.0;
 }
 
+static void includeBboxPoint(LeanOcctBbox& the_bbox, const gp_Pnt& the_point, bool& the_has_point)
+{
+  if (!std::isfinite(the_point.X()) || !std::isfinite(the_point.Y())
+      || !std::isfinite(the_point.Z()))
+  {
+    return;
+  }
+
+  const double a_coordinates[3] = {the_point.X(), the_point.Y(), the_point.Z()};
+  if (!the_has_point)
+  {
+    for (int an_axis = 0; an_axis < 3; ++an_axis)
+    {
+      the_bbox.min[an_axis] = a_coordinates[an_axis];
+      the_bbox.max[an_axis] = a_coordinates[an_axis];
+    }
+    the_has_point = true;
+    return;
+  }
+
+  for (int an_axis = 0; an_axis < 3; ++an_axis)
+  {
+    the_bbox.min[an_axis] = std::min(the_bbox.min[an_axis], a_coordinates[an_axis]);
+    the_bbox.max[an_axis] = std::max(the_bbox.max[an_axis], a_coordinates[an_axis]);
+  }
+}
+
+static void fillEdgeCurveBbox(const TopoDS_Edge& the_edge, LeanOcctBbox& the_bbox)
+{
+  if (!BRep_Tool::IsGeometric(the_edge))
+  {
+    throw std::runtime_error("Edge did not expose geometric curve data.");
+  }
+
+  const BRepAdaptor_Curve a_curve(the_edge);
+  Bnd_Box                 a_bounds;
+  BndLib_Add3dCurve::Add(a_curve, BRep_Tool::Tolerance(the_edge), a_bounds);
+  if (a_bounds.IsVoid())
+  {
+    throw std::runtime_error("Edge curve bounding box is empty.");
+  }
+
+  a_bounds.Get(the_bbox.min[0],
+               the_bbox.min[1],
+               the_bbox.min[2],
+               the_bbox.max[0],
+               the_bbox.max[1],
+               the_bbox.max[2]);
+}
+
 static double interpolateRange(const double the_first, const double the_last, const double the_t)
 {
   return the_first + (the_last - the_first) * the_t;
@@ -1000,6 +1061,147 @@ static void fillFaceGeometry(const Adaptor3d_Surface& the_surface, LeanOcctFaceG
   the_geometry.is_v_periodic = the_surface.IsVPeriodic() ? 1U : 0U;
   the_geometry.u_period = the_geometry.is_u_periodic != 0 ? the_surface.UPeriod() : 0.0;
   the_geometry.v_period = the_geometry.is_v_periodic != 0 ? the_surface.VPeriod() : 0.0;
+}
+
+static void includePcurveBboxPoint(LeanOcctBbox&             the_bbox,
+                                   const BRepAdaptor_Surface& the_surface,
+                                   const gp_Pnt2d&            the_point,
+                                   bool&                      the_has_point)
+{
+  includeBboxPoint(the_bbox, the_surface.Value(the_point.X(), the_point.Y()), the_has_point);
+}
+
+static void includePcurveControlPolygonBbox(const occ::handle<Geom2d_Curve>& the_curve,
+                                            const BRepAdaptor_Surface&        the_surface,
+                                            LeanOcctBbox&                     the_bbox,
+                                            bool&                             the_has_point)
+{
+  if (the_curve.IsNull())
+  {
+    return;
+  }
+
+  if (const occ::handle<Geom2d_TrimmedCurve> a_trimmed =
+        occ::down_cast<Geom2d_TrimmedCurve>(the_curve))
+  {
+    includePcurveControlPolygonBbox(
+      a_trimmed->BasisCurve(), the_surface, the_bbox, the_has_point);
+    return;
+  }
+
+  if (const occ::handle<Geom2d_BSplineCurve> a_bspline =
+        occ::down_cast<Geom2d_BSplineCurve>(the_curve))
+  {
+    for (int a_pole_index = 1; a_pole_index <= a_bspline->NbPoles(); ++a_pole_index)
+    {
+      includePcurveBboxPoint(the_bbox, the_surface, a_bspline->Pole(a_pole_index), the_has_point);
+    }
+    return;
+  }
+
+  if (const occ::handle<Geom2d_BezierCurve> a_bezier =
+        occ::down_cast<Geom2d_BezierCurve>(the_curve))
+  {
+    for (int a_pole_index = 1; a_pole_index <= a_bezier->NbPoles(); ++a_pole_index)
+    {
+      includePcurveBboxPoint(the_bbox, the_surface, a_bezier->Pole(a_pole_index), the_has_point);
+    }
+  }
+}
+
+static void fillFacePcurveControlPolygonBbox(const TopoDS_Face& the_face, LeanOcctBbox& the_bbox)
+{
+  const BRepAdaptor_Surface a_surface(the_face);
+  bool                      has_point = false;
+
+  double a_u_min = 0.0;
+  double a_u_max = 0.0;
+  double a_v_min = 0.0;
+  double a_v_max = 0.0;
+  BRepTools::UVBounds(the_face, a_u_min, a_u_max, a_v_min, a_v_max);
+  if (std::isfinite(a_u_min) && std::isfinite(a_u_max) && std::isfinite(a_v_min)
+      && std::isfinite(a_v_max))
+  {
+    includeBboxPoint(the_bbox, a_surface.Value(a_u_min, a_v_min), has_point);
+    includeBboxPoint(the_bbox, a_surface.Value(a_u_min, a_v_max), has_point);
+    includeBboxPoint(the_bbox, a_surface.Value(a_u_max, a_v_min), has_point);
+    includeBboxPoint(the_bbox, a_surface.Value(a_u_max, a_v_max), has_point);
+  }
+
+  for (TopExp_Explorer an_edge_exp(the_face, TopAbs_EDGE); an_edge_exp.More(); an_edge_exp.Next())
+  {
+    const TopoDS_Edge& an_edge = TopoDS::Edge(an_edge_exp.Current());
+    double             a_first = 0.0;
+    double             a_last = 0.0;
+    const occ::handle<Geom2d_Curve> a_pcurve = BRep_Tool::CurveOnSurface(an_edge, the_face, a_first, a_last);
+    if (a_pcurve.IsNull())
+    {
+      continue;
+    }
+    includePcurveControlPolygonBbox(a_pcurve, a_surface, the_bbox, has_point);
+
+    const BRepAdaptor_Curve2d a_curve(an_edge, the_face);
+    const double              a_curve_first = a_curve.FirstParameter();
+    const double              a_curve_last = a_curve.LastParameter();
+    if (std::isfinite(a_curve_first) && std::isfinite(a_curve_last))
+    {
+      constexpr int a_sample_count = 257;
+      for (int a_sample_index = 0; a_sample_index < a_sample_count; ++a_sample_index)
+      {
+        const double a_t = static_cast<double>(a_sample_index) / static_cast<double>(a_sample_count - 1);
+        const double a_parameter = interpolateRange(a_curve_first, a_curve_last, a_t);
+        includePcurveBboxPoint(the_bbox, a_surface, a_curve.Value(a_parameter), has_point);
+      }
+    }
+
+    if (a_curve.GetType() == GeomAbs_BSplineCurve)
+    {
+      const occ::handle<Geom2d_BSplineCurve> a_bspline = a_curve.BSpline();
+      if (a_bspline.IsNull())
+      {
+        continue;
+      }
+      for (int a_pole_index = 1; a_pole_index <= a_bspline->NbPoles(); ++a_pole_index)
+      {
+        includePcurveBboxPoint(the_bbox, a_surface, a_bspline->Pole(a_pole_index), has_point);
+      }
+    }
+    else if (a_curve.GetType() == GeomAbs_BezierCurve)
+    {
+      const occ::handle<Geom2d_BezierCurve> a_bezier = a_curve.Bezier();
+      if (a_bezier.IsNull())
+      {
+        continue;
+      }
+      for (int a_pole_index = 1; a_pole_index <= a_bezier->NbPoles(); ++a_pole_index)
+      {
+        includePcurveBboxPoint(the_bbox, a_surface, a_bezier->Pole(a_pole_index), has_point);
+      }
+    }
+  }
+
+  if (!has_point)
+  {
+    throw std::runtime_error("Face did not expose any finite pcurve boundary points.");
+  }
+}
+
+static void fillFaceSurfaceBbox(const TopoDS_Face& the_face, LeanOcctBbox& the_bbox)
+{
+  const BRepAdaptor_Surface a_surface(the_face);
+  Bnd_Box                   a_bounds;
+  BndLib_AddSurface::Add(a_surface, BRep_Tool::Tolerance(the_face), a_bounds);
+  if (a_bounds.IsVoid())
+  {
+    throw std::runtime_error("Face surface bounding box is empty.");
+  }
+
+  a_bounds.Get(the_bbox.min[0],
+               the_bbox.min[1],
+               the_bbox.min[2],
+               the_bbox.max[0],
+               the_bbox.max[1],
+               the_bbox.max[2]);
 }
 
 static void sampleFaceAtUv(const TopoDS_Face&     the_face,
@@ -2214,6 +2416,19 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_geometry(
                          fillEdgeGeometry);
 }
 
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_curve_bbox(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctBbox*        the_bbox)
+{
+  return fillShapeOutput(the_context,
+                         the_shape,
+                         the_bbox,
+                         "LeanOcctBbox output pointer was null.",
+                         requireEdgeShape,
+                         fillEdgeCurveBbox);
+}
+
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_line_payload(
   LeanOcctContext*      the_context,
   const LeanOcctShape*  the_shape,
@@ -2356,6 +2571,32 @@ extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_geometry(
                          requireFaceShape,
                          static_cast<void (*)(const TopoDS_Face&, LeanOcctFaceGeometry&)>(
                            fillFaceGeometry));
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_pcurve_control_polygon_bbox(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctBbox*        the_bbox)
+{
+  return fillShapeOutput(the_context,
+                         the_shape,
+                         the_bbox,
+                         "LeanOcctBbox output pointer was null.",
+                         requireFaceShape,
+                         fillFacePcurveControlPolygonBbox);
+}
+
+extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_surface_bbox(
+  LeanOcctContext*     the_context,
+  const LeanOcctShape* the_shape,
+  LeanOcctBbox*        the_bbox)
+{
+  return fillShapeOutput(the_context,
+                         the_shape,
+                         the_bbox,
+                         "LeanOcctBbox output pointer was null.",
+                         requireFaceShape,
+                         fillFaceSurfaceBbox);
 }
 
 extern "C" LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_plane_payload(

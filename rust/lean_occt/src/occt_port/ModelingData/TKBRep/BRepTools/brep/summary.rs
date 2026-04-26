@@ -4,7 +4,7 @@ use super::face_metrics::{
 use super::topology::PreparedShellShape;
 use super::*;
 
-use crate::EdgeSample;
+use crate::{EdgeSample, SurfaceKind};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeshFaceProperties {
@@ -958,11 +958,11 @@ fn offset_faces_bbox(
         });
     }
 
-    let boundary_bbox = boundary_shape_bbox(vertices, edges);
-    if face_shapes.len() > 1 && !offset_faces_require_occt_face_union(context, face_shapes) {
+    if face_shapes.len() > 1 {
         return None;
     }
 
+    let boundary_bbox = boundary_shape_bbox(vertices, edges);
     let face_bbox = face_bboxes_occt(context, face_shapes)?;
     let face_bbox = match boundary_bbox {
         Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
@@ -1022,14 +1022,16 @@ fn offset_face_brep_union_resolution(
             Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
             None => face_bbox,
         });
-    summary_union
-        .and_then(|bbox| {
-            validated_offset_face_union_bbox(bbox, shape_occt_bbox, offset_margin, true)
-        })
-        .map(|bbox| OffsetFaceBrepUnionResolution {
+    if let Some(bbox) = summary_union.and_then(|bbox| {
+        validated_offset_face_union_bbox(bbox, shape_occt_bbox, offset_margin, true)
+    }) {
+        return Some(OffsetFaceBrepUnionResolution {
             bbox,
             source: OffsetFaceBboxSource::SummaryFaceBrep,
-        })
+        });
+    }
+
+    None
 }
 
 fn validated_offset_face_union_bbox(
@@ -1087,10 +1089,61 @@ fn face_summary_breps_bbox(
 fn face_brep_bbox_candidate(context: &Context, face_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
     let brep = context.ported_brep(face_shape).ok()?;
     let boundary_bbox = boundary_shape_bbox(&brep.vertices, &brep.edges);
-    Some(merge_optional_bbox(
+    let summary_bbox = merge_optional_bbox(
         (brep.summary.bbox_min, brep.summary.bbox_max),
         boundary_bbox,
+    );
+    Some(merge_optional_bbox(
+        summary_bbox,
+        degenerate_plane_cap_surface_bbox(context, face_shape, &brep),
     ))
+}
+
+fn degenerate_plane_cap_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+    brep: &BrepShape,
+) -> Option<([f64; 3], [f64; 3])> {
+    let [face] = brep.faces.as_slice() else {
+        return None;
+    };
+    if face.geometry.kind != SurfaceKind::Plane
+        || brep.summary_bbox_source() != SummaryBboxSource::Mesh
+    {
+        return None;
+    }
+
+    let surface_bbox = context.face_surface_bbox_occt(face_shape).ok();
+    let mut bbox = surface_bbox;
+    if let Some(pcurve_bbox) = context
+        .face_pcurve_control_polygon_bbox_occt(face_shape)
+        .ok()
+    {
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, pcurve_bbox),
+            None => pcurve_bbox,
+        });
+    }
+    if surface_bbox.is_some() {
+        return bbox;
+    }
+
+    for edge_shape in context.subshapes(face_shape, ShapeKind::Edge).ok()? {
+        let geometry = context.edge_geometry(&edge_shape).ok()?;
+        if !matches!(
+            geometry.kind,
+            crate::CurveKind::Bezier | crate::CurveKind::BSpline
+        ) {
+            continue;
+        }
+
+        let edge_bbox = context.edge_curve_bbox_occt(&edge_shape).ok()?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, edge_bbox),
+            None => edge_bbox,
+        });
+    }
+    bbox
 }
 
 fn validated_face_brep_bbox(context: &Context, face_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
@@ -1174,12 +1227,6 @@ fn analytic_surface_bbox(
         ]),
         _ => None,
     }
-}
-
-fn offset_faces_require_occt_face_union(context: &Context, face_shapes: &[Shape]) -> bool {
-    face_shapes
-        .iter()
-        .any(|face_shape| validated_face_brep_bbox(context, face_shape).is_none())
 }
 
 fn offset_expanded_brep_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> {
@@ -1472,19 +1519,40 @@ fn offset_shell_face_brep_bbox(
     context: &Context,
     prepared_shell_shape: &PreparedShellShape,
 ) -> Option<([f64; 3], [f64; 3])> {
+    context
+        .subshape_count_occt(&prepared_shell_shape.shell_shape, ShapeKind::Face)
+        .ok()
+        .filter(|&count| count == prepared_shell_shape.shell_face_shapes.len())?;
+
+    union_shell_face_bboxes(&prepared_shell_shape.shell_face_shapes, |face_shape| {
+        validated_face_brep_bbox(context, face_shape)
+    })
+    .or_else(|| {
+        if prepared_shell_shape.shell_face_shapes.len() <= 1 {
+            None
+        } else {
+            union_shell_face_bboxes(&prepared_shell_shape.shell_face_shapes, |face_shape| {
+                face_brep_bbox_candidate(context, face_shape)
+            })
+        }
+    })
+}
+
+fn union_shell_face_bboxes<F>(
+    face_shapes: &[Shape],
+    mut face_bbox: F,
+) -> Option<([f64; 3], [f64; 3])>
+where
+    F: FnMut(&Shape) -> Option<([f64; 3], [f64; 3])>,
+{
     let mut bbox = None;
-    for face_shape in &prepared_shell_shape.shell_face_shapes {
-        let face_bbox = validated_face_brep_bbox(context, face_shape)?;
+    for face_shape in face_shapes {
+        let face_bbox = face_bbox(face_shape)?;
         bbox = Some(match bbox {
             Some(accumulated) => union_bbox(accumulated, face_bbox),
             None => face_bbox,
         });
     }
-
-    context
-        .subshape_count_occt(&prepared_shell_shape.shell_shape, ShapeKind::Face)
-        .ok()
-        .filter(|&count| count == prepared_shell_shape.shell_face_shapes.len())?;
     bbox
 }
 

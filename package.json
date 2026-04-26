@@ -11,6 +11,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@openai/codex": "^0.120.0"
+    "@openai/codex": "^0.125.0"
   }
 }

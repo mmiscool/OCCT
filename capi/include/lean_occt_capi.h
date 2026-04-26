@@ -261,6 +261,12 @@ typedef struct LeanOcctEdgeSample
   double tangent[3];
 } LeanOcctEdgeSample;
 
+typedef struct LeanOcctBbox
+{
+  double min[3];
+  double max[3];
+} LeanOcctBbox;
+
 typedef struct LeanOcctFaceUvBounds
 {
   double u_min;
@@ -472,6 +478,10 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_sample_at_parameter(
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_geometry(LeanOcctContext*        the_context,
                                                                    const LeanOcctShape*    the_shape,
                                                                    LeanOcctEdgeGeometry*   the_geometry);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_curve_bbox(
+  LeanOcctContext*        the_context,
+  const LeanOcctShape*    the_shape,
+  LeanOcctBbox*           the_bbox);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_edge_line_payload(
   LeanOcctContext*         the_context,
   const LeanOcctShape*     the_shape,
@@ -502,6 +512,14 @@ LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_sample_normalized(
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_geometry(LeanOcctContext*        the_context,
                                                                    const LeanOcctShape*    the_shape,
                                                                    LeanOcctFaceGeometry*   the_geometry);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_pcurve_control_polygon_bbox(
+  LeanOcctContext*        the_context,
+  const LeanOcctShape*    the_shape,
+  LeanOcctBbox*           the_bbox);
+LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_surface_bbox(
+  LeanOcctContext*        the_context,
+  const LeanOcctShape*    the_shape,
+  LeanOcctBbox*           the_bbox);
 LEAN_OCCT_CAPI_EXPORT LeanOcctResult lean_occt_shape_face_plane_payload(
   LeanOcctContext*           the_context,
   const LeanOcctShape*       the_shape,

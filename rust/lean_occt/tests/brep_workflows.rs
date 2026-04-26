@@ -1710,6 +1710,12 @@ fn ported_brep_uses_rust_owned_volume_for_offset_solids() -> Result<(), Box<dyn 
             SummaryBboxSource::OffsetFaceUnion,
             "offset solid shell {shell_index} root summary bbox should resolve through the expanded offset-face union path"
         );
+        assert_eq!(
+            shell_brep.offset_face_bbox_source(),
+            Some(OffsetFaceBboxSource::SummaryFaceBrep),
+            "offset solid shell {shell_index} root summary bbox should resolve through the Rust-owned summary face BRep path, not {:?}",
+            shell_brep.offset_face_bbox_source()
+        );
         assert_bbox_close(
             &label,
             shell_brep.summary.bbox_min,

@@ -327,6 +327,13 @@ mod ffi {
 
     #[repr(C)]
     #[derive(Clone, Copy)]
+    pub struct LeanOcctBbox {
+        pub min: [f64; 3],
+        pub max: [f64; 3],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
     pub struct LeanOcctFaceUvBounds {
         pub u_min: f64,
         pub u_max: f64,
@@ -585,6 +592,11 @@ mod ffi {
             shape: *const LeanOcctShape,
             geometry: *mut LeanOcctEdgeGeometry,
         ) -> LeanOcctResult;
+        pub fn lean_occt_shape_edge_curve_bbox(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            bbox: *mut LeanOcctBbox,
+        ) -> LeanOcctResult;
         pub fn lean_occt_shape_edge_line_payload(
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
@@ -623,6 +635,16 @@ mod ffi {
             context: *mut LeanOcctContext,
             shape: *const LeanOcctShape,
             geometry: *mut LeanOcctFaceGeometry,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_pcurve_control_polygon_bbox(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            bbox: *mut LeanOcctBbox,
+        ) -> LeanOcctResult;
+        pub fn lean_occt_shape_face_surface_bbox(
+            context: *mut LeanOcctContext,
+            shape: *const LeanOcctShape,
+            bbox: *mut LeanOcctBbox,
         ) -> LeanOcctResult;
         pub fn lean_occt_shape_face_plane_payload(
             context: *mut LeanOcctContext,
@@ -1708,6 +1730,21 @@ impl Context {
         }
     }
 
+    pub fn edge_curve_bbox_occt(&self, shape: &Shape) -> Result<([f64; 3], [f64; 3]), Error> {
+        let mut bbox = ffi::LeanOcctBbox {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_edge_curve_bbox(self.raw.as_ptr(), shape.raw.as_ptr(), &mut bbox)
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok((bbox.min, bbox.max))
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
     pub fn edge_line_payload(&self, shape: &Shape) -> Result<LinePayload, Error> {
         match self.ported_edge_curve(shape)? {
             Some(PortedCurve::Line(payload)) => Ok(payload),
@@ -1949,6 +1986,43 @@ impl Context {
                 u_period: geometry.u_period,
                 v_period: geometry.v_period,
             })
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_pcurve_control_polygon_bbox_occt(
+        &self,
+        shape: &Shape,
+    ) -> Result<([f64; 3], [f64; 3]), Error> {
+        let mut bbox = ffi::LeanOcctBbox {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_pcurve_control_polygon_bbox(
+                self.raw.as_ptr(),
+                shape.raw.as_ptr(),
+                &mut bbox,
+            )
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok((bbox.min, bbox.max))
+        } else {
+            Err(Error::new(self.last_error()))
+        }
+    }
+
+    pub fn face_surface_bbox_occt(&self, shape: &Shape) -> Result<([f64; 3], [f64; 3]), Error> {
+        let mut bbox = ffi::LeanOcctBbox {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
+        let result = unsafe {
+            ffi::lean_occt_shape_face_surface_bbox(self.raw.as_ptr(), shape.raw.as_ptr(), &mut bbox)
+        };
+        if result == ffi::LeanOcctResult::Ok {
+            Ok((bbox.min, bbox.max))
         } else {
             Err(Error::new(self.last_error()))
         }
