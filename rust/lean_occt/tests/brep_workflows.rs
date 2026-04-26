@@ -1203,9 +1203,15 @@ fn assert_brep_ported_curve_matches_public(
 
         let parameter = 0.5 * (geometry.start_parameter + geometry.end_parameter);
         let actual_sample = actual_curve.sample_with_geometry(actual_edge.geometry, parameter);
-        let occt_sample = kernel
-            .context()
-            .edge_sample_at_parameter_occt(edge_shape, parameter)?;
+        let is_root_edge =
+            kernel.context().describe_shape_occt(edge_shape)?.root_kind == ShapeKind::Edge;
+        let occt_sample = if is_root_edge {
+            kernel.context().edge_sample_occt(edge_shape, 0.5)?
+        } else {
+            kernel
+                .context()
+                .edge_sample_at_parameter_occt(edge_shape, parameter)?
+        };
         assert_vec3_close(
             actual_sample.position,
             occt_sample.position,

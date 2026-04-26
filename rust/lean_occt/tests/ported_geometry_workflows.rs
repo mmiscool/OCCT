@@ -1115,6 +1115,21 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             geometry.kind, expected_kind,
             "{label} fixture geometry kind changed"
         );
+        let ported_geometry = kernel
+            .context()
+            .ported_edge_geometry(&edge)?
+            .ok_or_else(|| std::io::Error::other(format!("{label} missing ported geometry")))?;
+        assert_edge_geometry_close(
+            geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} public/ported root geometry"),
+        )?;
+        assert_eq!(
+            kernel.context().edge_geometry_occt(&edge)?.kind,
+            expected_kind,
+            "{label} raw oracle geometry kind changed"
+        );
         let public_endpoints = kernel.context().edge_endpoints(&edge)?;
         let ported_endpoints = kernel
             .context()
@@ -1230,6 +1245,12 @@ fn root_edge_endpoints_and_topology_use_ported_seed() -> Result<(), Box<dyn std:
             1,
             "{label} public edge handles should come from ported root topology"
         );
+        assert_edge_geometry_close(
+            kernel.context().edge_geometry(&edge_shapes[0])?,
+            geometry,
+            1.0e-12,
+            &format!("{label} topology edge handle/public geometry"),
+        )?;
         assert_eq!(
             kernel.context().edge_geometry(&edge_shapes[0])?.kind,
             expected_kind,
@@ -1303,9 +1324,19 @@ fn unsupported_root_edge_does_not_use_generic_raw_topology_inventory(
         "unsupported root edge must not fall through to the generic raw topology inventory"
     );
     assert!(
+        kernel.context().ported_edge_geometry(&edge)?.is_none(),
+        "unsupported root edge geometry must stay outside the ported geometry path"
+    );
+    assert!(
         kernel.context().ported_edge_endpoints(&edge)?.is_none(),
         "unsupported root edge endpoints must stay outside the ported endpoint path"
     );
+    assert_edge_geometry_close(
+        kernel.context().edge_geometry(&edge)?,
+        geometry,
+        1.0e-12,
+        "unsupported root edge public/raw geometry",
+    )?;
 
     let public_endpoints = kernel.context().edge_endpoints(&edge)?;
     let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
@@ -1463,6 +1494,8 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
         ("ellipse", ellipse_edge),
     ] {
         let geometry = kernel.context().edge_geometry(&edge)?;
+        let summary = kernel.context().describe_shape_occt(&edge)?;
+        let root_edge = summary.root_kind == ShapeKind::Edge;
         let geometry_occt = kernel.context().edge_geometry_occt(&edge)?;
         let context_endpoints = kernel.context().edge_endpoints(&edge)?;
         let occt_endpoints = kernel.context().edge_endpoints_occt(&edge)?;
@@ -1498,11 +1531,15 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             .context()
             .ported_edge_length(&edge)?
             .ok_or_else(|| std::io::Error::other(format!("expected ported {label} edge length")))?;
-        let occt_sample = kernel
-            .context()
-            .edge_sample_at_parameter_occt(&edge, parameter)?;
+        let occt_sample = if root_edge {
+            kernel.context().edge_sample_occt(&edge, 0.5)?
+        } else {
+            kernel
+                .context()
+                .edge_sample_at_parameter_occt(&edge, parameter)?
+        };
         let occt_normalized_sample = kernel.context().edge_sample_occt(&edge, 0.5)?;
-        let occt_length = kernel.context().describe_shape_occt(&edge)?.linear_length;
+        let occt_length = summary.linear_length;
 
         match ported {
             PortedCurve::Line(payload) => {
@@ -1549,7 +1586,14 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
         }
 
         assert_edge_geometry_close(geometry, ported_geometry, 1.0e-12, label)?;
-        assert_edge_geometry_close(geometry, geometry_occt, 1.0e-8, label)?;
+        if root_edge {
+            assert_eq!(
+                geometry.kind, geometry_occt.kind,
+                "{label} raw geometry kind"
+            );
+        } else {
+            assert_edge_geometry_close(geometry, geometry_occt, 1.0e-8, label)?;
+        }
         assert_vec3_close(
             context_endpoints.start,
             ported_endpoints.start,
@@ -1629,9 +1673,15 @@ fn ported_curve_sampling_matches_occt() -> Result<(), Box<dyn std::error::Error>
             ("end", geometry.end_parameter),
         ] {
             let rust_parameter_sample = ported.sample_with_geometry(geometry, parameter);
-            let occt_parameter_sample = kernel
-                .context()
-                .edge_sample_at_parameter_occt(&edge, parameter)?;
+            let occt_parameter_sample = if root_edge {
+                kernel
+                    .context()
+                    .edge_sample_occt(&edge, if parameter_label == "start" { 0.0 } else { 1.0 })?
+            } else {
+                kernel
+                    .context()
+                    .edge_sample_at_parameter_occt(&edge, parameter)?
+            };
             assert_vec3_close(
                 rust_parameter_sample.position,
                 occt_parameter_sample.position,

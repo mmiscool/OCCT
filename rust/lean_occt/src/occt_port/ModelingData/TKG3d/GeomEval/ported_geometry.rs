@@ -12,12 +12,14 @@ use self::payloads::*;
 use crate::brep::{
     ported_face_area as ported_face_area_value,
     ported_face_surface_descriptor as ported_face_surface_descriptor_value,
+    ported_root_edge_geometry as ported_root_edge_geometry_value,
 };
 use crate::{
     CirclePayload, ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry,
     EdgeSample, EllipsePayload, Error, ExtrusionSurfacePayload, FaceGeometry, FaceSample,
     FaceUvBounds, LinePayload, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, Orientation,
-    PlanePayload, RevolutionSurfacePayload, Shape, SpherePayload, SurfaceKind, TorusPayload,
+    PlanePayload, RevolutionSurfacePayload, Shape, ShapeKind, SpherePayload, SurfaceKind,
+    TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -144,6 +146,10 @@ impl PortedCurve {
         shape: &Shape,
         geometry: EdgeGeometry,
     ) -> Result<Option<Self>, Error> {
+        if let Some(curve) = ported_root_edge_curve_from_geometry(context, shape, geometry)? {
+            return Ok(Some(curve));
+        }
+
         match geometry.kind {
             CurveKind::Line => Ok(ported_line_payload(context, shape, geometry)?.map(Self::Line)),
             CurveKind::Circle => {
@@ -211,6 +217,48 @@ impl PortedCurve {
                 derivative: ellipse_derivative(payload, parameter),
             },
         }
+    }
+}
+
+fn ported_root_edge_curve_from_geometry(
+    context: &Context,
+    shape: &Shape,
+    geometry: EdgeGeometry,
+) -> Result<Option<PortedCurve>, Error> {
+    if context.describe_shape_occt(shape)?.root_kind != ShapeKind::Edge {
+        return Ok(None);
+    }
+    let Some(root_geometry) = ported_root_edge_geometry_value(context, shape)? else {
+        return Ok(None);
+    };
+    if !edge_geometry_close(geometry, root_geometry, 1.0e-9) {
+        return Ok(None);
+    }
+
+    let endpoints = context.edge_endpoints(shape)?;
+    match geometry.kind {
+        CurveKind::Line => {
+            Ok(ported_line_payload_from_endpoints(geometry, endpoints).map(PortedCurve::Line))
+        }
+        CurveKind::Circle => {
+            if points_close(endpoints.start, endpoints.end, 1.0e-7) {
+                return Ok(ported_root_circle_payload_from_normalized_samples(
+                    context, shape, geometry, endpoints,
+                )?
+                .map(PortedCurve::Circle));
+            }
+            let Some((payload, _geometry)) =
+                ported_root_circle_arc_payload_and_geometry(context, shape, endpoints)?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(PortedCurve::Circle(payload)))
+        }
+        CurveKind::Ellipse => Ok(ported_root_ellipse_payload_from_normalized_samples(
+            context, shape, geometry, endpoints,
+        )?
+        .map(PortedCurve::Ellipse)),
+        _ => Ok(None),
     }
 }
 
@@ -732,6 +780,10 @@ impl Context {
     }
 
     pub fn ported_edge_geometry(&self, shape: &Shape) -> Result<Option<EdgeGeometry>, Error> {
+        if self.describe_shape_occt(shape)?.root_kind == ShapeKind::Edge {
+            return ported_root_edge_geometry_value(self, shape);
+        }
+
         let geometry = self.edge_geometry_occt(shape)?;
         let endpoints = self.edge_endpoints(shape)?;
 
@@ -1003,6 +1055,14 @@ impl Context {
     }
 }
 
+pub(crate) fn ported_swept_face_surface_from_samples(
+    context: &Context,
+    shape: &Shape,
+    geometry: FaceGeometry,
+) -> Result<Option<PortedSweptSurface>, Error> {
+    ported_offset_basis_swept_surface_payload(context, shape, 0.0, geometry)
+}
+
 fn ported_root_line_edge_geometry_from_normalized_samples(
     context: &Context,
     shape: &Shape,
@@ -1030,7 +1090,7 @@ fn ported_root_line_edge_geometry_from_normalized_samples(
         geometry: EdgeGeometry {
             kind: CurveKind::Line,
             start_parameter: 0.0,
-            end_parameter: 1.0,
+            end_parameter: length,
             is_closed: false,
             is_periodic: false,
             period: 0.0,
@@ -1044,10 +1104,14 @@ fn ported_root_circle_edge_geometry_from_normalized_samples(
     shape: &Shape,
     endpoints: EdgeEndpoints,
 ) -> Result<Option<RootEdgeTopologyBootstrapGeometry>, Error> {
-    if let Some(geometry) = ported_root_periodic_edge_geometry(CurveKind::Circle, endpoints) {
-        if let Some(payload) =
+    if let Some(mut geometry) = ported_root_periodic_edge_geometry(CurveKind::Circle, endpoints) {
+        if let Some(mut payload) =
             ported_root_circle_payload_from_normalized_samples(context, shape, geometry, endpoints)?
         {
+            if normal_prefers_canonical_flip(payload.normal) {
+                payload = flip_circle_payload_orientation(payload);
+                geometry.end_parameter = -geometry.end_parameter;
+            }
             return Ok(Some(root_edge_bootstrap_geometry_with_curve_length(
                 geometry,
                 PortedCurve::Circle(payload),
@@ -1064,12 +1128,17 @@ fn ported_root_ellipse_edge_geometry_from_normalized_samples(
     shape: &Shape,
     endpoints: EdgeEndpoints,
 ) -> Result<Option<RootEdgeTopologyBootstrapGeometry>, Error> {
-    let Some(geometry) = ported_root_periodic_edge_geometry(CurveKind::Ellipse, endpoints) else {
+    let Some(mut geometry) = ported_root_periodic_edge_geometry(CurveKind::Ellipse, endpoints)
+    else {
         return Ok(None);
     };
-    if let Some(payload) =
+    if let Some(mut payload) =
         ported_root_ellipse_payload_from_normalized_samples(context, shape, geometry, endpoints)?
     {
+        if normal_prefers_canonical_flip(payload.normal) {
+            payload = flip_ellipse_payload_orientation(payload);
+            geometry.end_parameter = -geometry.end_parameter;
+        }
         Ok(Some(root_edge_bootstrap_geometry_with_curve_length(
             geometry,
             PortedCurve::Ellipse(payload),
@@ -1084,18 +1153,42 @@ fn ported_root_circle_arc_edge_geometry_from_normalized_samples(
     shape: &Shape,
     endpoints: EdgeEndpoints,
 ) -> Result<Option<RootEdgeTopologyBootstrapGeometry>, Error> {
-    let Some(midpoint) = root_edge_normalized_sample_position(context, shape, endpoints, 0.5)
+    let Some((payload, geometry)) =
+        ported_root_circle_arc_payload_and_geometry(context, shape, endpoints)?
     else {
         return Ok(None);
     };
-    let Some(payload) =
+
+    Ok(Some(root_edge_bootstrap_geometry_with_curve_length(
+        geometry,
+        PortedCurve::Circle(payload),
+    )))
+}
+
+fn ported_root_circle_arc_payload_and_geometry(
+    context: &Context,
+    shape: &Shape,
+    endpoints: EdgeEndpoints,
+) -> Result<Option<(CirclePayload, EdgeGeometry)>, Error> {
+    let Some(mid_sample) = context.edge_sample_occt(shape, 0.5).ok() else {
+        return Ok(None);
+    };
+    let midpoint = mid_sample.position;
+    let Some(mut payload) =
         circle_payload_from_root_arc_points(endpoints.start, midpoint, endpoints.end)
     else {
         return Ok(None);
     };
-    let Some(end_parameter) = circle_arc_end_parameter(payload, midpoint, endpoints.end) else {
+
+    if normal_prefers_canonical_flip(payload.normal) {
+        payload = flip_circle_payload_orientation(payload);
+    }
+
+    let Some(end_parameter) = circle_arc_signed_end_parameter(payload, midpoint, endpoints.end)
+    else {
         return Ok(None);
     };
+
     let geometry = EdgeGeometry {
         kind: CurveKind::Circle,
         start_parameter: 0.0,
@@ -1117,10 +1210,65 @@ fn ported_root_circle_arc_edge_geometry_from_normalized_samples(
             return Ok(None);
         }
     }
+    Ok(Some((payload, geometry)))
+}
 
-    Ok(Some(root_edge_bootstrap_geometry_with_curve_length(
-        geometry, curve,
-    )))
+fn circle_arc_signed_end_parameter(
+    payload: CirclePayload,
+    midpoint: [f64; 3],
+    end: [f64; 3],
+) -> Option<f64> {
+    let base_midpoint = circle_parameter(payload, midpoint);
+    let base_end = circle_parameter(payload, end);
+    let mut best = None;
+    for midpoint_turn in -1..=1 {
+        let midpoint_parameter = base_midpoint + f64::from(midpoint_turn) * TAU;
+        for end_turn in -1..=1 {
+            let end_parameter = base_end + f64::from(end_turn) * TAU;
+            if end_parameter.abs() <= 1.0e-9 || end_parameter.abs() > TAU + 1.0e-7 {
+                continue;
+            }
+            let midpoint_on_span = if end_parameter > 0.0 {
+                midpoint_parameter >= -1.0e-9 && midpoint_parameter <= end_parameter + 1.0e-9
+            } else {
+                midpoint_parameter <= 1.0e-9 && midpoint_parameter >= end_parameter - 1.0e-9
+            };
+            if !midpoint_on_span {
+                continue;
+            }
+            if best
+                .map(|current: f64| end_parameter.abs() < current.abs())
+                .unwrap_or(true)
+            {
+                best = Some(end_parameter);
+            }
+        }
+    }
+    best
+}
+
+fn normal_prefers_canonical_flip(normal: [f64; 3]) -> bool {
+    let mut axis = 0;
+    let mut magnitude = normal[0].abs();
+    for (index, component) in normal.iter().enumerate().skip(1) {
+        if component.abs() > magnitude {
+            axis = index;
+            magnitude = component.abs();
+        }
+    }
+    magnitude > 1.0e-12 && normal[axis] < 0.0
+}
+
+fn flip_circle_payload_orientation(mut payload: CirclePayload) -> CirclePayload {
+    payload.normal = scale3(payload.normal, -1.0);
+    payload.y_direction = scale3(payload.y_direction, -1.0);
+    payload
+}
+
+fn flip_ellipse_payload_orientation(mut payload: EllipsePayload) -> EllipsePayload {
+    payload.normal = scale3(payload.normal, -1.0);
+    payload.y_direction = scale3(payload.y_direction, -1.0);
+    payload
 }
 
 fn ported_root_circle_payload_from_normalized_samples(
@@ -1131,7 +1279,11 @@ fn ported_root_circle_payload_from_normalized_samples(
 ) -> Result<Option<CirclePayload>, Error> {
     let mut missing_sample = false;
     let mut sample_position = |parameter| {
-        let t = clamp(normalize_range(0.0, TAU, parameter), 0.0, 1.0);
+        let t = clamp(
+            normalize_range(geometry.start_parameter, geometry.end_parameter, parameter),
+            0.0,
+            1.0,
+        );
         match root_edge_normalized_sample_position(context, shape, endpoints, t) {
             Some(position) => Ok(position),
             None => {
@@ -1156,7 +1308,11 @@ fn ported_root_ellipse_payload_from_normalized_samples(
 ) -> Result<Option<EllipsePayload>, Error> {
     let mut missing_sample = false;
     let mut sample_position = |parameter| {
-        let t = clamp(normalize_range(0.0, TAU, parameter), 0.0, 1.0);
+        let t = clamp(
+            normalize_range(geometry.start_parameter, geometry.end_parameter, parameter),
+            0.0,
+            1.0,
+        );
         match root_edge_normalized_sample_position(context, shape, endpoints, t) {
             Some(position) => Ok(position),
             None => {
@@ -1254,37 +1410,6 @@ fn circle_payload_from_root_arc_points(
     })
 }
 
-fn circle_arc_end_parameter(
-    payload: CirclePayload,
-    midpoint: [f64; 3],
-    end: [f64; 3],
-) -> Option<f64> {
-    let midpoint_parameter = positive_circle_parameter(payload, midpoint);
-    let mut end_parameter = positive_circle_parameter(payload, end);
-    while midpoint_parameter > end_parameter + 1.0e-9 {
-        end_parameter += TAU;
-    }
-    if end_parameter <= 1.0e-9 || end_parameter > TAU + 1.0e-7 {
-        None
-    } else {
-        Some(end_parameter)
-    }
-}
-
-fn positive_circle_parameter(payload: CirclePayload, point: [f64; 3]) -> f64 {
-    let relative = subtract3(point, payload.center);
-    let mut parameter =
-        dot3(relative, payload.y_direction).atan2(dot3(relative, payload.x_direction));
-    if parameter < -1.0e-9 {
-        parameter += TAU;
-    }
-    if parameter < 0.0 {
-        0.0
-    } else {
-        parameter
-    }
-}
-
 fn root_edge_bootstrap_geometry_with_curve_length(
     geometry: EdgeGeometry,
     curve: PortedCurve,
@@ -1379,6 +1504,15 @@ fn approx_vec3_eq(lhs: [f64; 3], rhs: [f64; 3], tolerance: f64) -> bool {
     (lhs[0] - rhs[0]).abs() <= tolerance
         && (lhs[1] - rhs[1]).abs() <= tolerance
         && (lhs[2] - rhs[2]).abs() <= tolerance
+}
+
+fn edge_geometry_close(lhs: EdgeGeometry, rhs: EdgeGeometry, tolerance: f64) -> bool {
+    lhs.kind == rhs.kind
+        && lhs.is_closed == rhs.is_closed
+        && lhs.is_periodic == rhs.is_periodic
+        && (lhs.start_parameter - rhs.start_parameter).abs() <= tolerance
+        && (lhs.end_parameter - rhs.end_parameter).abs() <= tolerance
+        && (lhs.period - rhs.period).abs() <= tolerance
 }
 
 fn ported_analytic_face_geometry_candidate(

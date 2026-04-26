@@ -133,6 +133,12 @@ pub(super) fn ported_swept_face_surface_with_route(
     face_geometry: FaceGeometry,
     route: FaceSurfaceRoute,
 ) -> Result<Option<PortedSweptSurface>, Error> {
+    if let Some(surface) =
+        ported_swept_face_surface_from_samples(context, face_shape, face_geometry)?
+    {
+        return Ok(Some(surface));
+    }
+
     let topology = match single_face_topology_with_route(context, face_shape, route)? {
         Some(topology) => topology,
         None => return Ok(None),

@@ -32,6 +32,7 @@ use self::shape_queries::{
     ported_vertex_point,
 };
 use self::summary::{ported_offset_shell_bbox_sources, ported_shape_summary};
+pub(crate) use self::topology::ported_root_edge_geometry;
 use self::topology::{
     load_ported_topology, ported_topology_snapshot, root_assembly_requires_ported_topology,
     PreparedShellShape,
@@ -39,9 +40,9 @@ use self::topology::{
 
 use crate::ported_geometry::{
     analytic_sampled_wire_signed_area, analytic_sampled_wire_signed_volume, extrusion_swept_area,
-    planar_wire_signed_area, revolution_swept_area, sample_extrusion_surface_normalized,
-    sample_revolution_surface_normalized, PortedFaceSurface, PortedOffsetBasisSurface,
-    PortedOffsetSurface, PortedSweptSurface,
+    planar_wire_signed_area, ported_swept_face_surface_from_samples, revolution_swept_area,
+    sample_extrusion_surface_normalized, sample_revolution_surface_normalized, PortedFaceSurface,
+    PortedOffsetBasisSurface, PortedOffsetSurface, PortedSweptSurface,
 };
 use crate::{
     ConePayload, Context, CurveKind, CylinderPayload, EdgeEndpoints, EdgeGeometry, Error,

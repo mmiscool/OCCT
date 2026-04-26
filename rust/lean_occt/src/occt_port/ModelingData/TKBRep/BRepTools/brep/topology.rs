@@ -352,6 +352,24 @@ fn load_root_edge_topology_inventory(
     ))
 }
 
+pub(crate) fn ported_root_edge_geometry(
+    context: &Context,
+    shape: &Shape,
+) -> Result<Option<EdgeGeometry>, Error> {
+    let RootEdgeTopologyInventory::Supported(fields) =
+        load_root_edge_topology_inventory(context, shape)?
+    else {
+        return Ok(None);
+    };
+    let [root_edge] = fields.root_edges.as_slice() else {
+        return Ok(None);
+    };
+    if fields.edges.len() != 1 {
+        return Ok(None);
+    }
+    Ok(Some(root_edge.geometry))
+}
+
 fn root_edge_topology_bootstrap_seed(
     context: &Context,
     shape: &Shape,
