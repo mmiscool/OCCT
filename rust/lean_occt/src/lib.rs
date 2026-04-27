@@ -1499,6 +1499,7 @@ pub(crate) struct AnalyticSurfaceFaceMetadata {
 pub(crate) struct AssemblyResultMetadata {
     pub(crate) kind: ShapeKind,
     pub(crate) child_root_kinds: Vec<ShapeKind>,
+    pub(crate) child_analytic_source_counts: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -4610,9 +4611,14 @@ impl Context {
                     .map(|summary| summary.root_kind)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let child_analytic_source_counts = children
+            .iter()
+            .map(|child| child.rust_multi_face_analytic_source_count())
+            .collect();
         Ok(ShapeRustMetadata::AssemblyResult(AssemblyResultMetadata {
             kind,
             child_root_kinds,
+            child_analytic_source_counts,
         }))
     }
 
@@ -5523,6 +5529,16 @@ impl Shape {
         match &self.rust_metadata {
             ShapeRustMetadata::AssemblyResult(metadata) => {
                 Some(metadata.child_root_kinds.as_slice())
+            }
+            _ => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn rust_assembly_child_analytic_source_counts(&self) -> Option<&[Option<usize>]> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::AssemblyResult(metadata) => {
+                Some(metadata.child_analytic_source_counts.as_slice())
             }
             _ => None,
         }

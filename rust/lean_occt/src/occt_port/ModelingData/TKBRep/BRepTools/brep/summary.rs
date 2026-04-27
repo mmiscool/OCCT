@@ -939,8 +939,18 @@ fn ported_shape_bbox(
     edges: &[BrepEdge],
     faces: &[BrepFace],
 ) -> Option<([f64; 3], [f64; 3])> {
-    topological_shape_bbox(vertices, edges, faces)
-        .or_else(|| ported_single_face_shape_bbox(vertices, edges, faces))
+    let topology_bbox = topological_shape_bbox(vertices, edges, faces);
+    let surface_bbox = if faces.len() > 1 {
+        ported_faces_surface_bbox(faces)
+    } else {
+        ported_single_face_shape_bbox(vertices, edges, faces)
+    };
+    match (topology_bbox, surface_bbox) {
+        (Some(topology_bbox), Some(surface_bbox)) => Some(union_bbox(topology_bbox, surface_bbox)),
+        (Some(topology_bbox), None) => Some(topology_bbox),
+        (None, Some(surface_bbox)) => Some(surface_bbox),
+        (None, None) => None,
+    }
 }
 
 pub(super) fn shape_counts(
@@ -1772,14 +1782,14 @@ fn boundary_shape_bbox(
     edges: &[BrepEdge],
 ) -> Option<([f64; 3], [f64; 3])> {
     let vertex_bbox = bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect());
-    analytic_edges_bbox(edges)
-        .or_else(|| line_segment_points_bbox(vertices, edges))
-        .map(|edge_bbox| {
-            vertex_bbox
-                .map(|vertex_bbox| union_bbox(edge_bbox, vertex_bbox))
-                .unwrap_or(edge_bbox)
-        })
-        .or(vertex_bbox)
+    let edge_bbox =
+        analytic_edges_bbox(edges).or_else(|| line_segment_points_bbox(vertices, edges));
+    match (vertex_bbox, edge_bbox, edges.is_empty()) {
+        (Some(vertex_bbox), Some(edge_bbox), _) => Some(union_bbox(edge_bbox, vertex_bbox)),
+        (None, Some(edge_bbox), _) => Some(edge_bbox),
+        (Some(vertex_bbox), None, true) => Some(vertex_bbox),
+        _ => None,
+    }
 }
 
 fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool {

@@ -3,13 +3,13 @@ mod support;
 use std::f64::consts::PI;
 
 use lean_occt::{
-    BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeGeometry,
-    EdgeSelector, EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, LinePayload,
-    ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams, OffsetSurfacePayload,
-    OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface,
-    PortedSurface, PortedSweptSurface, PrismParams, RevolutionParams, RevolutionSurfacePayload,
-    Shape, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource,
-    SurfaceKind, TorusParams, TorusPayload,
+    BoxParams, CirclePayload, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload,
+    EdgeGeometry, EdgeSelector, EllipseEdgeParams, EllipsePayload, ExtrusionSurfacePayload,
+    FaceSelector, LinePayload, ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams,
+    OffsetSurfacePayload, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface,
+    PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface, PrismParams, RevolutionParams,
+    RevolutionSurfacePayload, Shape, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource,
+    SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,7 @@ enum AuthoredFamily {
     GeneratedOffset,
     SimpleShellSolidAssembly,
     SimpleFaceWireAssembly,
+    MixedAnalyticSolidAssembly,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -126,13 +127,21 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
         summary_metrics: true,
         selectors_documents: true,
     },
+    OwnershipRow {
+        family: AuthoredFamily::MixedAnalyticSolidAssembly,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
+    },
 ];
 
 fn require_complete_ownership_row(
     family: AuthoredFamily,
     label: &str,
 ) -> Result<&'static OwnershipRow, Box<dyn std::error::Error>> {
-    assert_eq!(OWNERSHIP_MATRIX.len(), 11);
+    assert_eq!(OWNERSHIP_MATRIX.len(), 12);
     let row = OWNERSHIP_MATRIX
         .iter()
         .find(|row| row.family == family)
@@ -215,6 +224,30 @@ fn assert_edge_geometry_close(
     Ok(())
 }
 
+fn assert_edge_geometry_close_or_periodic_equivalent(
+    lhs: EdgeGeometry,
+    rhs: EdgeGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if assert_edge_geometry_close(lhs, rhs, tolerance, label).is_ok() {
+        return Ok(());
+    }
+
+    let lhs_span = (lhs.end_parameter - lhs.start_parameter).abs();
+    let rhs_span = (rhs.end_parameter - rhs.start_parameter).abs();
+    if lhs.kind == rhs.kind
+        && lhs.is_periodic
+        && rhs.is_periodic
+        && (lhs.period - rhs.period).abs() <= tolerance
+        && (lhs_span - rhs_span).abs() <= tolerance
+    {
+        return Ok(());
+    }
+
+    Err(std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into())
+}
+
 fn assert_line_payload_close(
     lhs: LinePayload,
     rhs: LinePayload,
@@ -232,6 +265,82 @@ fn assert_line_payload_close(
         rhs.direction,
         tolerance,
         &format!("{label} direction"),
+    )?;
+    Ok(())
+}
+
+fn assert_circle_payload_same_carrier(
+    lhs: CirclePayload,
+    rhs: CirclePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_scalar_close(
+        lhs.radius,
+        rhs.radius,
+        tolerance,
+        &format!("{label} radius"),
+    )?;
+    let normal_dot = lhs.normal[0] * rhs.normal[0]
+        + lhs.normal[1] * rhs.normal[1]
+        + lhs.normal[2] * rhs.normal[2];
+    if (normal_dot.abs() - 1.0).abs() > tolerance {
+        return Err(std::io::Error::other(format!(
+            "{label} normal axes are not parallel: lhs={:?} rhs={:?}",
+            lhs.normal, rhs.normal
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn assert_ellipse_payload_close(
+    lhs: EllipsePayload,
+    rhs: EllipsePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.major_radius,
+        rhs.major_radius,
+        tolerance,
+        &format!("{label} major_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.minor_radius,
+        rhs.minor_radius,
+        tolerance,
+        &format!("{label} minor_radius"),
     )?;
     Ok(())
 }
@@ -3543,10 +3652,30 @@ fn assert_assembly_metadata(
     Ok(())
 }
 
+fn assert_assembly_analytic_source_counts(
+    shape: &Shape,
+    expected_counts: &[Option<usize>],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let observed_counts = shape
+        .rust_assembly_child_analytic_source_counts()
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} missing Rust assembly analytic source inventory"
+            ))
+        })?;
+    assert_eq!(
+        observed_counts, expected_counts,
+        "{label} Rust assembly analytic source counts"
+    );
+    Ok(())
+}
+
 fn assert_simple_assembly_snapshot(
     kernel: &ModelKernel,
     shape: &Shape,
     expected: AssemblySummaryExpectation,
+    expected_face_kind_counts: &[(SurfaceKind, usize)],
     label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let context = kernel.context();
@@ -3721,6 +3850,27 @@ fn assert_simple_assembly_snapshot(
 
     let face_shapes = context.subshapes(shape, ShapeKind::Face)?;
     assert_eq!(face_shapes.len(), expected.face_count);
+    for &(kind, count) in expected_face_kind_counts {
+        assert_eq!(
+            face_shapes
+                .iter()
+                .filter(|face_shape| context
+                    .face_geometry(face_shape)
+                    .is_ok_and(|geometry| geometry.kind == kind))
+                .count(),
+            count,
+            "{label} {kind:?} face count"
+        );
+        assert_eq!(
+            brep.faces
+                .iter()
+                .filter(|face| face.geometry.kind == kind
+                    && ported_face_surface_matches_kind(face.ported_face_surface, kind))
+                .count(),
+            count,
+            "{label} {kind:?} BRep ported face count"
+        );
+    }
     for (face_index, face_shape) in face_shapes.iter().enumerate() {
         let public_geometry = context.face_geometry(face_shape)?;
         let ported_geometry = context.ported_face_geometry(face_shape)?.ok_or_else(|| {
@@ -3728,23 +3878,182 @@ fn assert_simple_assembly_snapshot(
                 "{label} face {face_index} missing Rust face geometry"
             ))
         })?;
-        assert_eq!(
-            public_geometry.kind,
-            SurfaceKind::Plane,
-            "{label} face {face_index} should remain planar"
-        );
         assert_face_geometry_close(
             public_geometry,
             ported_geometry,
             1.0e-12,
             &format!("{label} face {face_index} public vs Rust geometry"),
         )?;
-        assert_plane_payload_close(
-            context.face_plane_payload(face_shape)?,
-            context.face_plane_payload_occt(face_shape)?,
-            1.0e-6,
-            &format!("{label} face {face_index} plane payload vs OCCT oracle"),
+        assert_supported_face_payload_query(
+            context,
+            face_shape,
+            public_geometry.kind,
+            &format!("{label} face {face_index}"),
         )?;
+    }
+
+    Ok(())
+}
+
+fn ported_face_surface_matches_kind(surface: Option<PortedFaceSurface>, kind: SurfaceKind) -> bool {
+    matches!(
+        (surface, kind),
+        (
+            Some(PortedFaceSurface::Analytic(PortedSurface::Plane(_))),
+            SurfaceKind::Plane
+        ) | (
+            Some(PortedFaceSurface::Analytic(PortedSurface::Cylinder(_))),
+            SurfaceKind::Cylinder
+        ) | (
+            Some(PortedFaceSurface::Analytic(PortedSurface::Cone(_))),
+            SurfaceKind::Cone
+        ) | (
+            Some(PortedFaceSurface::Analytic(PortedSurface::Sphere(_))),
+            SurfaceKind::Sphere
+        ) | (
+            Some(PortedFaceSurface::Analytic(PortedSurface::Torus(_))),
+            SurfaceKind::Torus
+        )
+    )
+}
+
+fn assert_supported_face_payload_query(
+    context: &lean_occt::Context,
+    face_shape: &Shape,
+    kind: SurfaceKind,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let descriptor = context
+        .ported_face_surface_descriptor(face_shape)?
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust face descriptor")))?;
+
+    match kind {
+        SurfaceKind::Plane => {
+            let public_payload = context.face_plane_payload(face_shape)?;
+            let descriptor_payload = match descriptor {
+                PortedFaceSurface::Analytic(PortedSurface::Plane(payload)) => payload,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} expected Rust plane descriptor, got {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert_plane_payload_close(
+                public_payload,
+                descriptor_payload,
+                1.0e-12,
+                &format!("{label} public plane payload vs Rust descriptor"),
+            )?;
+            assert_plane_payload_close(
+                public_payload,
+                context.face_plane_payload_occt(face_shape)?,
+                1.0e-6,
+                &format!("{label} plane payload vs OCCT oracle"),
+            )?;
+        }
+        SurfaceKind::Cylinder => {
+            let public_payload = context.face_cylinder_payload(face_shape)?;
+            let descriptor_payload = match descriptor {
+                PortedFaceSurface::Analytic(PortedSurface::Cylinder(payload)) => payload,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} expected Rust cylinder descriptor, got {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert_cylinder_payload_close(
+                public_payload,
+                descriptor_payload,
+                1.0e-12,
+                &format!("{label} public cylinder payload vs Rust descriptor"),
+            )?;
+            assert_cylinder_payload_close(
+                public_payload,
+                context.face_cylinder_payload_occt(face_shape)?,
+                1.0e-6,
+                &format!("{label} cylinder payload vs OCCT oracle"),
+            )?;
+        }
+        SurfaceKind::Cone => {
+            let public_payload = context.face_cone_payload(face_shape)?;
+            let descriptor_payload = match descriptor {
+                PortedFaceSurface::Analytic(PortedSurface::Cone(payload)) => payload,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} expected Rust cone descriptor, got {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert_cone_payload_close(
+                public_payload,
+                descriptor_payload,
+                1.0e-12,
+                &format!("{label} public cone payload vs Rust descriptor"),
+            )?;
+            assert_cone_payload_close(
+                public_payload,
+                context.face_cone_payload_occt(face_shape)?,
+                1.0e-6,
+                &format!("{label} cone payload vs OCCT oracle"),
+            )?;
+        }
+        SurfaceKind::Sphere => {
+            let public_payload = context.face_sphere_payload(face_shape)?;
+            let descriptor_payload = match descriptor {
+                PortedFaceSurface::Analytic(PortedSurface::Sphere(payload)) => payload,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} expected Rust sphere descriptor, got {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert_sphere_payload_close(
+                public_payload,
+                descriptor_payload,
+                1.0e-12,
+                &format!("{label} public sphere payload vs Rust descriptor"),
+            )?;
+            assert_sphere_payload_close(
+                public_payload,
+                context.face_sphere_payload_occt(face_shape)?,
+                1.0e-6,
+                &format!("{label} sphere payload vs OCCT oracle"),
+            )?;
+        }
+        SurfaceKind::Torus => {
+            let public_payload = context.face_torus_payload(face_shape)?;
+            let descriptor_payload = match descriptor {
+                PortedFaceSurface::Analytic(PortedSurface::Torus(payload)) => payload,
+                other => {
+                    return Err(std::io::Error::other(format!(
+                        "{label} expected Rust torus descriptor, got {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            assert_torus_payload_close(
+                public_payload,
+                descriptor_payload,
+                1.0e-12,
+                &format!("{label} public torus payload vs Rust descriptor"),
+            )?;
+            assert_torus_payload_close(
+                public_payload,
+                context.face_torus_payload_occt(face_shape)?,
+                1.0e-6,
+                &format!("{label} torus payload vs OCCT oracle"),
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "{label} unsupported assembly face kind {other:?}"
+            ))
+            .into());
+        }
     }
 
     Ok(())
@@ -3787,6 +4096,145 @@ fn assert_line_edge_queries(
     }
 
     Ok(())
+}
+
+fn assert_supported_edge_queries(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    expected_curve_kind_counts: &[(CurveKind, usize)],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = kernel.context();
+    let edge_shapes = context.subshapes(shape, ShapeKind::Edge)?;
+    let brep = kernel.brep(shape)?;
+    assert_eq!(
+        edge_shapes.len(),
+        expected_curve_kind_counts
+            .iter()
+            .map(|(_, count)| *count)
+            .sum::<usize>(),
+        "{label} edge subshape count"
+    );
+
+    for &(kind, count) in expected_curve_kind_counts {
+        assert_eq!(
+            edge_shapes
+                .iter()
+                .filter(|edge_shape| context
+                    .edge_geometry(edge_shape)
+                    .is_ok_and(|geometry| geometry.kind == kind))
+                .count(),
+            count,
+            "{label} {kind:?} edge count"
+        );
+        assert_eq!(
+            brep.edges
+                .iter()
+                .filter(|edge| {
+                    edge.geometry.kind == kind
+                        && match kind {
+                            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse => {
+                                ported_curve_matches_kind(edge.ported_curve, kind)
+                            }
+                            CurveKind::Other => edge.ported_curve.is_none(),
+                            _ => false,
+                        }
+                })
+                .count(),
+            count,
+            "{label} {kind:?} BRep ported edge count"
+        );
+    }
+
+    for (edge_index, edge_shape) in edge_shapes.iter().enumerate() {
+        let public_geometry = context.edge_geometry(edge_shape)?;
+        let ported_geometry = context.ported_edge_geometry(edge_shape)?;
+        if public_geometry.kind == CurveKind::Other {
+            assert!(
+                ported_geometry.is_none(),
+                "{label} edge {edge_index} unsupported Other curve should not masquerade as Rust-owned geometry"
+            );
+        } else {
+            let ported_geometry = ported_geometry.ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{label} edge {edge_index} missing Rust edge geometry"
+                ))
+            })?;
+            assert_edge_geometry_close(
+                public_geometry,
+                ported_geometry,
+                1.0e-8,
+                &format!("{label} edge {edge_index} public vs Rust geometry"),
+            )?;
+        }
+        assert_edge_geometry_close_or_periodic_equivalent(
+            public_geometry,
+            context.edge_geometry_occt(edge_shape)?,
+            1.0e-8,
+            &format!("{label} edge {edge_index} public geometry vs OCCT oracle"),
+        )?;
+        match public_geometry.kind {
+            CurveKind::Line => {
+                assert_line_payload_close(
+                    context.edge_line_payload(edge_shape)?,
+                    context.edge_line_payload_occt(edge_shape)?,
+                    1.0e-6,
+                    &format!("{label} edge {edge_index} line payload vs OCCT oracle"),
+                )?;
+            }
+            CurveKind::Circle => {
+                assert_circle_payload_same_carrier(
+                    context.edge_circle_payload(edge_shape)?,
+                    context.edge_circle_payload_occt(edge_shape)?,
+                    1.0e-6,
+                    &format!("{label} edge {edge_index} circle carrier vs OCCT oracle"),
+                )?;
+            }
+            CurveKind::Ellipse => {
+                assert_ellipse_payload_close(
+                    context.edge_ellipse_payload(edge_shape)?,
+                    context.edge_ellipse_payload_occt(edge_shape)?,
+                    1.0e-6,
+                    &format!("{label} edge {edge_index} ellipse payload vs OCCT oracle"),
+                )?;
+            }
+            CurveKind::Other => {
+                assert!(
+                    context.ported_edge_curve(edge_shape)?.is_none(),
+                    "{label} edge {edge_index} unsupported Other curve should not expose a Rust analytic payload"
+                );
+                assert!(
+                    context.edge_line_payload(edge_shape).is_err(),
+                    "{label} edge {edge_index} unsupported Other curve should reject line payload queries"
+                );
+                assert!(
+                    context.edge_circle_payload(edge_shape).is_err(),
+                    "{label} edge {edge_index} unsupported Other curve should reject circle payload queries"
+                );
+                assert!(
+                    context.edge_ellipse_payload(edge_shape).is_err(),
+                    "{label} edge {edge_index} unsupported Other curve should reject ellipse payload queries"
+                );
+            }
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "{label} edge {edge_index} unsupported assembly curve kind {other:?}"
+                ))
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn ported_curve_matches_kind(curve: Option<PortedCurve>, kind: CurveKind) -> bool {
+    matches!(
+        (curve, kind),
+        (Some(PortedCurve::Line(_)), CurveKind::Line)
+            | (Some(PortedCurve::Circle(_)), CurveKind::Circle)
+            | (Some(PortedCurve::Ellipse(_)), CurveKind::Ellipse)
+    )
 }
 
 fn assert_vertex_queries(
@@ -3861,6 +4309,7 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::FaceContributions,
         },
+        &[(SurfaceKind::Plane, 12)],
         "solid compsolid assembly",
     )?;
     assert_scalar_close(
@@ -3906,6 +4355,7 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[(SurfaceKind::Plane, 12)],
         "shell compound assembly",
     )?;
 
@@ -3933,6 +4383,7 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[(SurfaceKind::Plane, 12)],
         "nested shell compound assembly",
     )?;
 
@@ -4077,6 +4528,7 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[(SurfaceKind::Plane, 2)],
         "face compound assembly",
     )?;
     assert_line_edge_queries(&kernel, &face_compound, 8, "face compound assembly")?;
@@ -4119,6 +4571,7 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[],
         "wire compound assembly",
     )?;
     assert_line_edge_queries(&kernel, &wire_compound, 8, "wire compound assembly")?;
@@ -4159,6 +4612,7 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[],
         "edge compound assembly",
     )?;
     assert_line_edge_queries(&kernel, &edge_compound, 2, "edge compound assembly")?;
@@ -4199,6 +4653,7 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[],
         "vertex compound assembly",
     )?;
     assert_vertex_queries(&kernel, &vertex_compound, 2, "vertex compound assembly")?;
@@ -4263,6 +4718,7 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
+        &[(SurfaceKind::Plane, 1)],
         "document face/wire compound assembly",
     )?;
     assert_line_edge_queries(
@@ -4412,6 +4868,431 @@ fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddBox/AddBox/AddBox/AddBox/Subshape/Subshape/Subshape/Subshape/Subshape/Compound history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_assembly_summary_matches_children(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    children: &[&Shape],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut expected_bbox_min = [f64::INFINITY; 3];
+    let mut expected_bbox_max = [f64::NEG_INFINITY; 3];
+    let mut expected_surface_area = 0.0;
+    let mut expected_volume = 0.0;
+
+    for child in children {
+        let summary = kernel.summarize(child)?;
+        for axis in 0..3 {
+            expected_bbox_min[axis] = expected_bbox_min[axis].min(summary.bbox_min[axis]);
+            expected_bbox_max[axis] = expected_bbox_max[axis].max(summary.bbox_max[axis]);
+        }
+        expected_surface_area += summary.surface_area;
+        expected_volume += summary.volume;
+    }
+
+    let summary = kernel.summarize(shape)?;
+    assert_vec3_close(
+        summary.bbox_min,
+        expected_bbox_min,
+        1.0e-8,
+        &format!("{label} bbox min from child summaries"),
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        expected_bbox_max,
+        1.0e-8,
+        &format!("{label} bbox max from child summaries"),
+    )?;
+    assert_scalar_close(
+        summary.surface_area,
+        expected_surface_area,
+        1.0e-8,
+        &format!("{label} surface area from child summaries"),
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        expected_volume,
+        1.0e-8,
+        &format!("{label} volume from child summaries"),
+    )?;
+
+    Ok(())
+}
+
+fn assert_mixed_analytic_solid_assembly(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    child_shapes: &[&Shape],
+    root_kind: ShapeKind,
+    compound_count: usize,
+    compsolid_count: usize,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let expected_child_kinds = [
+        ShapeKind::Solid,
+        ShapeKind::Solid,
+        ShapeKind::Solid,
+        ShapeKind::Solid,
+        ShapeKind::Solid,
+    ];
+    let expected_child_counts = [Some(3), Some(2), Some(3), Some(1), Some(1)];
+    let expected_face_kinds = [
+        (SurfaceKind::Plane, 10),
+        (SurfaceKind::Cylinder, 1),
+        (SurfaceKind::Cone, 1),
+        (SurfaceKind::Sphere, 1),
+        (SurfaceKind::Torus, 1),
+    ];
+    let expected_curve_kinds = [
+        (CurveKind::Line, 14),
+        (CurveKind::Circle, 7),
+        (CurveKind::Other, 2),
+    ];
+
+    assert_eq!(
+        child_shapes.len(),
+        expected_child_counts.len(),
+        "{label} child shape inventory"
+    );
+    for (index, (child, expected_count)) in
+        child_shapes.iter().zip(expected_child_counts).enumerate()
+    {
+        assert_eq!(
+            child.rust_multi_face_analytic_source_count(),
+            expected_count,
+            "{label} child {index} analytic source count"
+        );
+    }
+
+    assert_assembly_metadata(shape, root_kind, &expected_child_kinds, label)?;
+    assert_assembly_analytic_source_counts(shape, &expected_child_counts, label)?;
+    assert_simple_assembly_snapshot(
+        kernel,
+        shape,
+        AssemblySummaryExpectation {
+            root_kind,
+            primary_kind: ShapeKind::Solid,
+            compound_count,
+            compsolid_count,
+            solid_count: 5,
+            shell_count: 5,
+            face_count: 14,
+            wire_count: 14,
+            edge_count: 23,
+            vertex_count: 15,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::FaceContributions,
+        },
+        &expected_face_kinds,
+        label,
+    )?;
+    assert_supported_edge_queries(kernel, shape, &expected_curve_kinds, label)?;
+    assert_vertex_queries(kernel, shape, 15, label)?;
+    assert_assembly_summary_matches_children(kernel, shape, child_shapes, label)?;
+
+    Ok(())
+}
+
+#[test]
+fn mixed_analytic_solid_assembly_authored_family_row_is_rust_owned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(
+        AuthoredFamily::MixedAnalyticSolidAssembly,
+        "mixed analytic solid assembly",
+    )?;
+
+    let kernel = ModelKernel::new()?;
+    let box_params = BoxParams {
+        origin: [-84.0, -12.0, -5.0],
+        size: [10.0, 24.0, 10.0],
+    };
+    let cylinder_params = CylinderParams {
+        origin: [-54.0, 0.0, -6.0],
+        axis: [0.0, 0.0, 1.0],
+        radius: 5.0,
+        height: 12.0,
+    };
+    let cone_params = ConeParams {
+        origin: [-24.0, 0.0, -6.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 5.0,
+        top_radius: 2.5,
+        height: 12.0,
+    };
+    let sphere_params = SphereParams {
+        origin: [8.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 5.0,
+    };
+    let torus_params = TorusParams {
+        origin: [-8.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 6.0,
+        minor_radius: 2.0,
+    };
+
+    let solids = [
+        kernel.make_box(box_params)?,
+        kernel.make_cylinder(cylinder_params)?,
+        kernel.make_cone(cone_params)?,
+        kernel.make_sphere(sphere_params)?,
+        kernel.make_torus(torus_params)?,
+    ];
+    let solid_refs = solids.iter().collect::<Vec<_>>();
+    let mixed_compound = kernel.make_compound(&solids)?;
+    let mixed_compsolid = kernel.make_compsolid(&solids)?;
+
+    assert_mixed_analytic_solid_assembly(
+        &kernel,
+        &mixed_compound,
+        &solid_refs,
+        ShapeKind::Compound,
+        1,
+        0,
+        "mixed analytic solid compound",
+    )?;
+    assert_mixed_analytic_solid_assembly(
+        &kernel,
+        &mixed_compsolid,
+        &solid_refs,
+        ShapeKind::CompSolid,
+        0,
+        1,
+        "mixed analytic solid compsolid",
+    )?;
+
+    let mut document = ModelDocument::new()?;
+    document.insert_box("doc_box", box_params)?;
+    document.insert_cylinder("doc_cylinder", cylinder_params)?;
+    document.insert_cone("doc_cone", cone_params)?;
+    document.insert_sphere("doc_sphere", sphere_params)?;
+    document.insert_torus("doc_torus", torus_params)?;
+    let doc_input_names = [
+        "doc_box",
+        "doc_cylinder",
+        "doc_cone",
+        "doc_sphere",
+        "doc_torus",
+    ];
+    document.compsolid("doc_mixed_compsolid", &doc_input_names)?;
+    document.compound("doc_mixed_compound", &doc_input_names)?;
+
+    let doc_child_refs = doc_input_names
+        .iter()
+        .map(|name| document.shape(*name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let doc_compsolid = document.shape("doc_mixed_compsolid")?;
+    assert_mixed_analytic_solid_assembly(
+        document.kernel(),
+        doc_compsolid,
+        &doc_child_refs,
+        ShapeKind::CompSolid,
+        0,
+        1,
+        "document mixed analytic solid compsolid",
+    )?;
+    let doc_compound = document.shape("doc_mixed_compound")?;
+    assert_mixed_analytic_solid_assembly(
+        document.kernel(),
+        doc_compound,
+        &doc_child_refs,
+        ShapeKind::Compound,
+        1,
+        0,
+        "document mixed analytic solid compound",
+    )?;
+
+    let doc_report = document.report("doc_mixed_compsolid")?;
+    let doc_faces = document.faces("doc_mixed_compsolid")?;
+    let doc_edges = document.edges("doc_mixed_compsolid")?;
+    assert_eq!(doc_report.summary.root_kind, ShapeKind::CompSolid);
+    assert_eq!(doc_report.summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(doc_report.summary.solid_count, 5);
+    assert_eq!(doc_report.summary.face_count, 14);
+    assert_eq!(doc_report.summary.edge_count, 23);
+    assert_eq!(doc_faces.len(), 14);
+    assert_eq!(doc_edges.len(), 23);
+    for (kind, expected) in [
+        (SurfaceKind::Plane, 10),
+        (SurfaceKind::Cylinder, 1),
+        (SurfaceKind::Cone, 1),
+        (SurfaceKind::Sphere, 1),
+        (SurfaceKind::Torus, 1),
+    ] {
+        assert_eq!(
+            document
+                .face_indices_by_surface_kind("doc_mixed_compsolid", kind)?
+                .len(),
+            expected,
+            "document mixed analytic face selector inventory for {kind:?}"
+        );
+        let selected = document.select_face(
+            "doc_mixed_compsolid",
+            FaceSelector::LargestBySurfaceKind(kind),
+        )?;
+        assert_eq!(selected.geometry.kind, kind);
+        assert!(selected.area > 0.0);
+    }
+    for (kind, expected) in [
+        (CurveKind::Line, 14),
+        (CurveKind::Circle, 7),
+        (CurveKind::Other, 2),
+    ] {
+        assert_eq!(
+            document
+                .edge_indices_by_curve_kind("doc_mixed_compsolid", kind)?
+                .len(),
+            expected,
+            "document mixed analytic edge selector inventory for {kind:?}"
+        );
+        let selected = document.select_edge(
+            "doc_mixed_compsolid",
+            EdgeSelector::LongestByCurveKind(kind),
+        )?;
+        assert_eq!(selected.geometry.kind, kind);
+        assert!(selected.length > 0.0);
+    }
+
+    assert_eq!(document.history().len(), 7);
+    match &document.history()[0] {
+        OperationRecord::AddBox { output, params } => {
+            assert_eq!(output, "doc_box");
+            assert_vec3_close(params.origin, box_params.origin, 0.0, "history box origin")?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected AddBox history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    match &document.history()[1] {
+        OperationRecord::AddCylinder { output, params } => {
+            assert_eq!(output, "doc_cylinder");
+            assert_vec3_close(
+                params.origin,
+                cylinder_params.origin,
+                0.0,
+                "history cylinder origin",
+            )?;
+            assert_scalar_close(
+                params.radius,
+                cylinder_params.radius,
+                0.0,
+                "history cylinder radius",
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected AddCylinder history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    match &document.history()[2] {
+        OperationRecord::AddCone { output, params } => {
+            assert_eq!(output, "doc_cone");
+            assert_vec3_close(
+                params.origin,
+                cone_params.origin,
+                0.0,
+                "history cone origin",
+            )?;
+            assert_scalar_close(
+                params.top_radius,
+                cone_params.top_radius,
+                0.0,
+                "history cone top radius",
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected AddCone history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    match &document.history()[3] {
+        OperationRecord::AddSphere { output, params } => {
+            assert_eq!(output, "doc_sphere");
+            assert_vec3_close(
+                params.origin,
+                sphere_params.origin,
+                0.0,
+                "history sphere origin",
+            )?;
+            assert_scalar_close(
+                params.radius,
+                sphere_params.radius,
+                0.0,
+                "history sphere radius",
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected AddSphere history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    match &document.history()[4] {
+        OperationRecord::AddTorus { output, params } => {
+            assert_eq!(output, "doc_torus");
+            assert_vec3_close(
+                params.origin,
+                torus_params.origin,
+                0.0,
+                "history torus origin",
+            )?;
+            assert_scalar_close(
+                params.major_radius,
+                torus_params.major_radius,
+                0.0,
+                "history torus major radius",
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected AddTorus history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    let expected_doc_inputs = doc_input_names
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    match &document.history()[5] {
+        OperationRecord::CompSolid { output, inputs } => {
+            assert_eq!(output, "doc_mixed_compsolid");
+            assert_eq!(inputs, &expected_doc_inputs);
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected CompSolid history entry, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    match &document.history()[6] {
+        OperationRecord::Compound { output, inputs } => {
+            assert_eq!(output, "doc_mixed_compound");
+            assert_eq!(inputs, &expected_doc_inputs);
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Compound history entry, got {other:?}"
             ))
             .into());
         }

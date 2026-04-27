@@ -14,7 +14,7 @@ It now includes:
 - a Rust-owned `BrepShape` snapshot that lifts vertices, wires, edges, faces, loop roles, and adjacency into Rust-side data
 - Rust-native analytic edge length evaluation plus supported analytic face area evaluation from loop integration
 - Rust-owned shape-summary totals for counts, total edge length, and total face area via `BrepShape`
-- Rust-owned compound/compsolid assembly metadata plus named document subshape extraction for supported faces, wires, edges, and vertices
+- Rust-owned compound/compsolid assembly metadata plus named document subshape extraction for supported faces, wires, edges, vertices, and mixed analytic solid assemblies
 
 It does not bind C++ OCCT classes directly. Instead it uses the narrow C ABI in
 `capi/include/lean_occt_capi.h` and exposes:
@@ -35,6 +35,7 @@ It does not bind C++ OCCT classes directly. Instead it uses the narrow C ABI in
 - a higher-level `ModelKernel` API for box-with-hole, inspection, and STEP round-trip workflows
 - a Rust-owned `ModelDocument` layer for named shapes, operation history, and workflow-style modeling
 - document-level compound/compsolid assembly and topology-backed subshape extraction for named face, wire, edge, and vertex workflows
+- mixed analytic solid assemblies across box, cylinder, cone, sphere, and torus families with Rust-owned face/edge selectors, BREP summaries, and document reports
 - query-driven Rust helpers for selecting edges/faces by analytic type and driving feature placement from those selections
 - declarative selectors for longest/shortest edges, largest faces, and best-aligned planes
 - reusable part recipes such as drilled and rounded-drilled blocks built entirely on the Rust side
@@ -114,6 +115,11 @@ plane/cylinder/cone/sphere/torus surfaces, with persistent artifacts under
 The `brep_workflows` suite is the next layer up:
 it verifies that Rust-owned BREP snapshots preserve loop roles, adjacency, and analytic payload
 capture for a holed solid, with artifacts under `test-artifacts/rust/brep_workflows/`.
+
+The `ownership_matrix_workflows` suite tracks capability-first Rust ownership rows. It now
+covers mixed analytic solid compounds and compsolids assembled from box, cylinder, cone, sphere,
+and torus children, including retained source metadata, normalized BREP data, public analytic
+queries, summaries, selectors, documents, and explicit unsupported `Other` curve behavior.
 
 The current measurement slice also now computes supported analytic edge lengths in Rust and
 computes supported analytic face area from loop integration before falling back to OCCT.
