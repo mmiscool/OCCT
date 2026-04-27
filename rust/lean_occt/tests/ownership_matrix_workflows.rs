@@ -3,9 +3,9 @@ mod support;
 use std::f64::consts::PI;
 
 use lean_occt::{
-    BoxParams, CurveKind, CylinderParams, CylinderPayload, EdgeSelector, FaceSelector,
-    ModelDocument, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface, PortedSurface,
-    ShapeKind, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
+    BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
+    FaceSelector, ModelDocument, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface,
+    PortedSurface, ShapeKind, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,11 +50,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::Cone,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::Sphere,
@@ -227,6 +227,46 @@ fn assert_cylinder_payload_close(
         rhs.radius,
         tolerance,
         &format!("{label} radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_cone_payload_close(
+    lhs: ConePayload,
+    rhs: ConePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(lhs.axis, rhs.axis, tolerance, &format!("{label} axis"))?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.reference_radius,
+        rhs.reference_radius,
+        tolerance,
+        &format!("{label} reference_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.semi_angle,
+        rhs.semi_angle,
+        tolerance,
+        &format!("{label} semi_angle"),
     )?;
     Ok(())
 }
@@ -809,6 +849,422 @@ fn cylinder_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error
         history => {
             return Err(std::io::Error::other(format!(
                 "expected single AddCylinder history entry, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn cone_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::Cone, "cone")?;
+
+    let params = ConeParams {
+        origin: [0.0, 0.0, -8.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        base_radius: 9.0,
+        top_radius: 3.0,
+        height: 16.0,
+    };
+    let expected_bbox_min = [-params.base_radius, -params.base_radius, params.origin[2]];
+    let expected_bbox_max = [
+        params.base_radius,
+        params.base_radius,
+        params.origin[2] + params.height,
+    ];
+    let expected_slant =
+        (params.height.powi(2) + (params.base_radius - params.top_radius).powi(2)).sqrt();
+    let expected_base_cap_area = PI * params.base_radius * params.base_radius;
+    let expected_top_cap_area = PI * params.top_radius * params.top_radius;
+    let expected_side_area = PI * (params.base_radius + params.top_radius) * expected_slant;
+    let expected_surface_area = expected_side_area + expected_base_cap_area + expected_top_cap_area;
+    let expected_volume = PI
+        * params.height
+        * (params.base_radius * params.base_radius
+            + params.base_radius * params.top_radius
+            + params.top_radius * params.top_radius)
+        / 3.0;
+    let expected_base_edge_length = 2.0 * PI * params.base_radius;
+    let expected_top_edge_length = 2.0 * PI * params.top_radius;
+    let expected_unique_edge_length =
+        expected_base_edge_length + expected_top_edge_length + expected_slant;
+    let expected_wire_occurrence_length =
+        2.0 * (expected_base_edge_length + expected_top_edge_length + expected_slant);
+
+    let mut document = ModelDocument::new()?;
+    document.insert_cone("cone", params)?;
+
+    let cone_shape = document.shape("cone")?;
+    assert_eq!(cone_shape.rust_multi_face_analytic_source_count(), Some(3));
+    let context = document.kernel().context();
+    let face_shapes = context.subshapes(cone_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(cone_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 3);
+    assert_eq!(edge_shapes.len(), 3);
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_analytic_surface_face_metadata()),
+        "all authored cone faces should retain Rust analytic metadata"
+    );
+
+    let ported_topology = context
+        .ported_topology(cone_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned cone topology snapshot"))?;
+    let public_topology = context.topology(cone_shape)?;
+    let brep = document.brep("cone")?;
+
+    assert_eq!(ported_topology.faces.len(), 3);
+    assert_eq!(ported_topology.wires.len(), 3);
+    assert_eq!(ported_topology.edges.len(), 3);
+    assert_eq!(ported_topology.vertex_positions.len(), 2);
+    assert_eq!(ported_topology.wire_edge_indices.len(), 6);
+    assert_eq!(ported_topology.face_wire_indices.len(), 3);
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), 3);
+    assert_eq!(brep.wires.len(), 3);
+    assert_eq!(brep.edges.len(), 3);
+    assert_eq!(brep.vertices.len(), 2);
+    assert_eq!(
+        brep.faces
+            .iter()
+            .filter(|face| {
+                face.geometry.kind == SurfaceKind::Cone
+                    && matches!(
+                        face.ported_face_surface,
+                        Some(PortedFaceSurface::Analytic(PortedSurface::Cone(_)))
+                    )
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        brep.faces
+            .iter()
+            .filter(|face| {
+                face.geometry.kind == SurfaceKind::Plane
+                    && matches!(
+                        face.ported_face_surface,
+                        Some(PortedFaceSurface::Analytic(PortedSurface::Plane(_)))
+                    )
+            })
+            .count(),
+        2
+    );
+    assert_eq!(
+        brep.edges
+            .iter()
+            .filter(|edge| {
+                edge.geometry.kind == CurveKind::Circle
+                    && matches!(edge.ported_curve, Some(PortedCurve::Circle(_)))
+            })
+            .count(),
+        2
+    );
+    assert_eq!(
+        brep.edges
+            .iter()
+            .filter(|edge| {
+                edge.geometry.kind == CurveKind::Line
+                    && matches!(edge.ported_curve, Some(PortedCurve::Line(_)))
+            })
+            .count(),
+        1
+    );
+
+    let cone_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Cone)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored cone side face"))?;
+    let cap_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Plane)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored cone cap face"))?;
+
+    let public_cone_payload = context.face_cone_payload(cone_face)?;
+    let descriptor = context
+        .ported_face_surface_descriptor(cone_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust cone face descriptor"))?;
+    let descriptor_payload = match descriptor {
+        PortedFaceSurface::Analytic(PortedSurface::Cone(payload)) => payload,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust cone descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_cone_payload_close(
+        public_cone_payload,
+        descriptor_payload,
+        1.0e-12,
+        "public cone payload vs Rust descriptor",
+    )?;
+    let occt_cone_payload = context.face_cone_payload_occt(cone_face)?;
+    assert_cone_payload_close(
+        public_cone_payload,
+        occt_cone_payload,
+        1.0e-6,
+        "Rust cone payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_plane_payload(cone_face).is_err(),
+        "ported cone faces should reject mismatched plane payload queries"
+    );
+
+    let public_cap_payload = context.face_plane_payload(cap_face)?;
+    let cap_descriptor = context
+        .ported_face_surface_descriptor(cap_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust cone cap plane descriptor"))?;
+    let cap_descriptor_payload = match cap_descriptor {
+        PortedFaceSurface::Analytic(PortedSurface::Plane(payload)) => payload,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust cone cap plane descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_plane_payload_close(
+        public_cap_payload,
+        cap_descriptor_payload,
+        1.0e-12,
+        "public cone cap plane payload vs Rust descriptor",
+    )?;
+    let occt_cap_payload = context.face_plane_payload_occt(cap_face)?;
+    assert_plane_payload_close(
+        public_cap_payload,
+        occt_cap_payload,
+        1.0e-6,
+        "Rust cone cap plane payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_cone_payload(cap_face).is_err(),
+        "ported cone cap plane faces should reject mismatched cone payload queries"
+    );
+
+    let summary = document.summary("cone")?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        expected_surface_area,
+        1.0e-9,
+        "document cone surface area",
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        expected_volume,
+        1.0e-9,
+        "document cone volume",
+    )?;
+    assert_scalar_close(
+        summary.linear_length,
+        expected_wire_occurrence_length,
+        1.0e-9,
+        "document cone wire-occurrence edge length",
+    )?;
+    assert_scalar_close(
+        brep.summary.surface_area,
+        expected_surface_area,
+        1.0e-9,
+        "BRep cone surface area",
+    )?;
+    assert_scalar_close(
+        brep.summary.volume,
+        expected_volume,
+        1.0e-9,
+        "BRep cone volume",
+    )?;
+    assert_scalar_close(
+        unique_edge_length,
+        expected_unique_edge_length,
+        1.0e-9,
+        "unique BRep cone edge length",
+    )?;
+    let side_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Cone)
+        .ok_or_else(|| std::io::Error::other("expected BRep cone side face"))?;
+    assert_scalar_close(
+        side_face.area,
+        expected_side_area,
+        2.0e-2,
+        "BRep cone side area",
+    )?;
+    let cap_areas = brep
+        .faces
+        .iter()
+        .filter(|face| face.geometry.kind == SurfaceKind::Plane)
+        .map(|face| face.area)
+        .collect::<Vec<_>>();
+    assert_eq!(cap_areas.len(), 2);
+    assert!(
+        cap_areas
+            .iter()
+            .any(|area| (*area - expected_base_cap_area).abs() <= 1.0e-9),
+        "expected base cone cap area {expected_base_cap_area}, got {cap_areas:?}"
+    );
+    assert!(
+        cap_areas
+            .iter()
+            .any(|area| (*area - expected_top_cap_area).abs() <= 1.0e-9),
+        "expected top cone cap area {expected_top_cap_area}, got {cap_areas:?}"
+    );
+    assert_vec3_close(
+        summary.bbox_min,
+        expected_bbox_min,
+        1.0e-12,
+        "cone bbox min",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        expected_bbox_max,
+        1.0e-12,
+        "cone bbox max",
+    )?;
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::ExactPrimitive
+    );
+    assert_eq!(
+        brep.summary_volume_source(),
+        SummaryVolumeSource::ExactPrimitive
+    );
+
+    let side_selector = document.select_face(
+        "cone",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Cone),
+    )?;
+    let base_cap_selector = document.select_face(
+        "cone",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Plane),
+    )?;
+    let top_cap = document.select_face(
+        "cone",
+        FaceSelector::BestAlignedPlane {
+            normal_hint: [0.0, 0.0, 1.0],
+        },
+    )?;
+    let base_circle =
+        document.select_edge("cone", EdgeSelector::LongestByCurveKind(CurveKind::Circle))?;
+    let top_circle =
+        document.select_edge("cone", EdgeSelector::ShortestByCurveKind(CurveKind::Circle))?;
+    let seam_edge =
+        document.select_edge("cone", EdgeSelector::ShortestByCurveKind(CurveKind::Line))?;
+    let faces = document.faces("cone")?;
+    let edges = document.edges("cone")?;
+    let report = document.report("cone")?;
+
+    assert_eq!(faces.len(), 3);
+    assert_eq!(edges.len(), 3);
+    assert_eq!(
+        document
+            .face_indices_by_surface_kind("cone", SurfaceKind::Cone)?
+            .len(),
+        1
+    );
+    assert_eq!(
+        document
+            .face_indices_by_surface_kind("cone", SurfaceKind::Plane)?
+            .len(),
+        2
+    );
+    assert_eq!(
+        document
+            .edge_indices_by_curve_kind("cone", CurveKind::Circle)?
+            .len(),
+        2
+    );
+    assert_eq!(
+        document
+            .edge_indices_by_curve_kind("cone", CurveKind::Line)?
+            .len(),
+        1
+    );
+    assert_eq!(side_selector.geometry.kind, SurfaceKind::Cone);
+    assert_scalar_close(
+        side_selector.area,
+        expected_side_area,
+        2.0e-2,
+        "selected cone side area",
+    )?;
+    assert_eq!(base_cap_selector.geometry.kind, SurfaceKind::Plane);
+    assert_scalar_close(
+        base_cap_selector.area,
+        expected_base_cap_area,
+        1.0e-9,
+        "selected cone base cap area",
+    )?;
+    assert_eq!(top_cap.geometry.kind, SurfaceKind::Plane);
+    assert!(top_cap.sample.normal[2] > 0.9);
+    assert_scalar_close(
+        top_cap.area,
+        expected_top_cap_area,
+        1.0e-9,
+        "selected cone top cap area",
+    )?;
+    assert_eq!(base_circle.geometry.kind, CurveKind::Circle);
+    assert_eq!(top_circle.geometry.kind, CurveKind::Circle);
+    assert_eq!(seam_edge.geometry.kind, CurveKind::Line);
+    assert_scalar_close(
+        base_circle.length,
+        expected_base_edge_length,
+        1.0e-9,
+        "selected cone base circle edge",
+    )?;
+    assert_scalar_close(
+        top_circle.length,
+        expected_top_edge_length,
+        1.0e-9,
+        "selected cone top circle edge",
+    )?;
+    assert_scalar_close(
+        seam_edge.length,
+        expected_slant,
+        1.0e-9,
+        "selected cone seam edge",
+    )?;
+    assert_eq!(report.summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(report.summary.face_count, 3);
+    assert_eq!(report.summary.edge_count, 3);
+    assert_eq!(report.summary.vertex_count, 2);
+    match document.history() {
+        [OperationRecord::AddCone { output, params }] => {
+            assert_eq!(output, "cone");
+            assert_vec3_close(params.origin, [0.0, 0.0, -8.0], 0.0, "history origin")?;
+            assert_vec3_close(params.axis, [0.0, 0.0, 1.0], 0.0, "history axis")?;
+            assert_vec3_close(
+                params.x_direction,
+                [1.0, 0.0, 0.0],
+                0.0,
+                "history x_direction",
+            )?;
+            assert_scalar_close(params.base_radius, 9.0, 0.0, "history base_radius")?;
+            assert_scalar_close(params.top_radius, 3.0, 0.0, "history top_radius")?;
+            assert_scalar_close(params.height, 16.0, 0.0, "history height")?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected single AddCone history entry, got {history:?}"
             ))
             .into());
         }

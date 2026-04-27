@@ -17,14 +17,14 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: V1 `cylinder` row is complete on 2026-04-27. `ownership_matrix_workflows::cylinder_authored_family_row_is_rust_owned` promotes the cylinder row in the authored-family ownership matrix and proves the side/cap family through Rust construction metadata, normalized public topology and BRep snapshots, cylinder and cap-plane payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume/edge-length summaries, selectors, document descriptors, reports, and history inspection. The prior `box/planar` row remains green, existing cylinder geometry/BRep/document/selector workflows pass, full Rust crate tests pass, and the C ABI build is green.
+- Completed evidence: V1 `cone` row is complete on 2026-04-27. `ownership_matrix_workflows::cone_authored_family_row_is_rust_owned` promotes the cone row in the authored-family ownership matrix and proves the frustum side/cap family through Rust construction metadata, normalized public topology and BRep snapshots, cone and cap-plane payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume/edge-length summaries, selectors, document descriptors, reports, and history inspection. The prior `box/planar` and `cylinder` rows remain green, and the existing cone geometry/BRep/document/selector workflows pass.
 - Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
-- Next bounded cut: start the `cone` authored family row. Extend the ownership matrix so the cone side/cap family proves Rust-owned construction metadata, normalized BRep/snapshot data, summary bbox/area/edge-length behavior, public cone and cap-plane payload queries, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
+- Next bounded cut: start the `sphere` authored family row. Extend the ownership matrix so the single spherical surface family proves Rust-owned construction metadata, normalized BRep/snapshot data, exact bbox/surface-area/volume behavior, public sphere payload queries, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows cylinder_authored_family_row_is_rust_owned -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_cylinder_faces_use_rust_analytic_seed_metadata -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows cone_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_cone_faces_use_rust_analytic_seed_metadata -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
@@ -43,7 +43,7 @@ After M50 is completed, do not choose the next task by scanning for the nearest 
 
 Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
 
-Status: active. The Rust-authored `box/planar` and `cylinder` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, exact summaries, selectors, and document inspection. The next row should target the Rust-authored `cone` family, including the conical side face and planar caps.
+Status: active. The Rust-authored `box/planar`, `cylinder`, and `cone` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, exact summaries, selectors, and document inspection. The next row should target the Rust-authored `sphere` family, including the single spherical surface and edge-free solid topology.
 
 Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
 
@@ -52,7 +52,8 @@ Bounded tasks:
 - Complete: added a compact ownership matrix in `rust/lean_occt/tests/ownership_matrix_workflows.rs` that names supported authored families and expected Rust-owned behaviors.
 - Complete: closed the `box/planar` family row with coverage for every behavior that should be Rust-owned in that row.
 - Complete: closed the `cylinder` family row with coverage for construction metadata, side/cap normalized BRep/topology, public cylinder and cap-plane payloads, exact summary metrics, selectors, and document inspection.
-- Next: pick the `cone` family row and add failing coverage for construction metadata, side/cap normalized BRep/topology, public cone and cap-plane payloads, exact summary metrics, selectors, and document inspection.
+- Complete: closed the `cone` family row with coverage for construction metadata, side/cap normalized BRep/topology, public cone and cap-plane payloads, exact summary metrics, selectors, and document inspection.
+- Next: pick the `sphere` family row and add failing coverage for construction metadata, normalized single-face BRep/topology, public sphere payloads, exact summary metrics, selectors, and document inspection.
 - Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
 - Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
 - Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.
