@@ -272,6 +272,13 @@ pub(super) fn ported_shape_summary(
             whole_shape_mesh_volume.map(|volume| (volume, SummaryVolumeSource::WholeShapeMesh))
         })
         .or_else(|| {
+            if counts.solid_count == 0 && counts.compsolid_count == 0 {
+                Some((0.0, SummaryVolumeSource::Zero))
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
             if allow_occt_volume_fallback {
                 fallback_summary()
                     .map(|summary| (summary.volume, SummaryVolumeSource::OcctFallback))

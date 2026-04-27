@@ -4,9 +4,10 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
-    FaceSelector, ModelDocument, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface,
-    PortedSurface, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource,
-    SurfaceKind, TorusParams, TorusPayload,
+    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, OperationRecord,
+    PlanePayload, PortedCurve, PortedFaceSurface, PortedSurface, PortedSweptSurface, PrismParams,
+    ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
+    TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,11 +76,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::PrismExtrusion,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::Revolution,
@@ -348,6 +349,28 @@ fn assert_torus_payload_close(
         tolerance,
         &format!("{label} minor_radius"),
     )?;
+    Ok(())
+}
+
+fn assert_extrusion_payload_close(
+    lhs: ExtrusionSurfacePayload,
+    rhs: ExtrusionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.direction,
+        rhs.direction,
+        tolerance,
+        &format!("{label} direction"),
+    )?;
+    if lhs.basis_curve_kind != rhs.basis_curve_kind {
+        return Err(std::io::Error::other(format!(
+            "{label} basis_curve_kind mismatch: lhs={:?} rhs={:?}",
+            lhs.basis_curve_kind, rhs.basis_curve_kind
+        ))
+        .into());
+    }
     Ok(())
 }
 
@@ -1868,6 +1891,315 @@ fn torus_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::E
         history => {
             return Err(std::io::Error::other(format!(
                 "expected single AddTorus history entry, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn prism_extrusion_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::PrismExtrusion, "prism/extrusion")?;
+
+    let profile_params = EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    };
+    let prism_params = PrismParams {
+        direction: [0.0, 24.0, 0.0],
+    };
+    let expected_bbox_min = [20.0, 0.0, -6.0];
+    let expected_bbox_max = [40.0, 24.0, 6.0];
+
+    let mut document = ModelDocument::new()?;
+    document.insert_ellipse_edge("profile", profile_params)?;
+    document.prism("prism", "profile", prism_params)?;
+
+    let prism_shape = document.shape("prism")?;
+    assert!(
+        prism_shape.has_rust_swept_surface_face_metadata(),
+        "authored edge-source prism should retain Rust single-face swept metadata"
+    );
+    let context = document.kernel().context();
+    let face_shapes = context.subshapes(prism_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(prism_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 1);
+    assert!(!edge_shapes.is_empty());
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_swept_surface_face_metadata()),
+        "generated prism extrusion faces should retain Rust swept metadata"
+    );
+
+    let extrusion_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Extrusion)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored extrusion face"))?;
+
+    let ported_topology = context
+        .ported_topology(prism_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned prism topology snapshot"))?;
+    let public_topology = context.topology(prism_shape)?;
+    let brep = document.brep("prism")?;
+
+    assert_eq!(ported_topology.faces.len(), 1);
+    assert!(!ported_topology.wires.is_empty());
+    assert!(!ported_topology.edges.is_empty());
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), ported_topology.faces.len());
+    assert_eq!(brep.wires.len(), ported_topology.wires.len());
+    assert_eq!(brep.edges.len(), ported_topology.edges.len());
+    assert_eq!(brep.vertices.len(), ported_topology.vertex_positions.len());
+    assert_eq!(
+        brep.faces
+            .iter()
+            .filter(|face| {
+                face.geometry.kind == SurfaceKind::Extrusion
+                    && matches!(
+                        face.ported_face_surface,
+                        Some(PortedFaceSurface::Swept(
+                            PortedSweptSurface::Extrusion { .. }
+                        ))
+                    )
+            })
+            .count(),
+        1
+    );
+    assert!(brep.edges.iter().all(|edge| {
+        matches!(edge.geometry.kind, CurveKind::Line | CurveKind::Ellipse)
+            && edge.ported_curve.is_some()
+    }));
+    assert!(
+        brep.edges
+            .iter()
+            .any(|edge| matches!(edge.ported_curve, Some(PortedCurve::Ellipse(_)))),
+        "prism profile boundary should materialize Rust-owned ellipse edges"
+    );
+
+    let public_extrusion_payload = context.face_extrusion_payload(extrusion_face)?;
+    assert_eq!(
+        public_extrusion_payload.basis_curve_kind,
+        CurveKind::Ellipse
+    );
+    assert_vec3_close(
+        public_extrusion_payload.direction,
+        [0.0, -1.0, 0.0],
+        1.0e-12,
+        "public extrusion direction",
+    )?;
+    let descriptor = context
+        .ported_face_surface_descriptor(extrusion_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust extrusion face descriptor"))?;
+    let descriptor_payload = match descriptor {
+        PortedFaceSurface::Swept(PortedSweptSurface::Extrusion {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => {
+            assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+            assert_eq!(basis_geometry.kind, CurveKind::Ellipse);
+            payload
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust extrusion descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_extrusion_payload_close(
+        public_extrusion_payload,
+        descriptor_payload,
+        1.0e-12,
+        "public extrusion payload vs Rust descriptor",
+    )?;
+    let occt_extrusion_payload = context.face_extrusion_payload_occt(extrusion_face)?;
+    assert_extrusion_payload_close(
+        public_extrusion_payload,
+        occt_extrusion_payload,
+        1.0e-12,
+        "Rust extrusion payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_plane_payload(extrusion_face).is_err(),
+        "ported extrusion faces should reject mismatched plane payload queries"
+    );
+
+    let rust_sample = context
+        .ported_face_sample_normalized(extrusion_face, [0.25, 0.75])?
+        .ok_or_else(|| std::io::Error::other("expected Rust extrusion face sample"))?;
+    let occt_sample = context.face_sample_normalized_occt(extrusion_face, [0.25, 0.75])?;
+    assert_vec3_close(
+        rust_sample.position,
+        occt_sample.position,
+        1.0e-9,
+        "extrusion sample position vs OCCT oracle",
+    )?;
+    assert_vec3_close(
+        rust_sample.normal,
+        occt_sample.normal,
+        1.0e-9,
+        "extrusion sample normal vs OCCT oracle",
+    )?;
+
+    let summary = document.summary("prism")?;
+    let occt_summary = context.describe_shape_occt(prism_shape)?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    let wire_occurrence_length = if ported_topology.wire_edge_indices.is_empty() {
+        unique_edge_length
+    } else {
+        ported_topology
+            .wire_edge_indices
+            .iter()
+            .filter_map(|&edge_index| brep.edges.get(edge_index))
+            .map(|edge| edge.length)
+            .sum()
+    };
+    let brep_surface_area = brep.faces.iter().map(|face| face.area).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        brep_surface_area,
+        1.0e-9,
+        "document prism surface area from BRep faces",
+    )?;
+    assert_scalar_close(
+        summary.surface_area,
+        occt_summary.surface_area,
+        1.0e-2,
+        "Rust prism surface area vs OCCT oracle",
+    )?;
+    assert_scalar_close(summary.volume, 0.0, 1.0e-12, "document prism volume")?;
+    assert_scalar_close(
+        summary.linear_length,
+        wire_occurrence_length,
+        1.0e-9,
+        "document prism wire-occurrence edge length",
+    )?;
+    assert_scalar_close(
+        unique_edge_length,
+        brep.edges.iter().map(|edge| edge.length).sum::<f64>(),
+        1.0e-12,
+        "unique BRep prism edge length",
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        expected_bbox_min,
+        1.0e-7,
+        "prism bbox min",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        expected_bbox_max,
+        1.0e-7,
+        "prism bbox max",
+    )?;
+    assert_eq!(brep.summary_bbox_source(), SummaryBboxSource::PortedBrep);
+    assert_eq!(brep.summary_volume_source(), SummaryVolumeSource::Zero);
+
+    let selected_extrusion = document.select_face(
+        "prism",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Extrusion),
+    )?;
+    let selected_profile = document.select_edge(
+        "prism",
+        EdgeSelector::LongestByCurveKind(CurveKind::Ellipse),
+    )?;
+    let faces = document.faces("prism")?;
+    let edges = document.edges("prism")?;
+    let report = document.report("prism")?;
+
+    assert_eq!(faces.len(), 1);
+    assert_eq!(edges.len(), brep.edges.len());
+    assert_eq!(
+        document.face_indices_by_surface_kind("prism", SurfaceKind::Extrusion)?,
+        vec![0]
+    );
+    assert_eq!(
+        document
+            .edge_indices_by_curve_kind("prism", CurveKind::Ellipse)?
+            .len(),
+        brep.edges
+            .iter()
+            .filter(|edge| edge.geometry.kind == CurveKind::Ellipse)
+            .count()
+    );
+    assert_eq!(selected_extrusion.geometry.kind, SurfaceKind::Extrusion);
+    assert_scalar_close(
+        selected_extrusion.area,
+        brep_surface_area,
+        1.0e-9,
+        "selected extrusion face area",
+    )?;
+    assert_eq!(selected_profile.geometry.kind, CurveKind::Ellipse);
+    assert_eq!(report.summary.primary_kind, ShapeKind::Face);
+    assert_eq!(report.summary.face_count, 1);
+    assert_eq!(report.summary.edge_count, brep.edges.len());
+    match document.history() {
+        [OperationRecord::AddEllipseEdge { output, params }, OperationRecord::Prism {
+            output: prism_output,
+            input,
+            params: prism_history,
+        }] => {
+            assert_eq!(output, "profile");
+            assert_vec3_close(
+                params.origin,
+                profile_params.origin,
+                0.0,
+                "history ellipse origin",
+            )?;
+            assert_vec3_close(
+                params.axis,
+                profile_params.axis,
+                0.0,
+                "history ellipse axis",
+            )?;
+            assert_vec3_close(
+                params.x_direction,
+                profile_params.x_direction,
+                0.0,
+                "history ellipse x_direction",
+            )?;
+            assert_scalar_close(
+                params.major_radius,
+                profile_params.major_radius,
+                0.0,
+                "history ellipse major_radius",
+            )?;
+            assert_scalar_close(
+                params.minor_radius,
+                profile_params.minor_radius,
+                0.0,
+                "history ellipse minor_radius",
+            )?;
+            assert_eq!(prism_output, "prism");
+            assert_eq!(input, "profile");
+            assert_vec3_close(
+                prism_history.direction,
+                prism_params.direction,
+                0.0,
+                "history prism direction",
+            )?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddEllipseEdge + Prism history entries, got {history:?}"
             ))
             .into());
         }

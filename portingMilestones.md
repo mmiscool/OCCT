@@ -17,15 +17,16 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: V1 `torus` row is complete on 2026-04-27. `ownership_matrix_workflows::torus_authored_family_row_is_rust_owned` promotes the torus row in the authored-family ownership matrix and proves the single toroidal face family through Rust construction metadata, normalized boundary-free periodic topology and BRep snapshots, public torus payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume and zero-edge-length summaries, selectors, document descriptors, reports, and history inspection. The prior `box/planar`, `cylinder`, `cone`, and `sphere` rows remain green, and the existing torus geometry/BRep/document/selector workflows pass.
+- Completed evidence: V1 `prism/extrusion` row is complete on 2026-04-27. `ownership_matrix_workflows::prism_extrusion_authored_family_row_is_rust_owned` promotes the prism/extrusion row in the authored-family ownership matrix and proves a profile-edge prism through Rust construction metadata, normalized topology and BRep snapshots, public extrusion payload queries with OCCT only as an explicit oracle, Rust normalized face sampling, ported bbox/area/edge-length summaries, zero volume for the non-solid face result, selectors, document descriptors, reports, and history inspection. The summary layer now reports non-solid loaded BReps through `SummaryVolumeSource::Zero` instead of the generic OCCT fallback. The prior `box/planar`, `cylinder`, `cone`, `sphere`, and `torus` rows remain green, and the existing swept geometry/BRep/document/selector workflows pass.
 - Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
-- Next bounded cut: start the `prism/extrusion` authored family row. Extend the ownership matrix so a supported Rust-authored prism proves Rust-owned construction metadata, normalized BRep/snapshot data, public extrusion payload queries, exact summary behavior, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
+- Next bounded cut: start the `revolution` authored family row. Extend the ownership matrix so a supported Rust-authored revolution proves Rust-owned construction metadata, normalized BRep/snapshot data, public revolution payload queries, summary behavior, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows torus_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows prism_extrusion_authored_family_row_is_rust_owned -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_torus_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_swept_surface_sampling_matches_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
@@ -43,7 +44,7 @@ After M50 is completed, do not choose the next task by scanning for the nearest 
 
 Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
 
-Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, and `torus` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, exact summaries, selectors, and document inspection. The next row should target the Rust-authored `prism/extrusion` family, including retained construction metadata for the generated extrusion faces and normalized solid topology.
+Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, and `prism/extrusion` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, summaries, selectors, and document inspection. The next row should target the Rust-authored `revolution` family, including retained construction metadata for generated revolution faces and normalized swept topology.
 
 Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
 
@@ -55,7 +56,8 @@ Bounded tasks:
 - Complete: closed the `cone` family row with coverage for construction metadata, side/cap normalized BRep/topology, public cone and cap-plane payloads, exact summary metrics, selectors, and document inspection.
 - Complete: closed the `sphere` family row with coverage for construction metadata, normalized boundary-free single-face BRep/topology, public sphere payloads, exact summary metrics, zero-edge selector behavior, and document inspection.
 - Complete: closed the `torus` family row with coverage for construction metadata, normalized boundary-free single-face periodic BRep/topology, public torus payloads, exact summary metrics, zero-edge selector behavior, and document inspection.
-- Next: pick the `prism/extrusion` family row and add failing coverage for construction metadata, normalized extrusion BRep/topology, public extrusion payloads, exact summary metrics, selectors, and document inspection.
+- Complete: closed the `prism/extrusion` family row with coverage for retained prism metadata, normalized extrusion face BRep/topology, public extrusion payloads, Rust sampling parity, ported area/bbox/edge-length metrics, zero non-solid volume, selectors, and document inspection.
+- Next: pick the `revolution` family row and add failing coverage for construction metadata, normalized revolution BRep/topology, public revolution payloads, summary metrics, selectors, and document inspection.
 - Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
 - Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
 - Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.
