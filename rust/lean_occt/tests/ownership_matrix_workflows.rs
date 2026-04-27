@@ -4,8 +4,9 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
-    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, OperationRecord,
-    PlanePayload, PortedCurve, PortedFaceSurface, PortedSurface, PortedSweptSurface, PrismParams,
+    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, OffsetFaceBboxSource,
+    OffsetParams, OffsetSurfacePayload, OperationRecord, PlanePayload, PortedCurve,
+    PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface, PrismParams,
     RevolutionParams, RevolutionSurfacePayload, ShapeKind, SphereParams, SpherePayload,
     SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
 };
@@ -92,11 +93,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::DirectOffset,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::GeneratedOffset,
@@ -399,6 +400,25 @@ fn assert_revolution_payload_close(
         ))
         .into());
     }
+    Ok(())
+}
+
+fn assert_offset_payload_close(
+    lhs: OffsetSurfacePayload,
+    rhs: OffsetSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_scalar_close(
+        lhs.offset_value,
+        rhs.offset_value,
+        tolerance,
+        &format!("{label} offset_value"),
+    )?;
+    assert_eq!(
+        lhs.basis_surface_kind, rhs.basis_surface_kind,
+        "{label} basis_surface_kind mismatch"
+    );
     Ok(())
 }
 
@@ -2545,6 +2565,371 @@ fn revolution_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::err
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddEllipseEdge + Revolution history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn direct_offset_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::DirectOffset, "direct offset")?;
+
+    let source_params = BoxParams {
+        origin: [-20.0, -10.0, -3.0],
+        size: [40.0, 20.0, 6.0],
+    };
+    let offset_params = OffsetParams {
+        offset: 2.25,
+        tolerance: 1.0e-4,
+    };
+    let basis_selector = FaceSelector::BestAlignedPlane {
+        normal_hint: [0.0, 0.0, 1.0],
+    };
+
+    let mut document = ModelDocument::new()?;
+    document.insert_box("basis_box", source_params)?;
+    let selected_basis = document.direct_offset_surface_face(
+        "offset_top",
+        "basis_box",
+        basis_selector,
+        offset_params,
+    )?;
+
+    assert_eq!(selected_basis.geometry.kind, SurfaceKind::Plane);
+    assert!(
+        selected_basis.sample.normal[2] > 0.9,
+        "document selector should choose the top planar basis face"
+    );
+
+    let source_shape = document.shape("basis_box")?;
+    let offset_shape = document.shape("offset_top")?;
+    assert!(
+        offset_shape.has_rust_offset_surface_face_metadata(),
+        "direct offset root should retain Rust offset metadata"
+    );
+    assert_eq!(
+        offset_shape.rust_multi_face_offset_source_count(),
+        None,
+        "direct offset face should not rely on generated multi-face offset metadata"
+    );
+
+    let context = document.kernel().context();
+    let source_face_shapes = context.subshapes(source_shape, ShapeKind::Face)?;
+    let basis_face_shape = source_face_shapes
+        .get(selected_basis.index)
+        .ok_or_else(|| std::io::Error::other("selected basis face index missing"))?;
+    let face_shapes = context.subshapes(offset_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(offset_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 1);
+    assert_eq!(edge_shapes.len(), 0);
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_offset_surface_face_metadata()),
+        "enumerated direct offset faces should retain Rust offset metadata"
+    );
+
+    let offset_face_shape = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Offset)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored direct offset face"))?;
+
+    let ported_topology = context
+        .ported_topology(offset_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned direct offset topology"))?;
+    let public_topology = context.topology(offset_shape)?;
+    let brep = document.brep("offset_top")?;
+
+    assert_eq!(ported_topology.faces.len(), 1);
+    assert_eq!(ported_topology.wires.len(), 0);
+    assert_eq!(ported_topology.edges.len(), 0);
+    assert_eq!(ported_topology.vertex_positions.len(), 0);
+    assert_eq!(ported_topology.wire_edge_indices.len(), 0);
+    assert_eq!(ported_topology.face_wire_indices.len(), 0);
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), ported_topology.faces.len());
+    assert_eq!(brep.wires.len(), ported_topology.wires.len());
+    assert_eq!(brep.edges.len(), ported_topology.edges.len());
+    assert_eq!(brep.vertices.len(), ported_topology.vertex_positions.len());
+    assert_eq!(
+        brep.faces
+            .iter()
+            .filter(|face| {
+                face.geometry.kind == SurfaceKind::Offset
+                    && matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_)))
+            })
+            .count(),
+        1
+    );
+    assert!(brep.edges.is_empty());
+
+    let public_offset_payload = context.face_offset_payload(offset_face_shape)?;
+    assert_eq!(public_offset_payload.basis_surface_kind, SurfaceKind::Plane);
+    assert_scalar_close(
+        public_offset_payload.offset_value,
+        offset_params.offset,
+        1.0e-12,
+        "public direct offset value",
+    )?;
+    let descriptor = context
+        .ported_face_surface_descriptor(offset_face_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust direct offset descriptor"))?;
+    let offset_surface = match descriptor {
+        PortedFaceSurface::Offset(surface) => surface,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust direct offset descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_offset_payload_close(
+        public_offset_payload,
+        offset_surface.payload,
+        1.0e-12,
+        "public direct offset payload vs Rust descriptor",
+    )?;
+    let occt_offset_payload = context.face_offset_payload_occt(offset_face_shape)?;
+    assert_offset_payload_close(
+        public_offset_payload,
+        occt_offset_payload,
+        1.0e-12,
+        "Rust direct offset payload vs OCCT oracle",
+    )?;
+    assert_eq!(offset_surface.basis_geometry.kind, SurfaceKind::Plane);
+    assert_plane_payload_close(
+        context.face_offset_basis_plane_payload(offset_face_shape)?,
+        context.face_plane_payload(basis_face_shape)?,
+        1.0e-12,
+        "public direct offset basis payload mirrors source basis",
+    )?;
+    match offset_surface.basis {
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(payload)) => {
+            assert_plane_payload_close(
+                context.face_offset_basis_plane_payload(offset_face_shape)?,
+                payload,
+                1.0e-12,
+                "public direct offset basis payload vs Rust descriptor",
+            )?;
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected plane direct offset basis descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    }
+    assert!(
+        context
+            .face_offset_basis_cylinder_payload(offset_face_shape)
+            .is_err(),
+        "ported direct plane offsets should reject mismatched cylinder basis payload queries"
+    );
+    assert!(
+        context.face_plane_payload(offset_face_shape).is_err(),
+        "offset faces should not masquerade as direct plane payloads"
+    );
+
+    let rust_sample = context
+        .ported_face_sample_normalized(offset_face_shape, [0.25, 0.75])?
+        .ok_or_else(|| std::io::Error::other("expected Rust direct offset face sample"))?;
+    let occt_sample = context.face_sample_normalized_occt(offset_face_shape, [0.25, 0.75])?;
+    assert_vec3_close(
+        rust_sample.position,
+        occt_sample.position,
+        1.0e-6,
+        "direct offset sample position vs OCCT oracle",
+    )?;
+    assert_vec3_close(
+        rust_sample.normal,
+        occt_sample.normal,
+        1.0e-6,
+        "direct offset sample normal vs OCCT oracle",
+    )?;
+
+    let summary = document.summary("offset_top")?;
+    let occt_summary = context.describe_shape_occt(offset_shape)?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    let wire_occurrence_length = if ported_topology.wire_edge_indices.is_empty() {
+        unique_edge_length
+    } else {
+        ported_topology
+            .wire_edge_indices
+            .iter()
+            .filter_map(|&edge_index| brep.edges.get(edge_index))
+            .map(|edge| edge.length)
+            .sum()
+    };
+    let brep_surface_area = brep.faces.iter().map(|face| face.area).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        brep_surface_area,
+        1.0e-9,
+        "document direct offset surface area from BRep faces",
+    )?;
+    assert_scalar_close(
+        summary.surface_area,
+        occt_summary.surface_area,
+        1.0e-6,
+        "Rust direct offset surface area vs OCCT oracle",
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        0.0,
+        1.0e-12,
+        "document direct offset volume",
+    )?;
+    assert_scalar_close(
+        summary.linear_length,
+        0.0,
+        1.0e-12,
+        "document direct offset wire-occurrence edge length",
+    )?;
+    assert_scalar_close(
+        wire_occurrence_length,
+        0.0,
+        1.0e-12,
+        "direct offset wire-occurrence edge length",
+    )?;
+    assert_scalar_close(
+        unique_edge_length,
+        0.0,
+        1.0e-12,
+        "unique BRep direct offset edge length",
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        occt_summary.bbox_min,
+        5.0e-2,
+        "direct offset bbox min vs OCCT oracle",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        occt_summary.bbox_max,
+        5.0e-2,
+        "direct offset bbox max vs OCCT oracle",
+    )?;
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::OffsetFaceUnion
+    );
+    assert!(
+        matches!(
+            brep.offset_face_bbox_source(),
+            Some(OffsetFaceBboxSource::ValidatedMesh | OffsetFaceBboxSource::SummaryFaceBrep)
+        ),
+        "direct offset bbox should resolve through Rust-owned offset face data, got {:?}",
+        brep.offset_face_bbox_source()
+    );
+    assert_eq!(brep.summary_volume_source(), SummaryVolumeSource::Zero);
+
+    let selected_offset = document.select_face(
+        "offset_top",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Offset),
+    )?;
+    let document_topology = document.topology("offset_top")?;
+    let faces = document.faces("offset_top")?;
+    let edges = document.edges("offset_top")?;
+
+    assert_eq!(document_topology.faces.len(), 1);
+    assert_eq!(document_topology.edges.len(), 0);
+    assert_eq!(
+        document_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(faces.len(), 1);
+    assert_eq!(edges.len(), 0);
+    assert_eq!(
+        document.face_indices_by_surface_kind("offset_top", SurfaceKind::Offset)?,
+        vec![0]
+    );
+    assert_eq!(
+        document
+            .edge_indices_by_curve_kind("offset_top", CurveKind::Line)?
+            .len(),
+        0
+    );
+    assert_eq!(selected_offset.geometry.kind, SurfaceKind::Offset);
+    assert!(matches!(
+        selected_offset.ported_face_surface,
+        Some(PortedFaceSurface::Offset(_))
+    ));
+    assert_scalar_close(
+        selected_offset.area,
+        brep_surface_area,
+        1.0e-9,
+        "selected direct offset face area",
+    )?;
+    assert!(
+        document
+            .select_edge(
+                "offset_top",
+                EdgeSelector::LongestByCurveKind(CurveKind::Line),
+            )
+            .is_err(),
+        "boundary-free direct offset face should reject line edge selectors"
+    );
+    assert_eq!(summary.primary_kind, ShapeKind::Face);
+    assert_eq!(summary.face_count, 1);
+    assert_eq!(summary.edge_count, 0);
+    match document.history() {
+        [OperationRecord::AddBox { output, params }, OperationRecord::DirectOffsetSurfaceFace {
+            output: offset_output,
+            input,
+            selector: FaceSelector::BestAlignedPlane { normal_hint },
+            params: offset_history,
+        }] => {
+            assert_eq!(output, "basis_box");
+            assert_vec3_close(
+                params.origin,
+                source_params.origin,
+                0.0,
+                "history basis box origin",
+            )?;
+            assert_vec3_close(
+                params.size,
+                source_params.size,
+                0.0,
+                "history basis box size",
+            )?;
+            assert_eq!(offset_output, "offset_top");
+            assert_eq!(input, "basis_box");
+            assert_vec3_close(
+                *normal_hint,
+                [0.0, 0.0, 1.0],
+                0.0,
+                "history direct offset selector normal",
+            )?;
+            assert_scalar_close(
+                offset_history.offset,
+                offset_params.offset,
+                0.0,
+                "history direct offset value",
+            )?;
+            assert_scalar_close(
+                offset_history.tolerance,
+                offset_params.tolerance,
+                0.0,
+                "history direct offset tolerance",
+            )?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddBox + DirectOffsetSurfaceFace history entries, got {history:?}"
             ))
             .into());
         }

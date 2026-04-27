@@ -6,7 +6,7 @@ use crate::{
     BoxParams, BrepEdge, BrepFace, BrepShape, ConeParams, CurveKind, CylinderParams,
     CylindricalHoleParams, EdgeGeometry, EllipseEdgeParams, Error, FaceGeometry, FaceSample,
     FilletParams, HelixParams, LoopRole, ModelKernel, OffsetParams, Orientation, PortedCurve,
-    PortedFaceSurface, PortedSurface, PrismParams, RevolutionParams, Shape, ShapeReport,
+    PortedFaceSurface, PortedSurface, PrismParams, RevolutionParams, Shape, ShapeKind, ShapeReport,
     ShapeSummary, SphereParams, SurfaceKind, ThroughHoleCut, TopologySnapshot, TorusParams,
 };
 
@@ -109,6 +109,12 @@ pub enum OperationRecord {
     Offset {
         output: String,
         input: String,
+        params: OffsetParams,
+    },
+    DirectOffsetSurfaceFace {
+        output: String,
+        input: String,
+        selector: FaceSelector,
         params: OffsetParams,
     },
     CylindricalHole {
@@ -369,6 +375,40 @@ impl ModelDocument {
             params,
         });
         Ok(())
+    }
+
+    pub fn direct_offset_surface_face(
+        &mut self,
+        output: impl Into<String>,
+        input: impl AsRef<str>,
+        selector: FaceSelector,
+        params: OffsetParams,
+    ) -> Result<FaceDescriptor, Error> {
+        let output = output.into();
+        let input = input.as_ref().to_owned();
+        let selected_face = self.select_face(&input, selector)?;
+        let shape = {
+            let input_shape = self.shape_ref(&input)?;
+            let face_shapes = self
+                .kernel
+                .context()
+                .subshapes(input_shape, ShapeKind::Face)?;
+            let basis_face = face_shapes.get(selected_face.index).ok_or_else(|| {
+                Error::new(format!(
+                    "selected face index {} is unavailable for shape '{input}'",
+                    selected_face.index
+                ))
+            })?;
+            self.kernel.make_offset_surface_face(basis_face, params)?
+        };
+        self.store_shape(output.clone(), shape);
+        self.history.push(OperationRecord::DirectOffsetSurfaceFace {
+            output,
+            input,
+            selector,
+            params,
+        });
+        Ok(selected_face)
     }
 
     pub fn cylindrical_hole(

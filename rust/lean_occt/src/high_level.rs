@@ -86,6 +86,14 @@ impl ModelKernel {
         self.context.make_offset(shape, params)
     }
 
+    pub fn make_offset_surface_face(
+        &self,
+        basis_face: &Shape,
+        params: OffsetParams,
+    ) -> Result<Shape, Error> {
+        self.context.make_offset_surface_face(basis_face, params)
+    }
+
     pub fn make_cylindrical_hole(
         &self,
         shape: &Shape,

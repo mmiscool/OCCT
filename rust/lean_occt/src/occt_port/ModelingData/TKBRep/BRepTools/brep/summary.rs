@@ -249,13 +249,15 @@ pub(super) fn ported_shape_summary(
     };
     let face_contributions_volume = if supports_rust_owned_offset_solid_volume {
         supported_offset_solid_volume(context, wires, edges, faces, face_shapes, edge_shapes)
-    } else if closed_volume_topology || supports_rust_owned_swept_solid_volume {
+    } else if (has_solid_root(counts) && closed_volume_topology)
+        || supports_rust_owned_swept_solid_volume
+    {
         analytic_shape_volume(context, wires, edges, faces, face_shapes, edge_shapes)
     } else {
         None
     };
     let child_solid_volume = child_solid_assembly_volume(context, counts, solid_shapes);
-    let whole_shape_mesh_volume = if closed_volume_topology {
+    let whole_shape_mesh_volume = if has_solid_root(counts) && closed_volume_topology {
         mesh_shape_volume(context, shape, counts)
     } else {
         None
