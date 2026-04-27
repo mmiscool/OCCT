@@ -6,8 +6,8 @@ use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
     EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, OperationRecord,
     PlanePayload, PortedCurve, PortedFaceSurface, PortedSurface, PortedSweptSurface, PrismParams,
-    ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
-    TorusParams, TorusPayload,
+    RevolutionParams, RevolutionSurfacePayload, ShapeKind, SphereParams, SpherePayload,
+    SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,11 +84,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::Revolution,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::DirectOffset,
@@ -363,6 +363,34 @@ fn assert_extrusion_payload_close(
         rhs.direction,
         tolerance,
         &format!("{label} direction"),
+    )?;
+    if lhs.basis_curve_kind != rhs.basis_curve_kind {
+        return Err(std::io::Error::other(format!(
+            "{label} basis_curve_kind mismatch: lhs={:?} rhs={:?}",
+            lhs.basis_curve_kind, rhs.basis_curve_kind
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn assert_revolution_payload_close(
+    lhs: RevolutionSurfacePayload,
+    rhs: RevolutionSurfacePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.axis_origin,
+        rhs.axis_origin,
+        tolerance,
+        &format!("{label} axis_origin"),
+    )?;
+    assert_vec3_close(
+        lhs.axis_direction,
+        rhs.axis_direction,
+        tolerance,
+        &format!("{label} axis_direction"),
     )?;
     if lhs.basis_curve_kind != rhs.basis_curve_kind {
         return Err(std::io::Error::other(format!(
@@ -2200,6 +2228,323 @@ fn prism_extrusion_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddEllipseEdge + Prism history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn revolution_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::Revolution, "revolution")?;
+
+    let profile_params = EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    };
+    let revolution_params = RevolutionParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        angle_radians: PI,
+    };
+
+    let mut document = ModelDocument::new()?;
+    document.insert_ellipse_edge("profile", profile_params)?;
+    document.revolution("revolution", "profile", revolution_params)?;
+
+    let revolution_shape = document.shape("revolution")?;
+    assert!(
+        revolution_shape.has_rust_swept_surface_face_metadata(),
+        "authored edge-source revolution should retain Rust single-face swept metadata"
+    );
+    assert_eq!(
+        revolution_shape.rust_multi_face_swept_source_count(),
+        None,
+        "edge-source revolution should not rely on multi-face swept metadata"
+    );
+
+    let context = document.kernel().context();
+    let face_shapes = context.subshapes(revolution_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(revolution_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 1);
+    assert!(!edge_shapes.is_empty());
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_swept_surface_face_metadata()),
+        "generated revolution faces should retain Rust swept metadata"
+    );
+
+    let revolution_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Revolution)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored revolution face"))?;
+
+    let ported_topology = context
+        .ported_topology(revolution_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned revolution topology snapshot"))?;
+    let public_topology = context.topology(revolution_shape)?;
+    let brep = document.brep("revolution")?;
+
+    assert_eq!(ported_topology.faces.len(), 1);
+    assert!(!ported_topology.wires.is_empty());
+    assert!(!ported_topology.edges.is_empty());
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), ported_topology.faces.len());
+    assert_eq!(brep.wires.len(), ported_topology.wires.len());
+    assert_eq!(brep.edges.len(), ported_topology.edges.len());
+    assert_eq!(brep.vertices.len(), ported_topology.vertex_positions.len());
+    assert_eq!(
+        brep.faces
+            .iter()
+            .filter(|face| {
+                face.geometry.kind == SurfaceKind::Revolution
+                    && matches!(
+                        face.ported_face_surface,
+                        Some(PortedFaceSurface::Swept(
+                            PortedSweptSurface::Revolution { .. }
+                        ))
+                    )
+            })
+            .count(),
+        1
+    );
+    assert!(brep.edges.iter().all(|edge| {
+        matches!(
+            edge.geometry.kind,
+            CurveKind::Line | CurveKind::Circle | CurveKind::Ellipse
+        ) && edge.ported_curve.is_some()
+    }));
+    assert!(
+        brep.edges
+            .iter()
+            .any(|edge| matches!(edge.ported_curve, Some(PortedCurve::Ellipse(_)))),
+        "revolution profile boundary should materialize Rust-owned ellipse edges"
+    );
+
+    let public_revolution_payload = context.face_revolution_payload(revolution_face)?;
+    assert_eq!(
+        public_revolution_payload.basis_curve_kind,
+        CurveKind::Ellipse
+    );
+    let descriptor = context
+        .ported_face_surface_descriptor(revolution_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust revolution face descriptor"))?;
+    let descriptor_payload = match descriptor {
+        PortedFaceSurface::Swept(PortedSweptSurface::Revolution {
+            payload,
+            basis_curve,
+            basis_geometry,
+        }) => {
+            assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+            assert_eq!(basis_geometry.kind, CurveKind::Ellipse);
+            payload
+        }
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust revolution descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_revolution_payload_close(
+        public_revolution_payload,
+        descriptor_payload,
+        1.0e-12,
+        "public revolution payload vs Rust descriptor",
+    )?;
+    let occt_revolution_payload = context.face_revolution_payload_occt(revolution_face)?;
+    assert_revolution_payload_close(
+        public_revolution_payload,
+        occt_revolution_payload,
+        1.0e-12,
+        "Rust revolution payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_extrusion_payload(revolution_face).is_err(),
+        "ported revolution faces should reject mismatched extrusion payload queries"
+    );
+
+    let rust_sample = context
+        .ported_face_sample_normalized(revolution_face, [0.25, 0.75])?
+        .ok_or_else(|| std::io::Error::other("expected Rust revolution face sample"))?;
+    let occt_sample = context.face_sample_normalized_occt(revolution_face, [0.25, 0.75])?;
+    assert_vec3_close(
+        rust_sample.position,
+        occt_sample.position,
+        1.0e-9,
+        "revolution sample position vs OCCT oracle",
+    )?;
+    assert_vec3_close(
+        rust_sample.normal,
+        occt_sample.normal,
+        1.0e-9,
+        "revolution sample normal vs OCCT oracle",
+    )?;
+
+    let summary = document.summary("revolution")?;
+    let occt_summary = context.describe_shape_occt(revolution_shape)?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    let wire_occurrence_length = if ported_topology.wire_edge_indices.is_empty() {
+        unique_edge_length
+    } else {
+        ported_topology
+            .wire_edge_indices
+            .iter()
+            .filter_map(|&edge_index| brep.edges.get(edge_index))
+            .map(|edge| edge.length)
+            .sum()
+    };
+    let brep_surface_area = brep.faces.iter().map(|face| face.area).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        brep_surface_area,
+        1.0e-9,
+        "document revolution surface area from BRep faces",
+    )?;
+    assert_scalar_close(
+        summary.surface_area,
+        occt_summary.surface_area,
+        2.0e-1,
+        "Rust revolution surface area vs OCCT oracle",
+    )?;
+    assert_scalar_close(summary.volume, 0.0, 1.0e-12, "document revolution volume")?;
+    assert_scalar_close(
+        summary.linear_length,
+        wire_occurrence_length,
+        1.0e-9,
+        "document revolution wire-occurrence edge length",
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        occt_summary.bbox_min,
+        1.0e-6,
+        "revolution bbox min vs OCCT oracle",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        occt_summary.bbox_max,
+        1.0e-6,
+        "revolution bbox max vs OCCT oracle",
+    )?;
+    assert_eq!(brep.summary_bbox_source(), SummaryBboxSource::PortedBrep);
+    assert_eq!(brep.summary_volume_source(), SummaryVolumeSource::Zero);
+
+    let selected_revolution = document.select_face(
+        "revolution",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Revolution),
+    )?;
+    let selected_profile = document.select_edge(
+        "revolution",
+        EdgeSelector::LongestByCurveKind(CurveKind::Ellipse),
+    )?;
+    let faces = document.faces("revolution")?;
+    let edges = document.edges("revolution")?;
+    let report = document.report("revolution")?;
+
+    assert_eq!(faces.len(), 1);
+    assert_eq!(edges.len(), brep.edges.len());
+    assert_eq!(
+        document.face_indices_by_surface_kind("revolution", SurfaceKind::Revolution)?,
+        vec![0]
+    );
+    assert_eq!(
+        document
+            .edge_indices_by_curve_kind("revolution", CurveKind::Ellipse)?
+            .len(),
+        brep.edges
+            .iter()
+            .filter(|edge| edge.geometry.kind == CurveKind::Ellipse)
+            .count()
+    );
+    assert_eq!(selected_revolution.geometry.kind, SurfaceKind::Revolution);
+    assert_scalar_close(
+        selected_revolution.area,
+        brep_surface_area,
+        1.0e-9,
+        "selected revolution face area",
+    )?;
+    assert_eq!(selected_profile.geometry.kind, CurveKind::Ellipse);
+    assert_eq!(report.summary.primary_kind, ShapeKind::Face);
+    assert_eq!(report.summary.face_count, 1);
+    assert_eq!(report.summary.edge_count, brep.edges.len());
+    match document.history() {
+        [OperationRecord::AddEllipseEdge { output, params }, OperationRecord::Revolution {
+            output: revolution_output,
+            input,
+            params: revolution_history,
+        }] => {
+            assert_eq!(output, "profile");
+            assert_vec3_close(
+                params.origin,
+                profile_params.origin,
+                0.0,
+                "history ellipse origin",
+            )?;
+            assert_vec3_close(
+                params.axis,
+                profile_params.axis,
+                0.0,
+                "history ellipse axis",
+            )?;
+            assert_vec3_close(
+                params.x_direction,
+                profile_params.x_direction,
+                0.0,
+                "history ellipse x_direction",
+            )?;
+            assert_scalar_close(
+                params.major_radius,
+                profile_params.major_radius,
+                0.0,
+                "history ellipse major_radius",
+            )?;
+            assert_scalar_close(
+                params.minor_radius,
+                profile_params.minor_radius,
+                0.0,
+                "history ellipse minor_radius",
+            )?;
+            assert_eq!(revolution_output, "revolution");
+            assert_eq!(input, "profile");
+            assert_vec3_close(
+                revolution_history.origin,
+                revolution_params.origin,
+                0.0,
+                "history revolution origin",
+            )?;
+            assert_vec3_close(
+                revolution_history.axis,
+                revolution_params.axis,
+                0.0,
+                "history revolution axis",
+            )?;
+            assert_scalar_close(
+                revolution_history.angle_radians,
+                revolution_params.angle_radians,
+                0.0,
+                "history revolution angle",
+            )?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddEllipseEdge + Revolution history entries, got {history:?}"
             ))
             .into());
         }
