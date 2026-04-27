@@ -141,3 +141,8 @@ The current direct porting work is concentrated in `rust/lean_occt/src/ported_ge
 and `rust/lean_occt/src/brep.rs`.
 Those modules now cover Rust-native analytic evaluation plus a Rust-owned BREP snapshot layer,
 regression-checked against OCCT in `ported_geometry_workflows` and `brep_workflows`.
+
+The current porting strategy is capability-first rather than class-by-class. See
+[RUST_PORT_STRATEGY.md](/home/user/projects/OCCT/RUST_PORT_STRATEGY.md:1) for the rule of thumb:
+OCCT remains a constructor backend, normalized snapshot producer, and oracle while Rust takes over
+downstream behavior for supported authored shape families.

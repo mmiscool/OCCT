@@ -2,9 +2,9 @@
 
 This runner uses the local `@openai/codex` package, reuses the Codex CLI login already configured on this machine, keeps a saved Codex session until it is rotated, and repeatedly sends the configured loop prompt.
 
-The default prompt is milestone-driven and port-first:
+The default prompt is strategy-driven and capability-first:
 
-`Drive the Rust port forward in decisive implementation steps. Read portingMilestones.md and nextStep.md at the start of every turn, then immediately work on the highest-priority incomplete milestone.`
+`Drive the OCCT Rust port forward using the capability-first strategy. Read RUST_PORT_STRATEGY.md, portingMilestones.md, and nextStep.md at the start of every turn.`
 
 ## Install
 
@@ -31,7 +31,7 @@ Default generated config:
   "projectPath": "/home/user/projects/OCCT",
   "model": "gpt-5.5",
   "reasoningLevel": "xhigh",
-  "loopPrompt": "Drive the Rust port forward in decisive implementation steps. Read `portingMilestones.md` and `nextStep.md` at the start of every turn, then immediately work on the highest-priority incomplete milestone. Each turn must attempt a meaningful Rust-owned replacement of an OCCT-backed path, not merely analysis, observability, bookkeeping, or helper reshuffling. Prefer replacing an entire exercised fallback branch or capability family over making the smallest local edit. It is acceptable and expected to touch multiple Rust modules, C ABI glue, tests, and docs in one turn when that is what the port requires. When you find the active fallback, implement the Rust-owned path and remove or strictly narrow the fallback in the same turn; do not stop after adding probes unless the same turn also lands tested Rust behavior. Use compiler errors and failing tests as guidance to finish the larger porting cut, not as a reason to retreat to a tiny safe change. If a prerequisite refactor is needed, do it only as part of the same turn that ports behavior or deletes a fallback. Add or strengthen regression coverage around the user-visible behavior being moved to Rust. Update both control files every turn with completed evidence, the active milestone, the next bounded cut, and exact verification commands. You may use subagents, delegation, and parallel agent work when useful. Prefer bounded, non-overlapping subtasks.",
+  "loopPrompt": "Drive the OCCT Rust port forward using the capability-first strategy. Read `RUST_PORT_STRATEGY.md`, `portingMilestones.md`, and `nextStep.md` at the start of every turn. If the working tree contains active dirty milestone edits, finish or repair that cut before starting separate work. Choose new work by selecting a supported Rust-authored shape family and moving a vertical ownership row through construction metadata, normalized snapshot/BRep data, public queries, summary metrics, selectors/documents, tests, and docs. Treat OCCT only as constructor backend, normalized snapshot producer, and oracle; keep raw OCCT query fallbacks explicit as unsupported/imported/raw APIs. Do not translate placeholder `occt_port` files or delete isolated fallbacks unless the same turn lands tested user-visible Rust-owned behavior for a supported family. Use compiler errors and failing tests as the work queue for finishing the chosen vertical cut. Update `portingMilestones.md` and `nextStep.md` every turn with completed evidence, the active family/milestone, the next bounded cut, and exact verification commands. You may use subagents, delegation, and parallel agent work when useful. Prefer bounded, non-overlapping subtasks.",
   "delayBetweenLoopsSeconds": 1,
   "maxSessionTurns": 30
 }
@@ -59,9 +59,9 @@ Fields:
 - Every streamed Codex event is printed live to the terminal with a horizontal separator, including messages, tool activity, completions, and stderr lines.
 - Every pause shows a live countdown in the terminal, and pressing `Enter` skips the remaining wait.
 - Pressing `Ctrl+C` stops the current wait immediately, signals any active child process to exit, and force-exits if shutdown does not complete promptly.
-- The default prompt expects two control files in the repo root: `portingMilestones.md` for milestone ordering and `nextStep.md` for the current bounded cut.
-- The default prompt treats analysis-only, probe-only, and helper-only turns as insufficient unless the same turn also ports tested behavior or deletes/narrows an OCCT fallback.
-- The loop is expected to make coherent multi-file Rust porting cuts when needed, including changes across the Rust port, C ABI surface, tests, and control docs.
+- The default prompt expects three control files in the repo root: `RUST_PORT_STRATEGY.md` for the porting model, `portingMilestones.md` for milestone ordering, and `nextStep.md` for the current bounded cut.
+- The default prompt treats analysis-only, probe-only, helper-only, placeholder-translation, and fallback-only turns as insufficient unless the same turn lands tested user-visible Rust-owned behavior for a supported shape family.
+- The loop is expected to make coherent multi-file Rust porting cuts when needed, including changes across construction metadata, normalized snapshot/BRep data, public query paths, summaries, selectors/documents, C ABI surface, tests, and control docs.
 
 ## Reset the saved session
 

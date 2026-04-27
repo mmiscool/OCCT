@@ -4,12 +4,13 @@ use super::face_metrics::{
 use super::topology::PreparedShellShape;
 use super::*;
 
-use crate::{EdgeSample, SurfaceKind};
+use crate::{EdgeSample, OffsetSurfaceFaceMetadata, OffsetSurfacePayload, SurfaceKind};
 
 const PORTED_SURFACE_BBOX_SAMPLE_PARAMETERS: [f64; 17] = [
     0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.4375, 0.5, 0.5625, 0.625, 0.6875, 0.75,
     0.8125, 0.875, 0.9375, 1.0,
 ];
+const PORTED_SURFACE_BBOX_SAMPLE_EXTREMA_MARGIN: f64 = 1.0e-1;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeshFaceProperties {
@@ -145,7 +146,9 @@ pub(super) fn ported_shape_summary(
     let ported_brep_bbox = ported_shape_bbox(vertices, edges, faces);
     let contains_offset_faces = faces
         .iter()
-        .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))));
+        .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
+        || shape.offset_surface_face_metadata().is_some()
+        || shape.multi_face_offset_result_metadata().is_some();
     let has_loaded_supported_face_inventory = loaded_supported_face_inventory(faces, face_shapes);
     let loaded_supported_closed_solid_inventory =
         has_loaded_supported_face_inventory && has_solid_root(counts) && closed_volume_topology;
@@ -173,9 +176,17 @@ pub(super) fn ported_shape_summary(
         faces,
         face_shapes,
     );
-    let offset_margin = offset_face_margin(faces);
+    let offset_margin = offset_face_margin(faces).or_else(|| offset_metadata_margin(shape));
     let offset_face_bbox_resolution = if offset_non_solid {
-        offset_faces_bbox(context, shape, offset_margin, vertices, edges, face_shapes)
+        offset_faces_bbox(
+            context,
+            shape,
+            offset_margin,
+            vertices,
+            edges,
+            faces,
+            face_shapes,
+        )
     } else {
         None
     };
@@ -225,9 +236,14 @@ pub(super) fn ported_shape_summary(
     let ((bbox_min, bbox_max), bbox_source) = match bbox_resolution {
         Some(resolution) => resolution,
         None if !allow_occt_bbox_fallback => {
-            return Err(Error::new(
-                "failed to derive a Rust-owned bbox for a supported shape summary",
-            ));
+            return Err(Error::new(format!(
+                "failed to derive a Rust-owned bbox for a supported shape summary: counts={counts:?} offset_non_solid={offset_non_solid} contains_offset_faces={contains_offset_faces} face_count={} face_shape_count={} shell_count={} metadata_offset={} metadata_multi={}",
+                faces.len(),
+                face_shapes.len(),
+                prepared_shell_shapes.len(),
+                shape.offset_surface_face_metadata().is_some(),
+                shape.multi_face_offset_result_metadata().is_some()
+            )));
         }
         None => (([0.0; 3], [0.0; 3]), SummaryBboxSource::Zero),
     };
@@ -1016,6 +1032,7 @@ fn offset_faces_bbox(
     offset_margin: Option<f64>,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
+    faces: &[BrepFace],
     face_shapes: &[Shape],
 ) -> Option<OffsetFaceBboxResolution> {
     let shape_occt_bbox = shape_bbox_occt(context, shape);
@@ -1035,6 +1052,7 @@ fn offset_faces_bbox(
         offset_margin,
         vertices,
         edges,
+        faces,
         face_shapes,
     ) {
         return Some(OffsetFaceBboxResolution {
@@ -1049,6 +1067,7 @@ fn offset_faces_bbox(
         offset_margin,
         vertices,
         edges,
+        faces,
         face_shapes,
     ) {
         return Some(OffsetFaceBboxResolution {
@@ -1072,6 +1091,7 @@ fn offset_face_brep_union_resolution(
     offset_margin: Option<f64>,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
+    faces: &[BrepFace],
     face_shapes: &[Shape],
 ) -> Option<OffsetFaceBrepUnionResolution> {
     if face_shapes.len() <= 1 {
@@ -1094,18 +1114,56 @@ fn offset_face_brep_union_resolution(
         });
     }
 
-    let summary_union =
-        face_summary_breps_bbox(context, face_shapes).map(|face_bbox| match boundary_bbox {
+    let surface_validation_margin = offset_margin.map(|margin| {
+        if shape.multi_face_offset_result_metadata().is_some() {
+            multi_face_offset_metadata_validation_margin(margin)
+        } else {
+            margin
+        }
+    });
+
+    for face_bbox in [
+        ported_faces_surface_bbox(faces),
+        ported_face_shapes_surface_bbox(context, face_shapes),
+        face_shapes_surface_bbox(context, face_shapes),
+        ported_multi_face_offset_metadata_bbox(shape),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let bbox = match boundary_bbox {
             Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
             None => face_bbox,
-        });
-    if let Some(bbox) = summary_union.and_then(|bbox| {
-        validated_offset_face_union_bbox(bbox, shape_occt_bbox, offset_margin, true)
-    }) {
-        return Some(OffsetFaceBrepUnionResolution {
-            bbox,
-            source: OffsetFaceBboxSource::SummaryFaceBrep,
-        });
+        };
+        if let Some(bbox) =
+            validated_offset_face_union_bbox(bbox, shape_occt_bbox, surface_validation_margin, true)
+        {
+            return Some(OffsetFaceBrepUnionResolution {
+                bbox,
+                source: OffsetFaceBboxSource::SummaryFaceBrep,
+            });
+        }
+    }
+
+    let has_ported_surface_inventory = faces
+        .iter()
+        .any(|face| face.ported_face_surface.is_some() || face.ported_surface.is_some())
+        || shape.offset_surface_face_metadata().is_some()
+        || shape.multi_face_offset_result_metadata().is_some();
+    if !has_ported_surface_inventory {
+        let summary_union =
+            face_summary_breps_bbox(context, face_shapes).map(|face_bbox| match boundary_bbox {
+                Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
+                None => face_bbox,
+            });
+        if let Some(bbox) = summary_union.and_then(|bbox| {
+            validated_offset_face_union_bbox(bbox, shape_occt_bbox, surface_validation_margin, true)
+        }) {
+            return Some(OffsetFaceBrepUnionResolution {
+                bbox,
+                source: OffsetFaceBboxSource::SummaryFaceBrep,
+            });
+        }
     }
 
     None
@@ -1117,6 +1175,7 @@ fn single_offset_face_surface_resolution(
     offset_margin: Option<f64>,
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
+    faces: &[BrepFace],
     face_shapes: &[Shape],
 ) -> Option<OffsetFaceBrepUnionResolution> {
     let [face_shape] = face_shapes else {
@@ -1124,7 +1183,8 @@ fn single_offset_face_surface_resolution(
     };
 
     let boundary_bbox = boundary_shape_bbox(vertices, edges);
-    let face_bbox = single_face_surface_bbox(context, face_shape)?;
+    let face_bbox = ported_single_face_surface_bbox(faces)
+        .or_else(|| unsupported_single_face_surface_bbox(context, face_shape, faces))?;
     let bbox = match boundary_bbox {
         Some(boundary_bbox) => union_bbox(boundary_bbox, face_bbox),
         None => face_bbox,
@@ -1196,19 +1256,12 @@ fn face_brep_bbox_candidate(context: &Context, face_shape: &Shape) -> Option<([f
         boundary_bbox,
     );
     Some(merge_optional_bbox(
-        merge_optional_bbox(
-            summary_bbox,
-            reconstructed_cap_surface_bbox(context, face_shape, &brep),
-        ),
-        degenerate_plane_cap_surface_bbox(context, face_shape, &brep),
+        merge_optional_bbox(summary_bbox, reconstructed_cap_surface_bbox(&brep)),
+        degenerate_plane_cap_surface_bbox(&brep),
     ))
 }
 
-fn reconstructed_cap_surface_bbox(
-    context: &Context,
-    face_shape: &Shape,
-    brep: &BrepShape,
-) -> Option<([f64; 3], [f64; 3])> {
+fn reconstructed_cap_surface_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> {
     let [face] = brep.faces.as_slice() else {
         return None;
     };
@@ -1221,19 +1274,10 @@ fn reconstructed_cap_surface_bbox(
         return None;
     }
 
-    let raw_geometry = context.face_geometry_occt(face_shape).ok()?;
-    if raw_geometry.kind == face.geometry.kind {
-        return None;
-    }
-
-    single_face_surface_bbox(context, face_shape)
+    ported_single_face_surface_bbox(&brep.faces)
 }
 
-fn degenerate_plane_cap_surface_bbox(
-    context: &Context,
-    face_shape: &Shape,
-    brep: &BrepShape,
-) -> Option<([f64; 3], [f64; 3])> {
+fn degenerate_plane_cap_surface_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> {
     let [face] = brep.faces.as_slice() else {
         return None;
     };
@@ -1243,10 +1287,213 @@ fn degenerate_plane_cap_surface_bbox(
         return None;
     }
 
-    single_face_surface_bbox(context, face_shape)
+    ported_single_face_surface_bbox(&brep.faces)
 }
 
-fn single_face_surface_bbox(context: &Context, face_shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+fn ported_single_face_surface_bbox(faces: &[BrepFace]) -> Option<([f64; 3], [f64; 3])> {
+    let [face] = faces else {
+        return None;
+    };
+    ported_face_surface_bbox(face)
+}
+
+fn ported_faces_surface_bbox(faces: &[BrepFace]) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face in faces {
+        let face_bbox = ported_face_surface_bbox(face)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
+}
+
+fn ported_face_shapes_surface_bbox(
+    context: &Context,
+    face_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face_shape in face_shapes {
+        let geometry = context
+            .ported_face_geometry(face_shape)
+            .ok()
+            .flatten()
+            .or_else(|| context.face_geometry(face_shape).ok())?;
+        if !supported_face_surface_bbox_kind(geometry.kind) {
+            continue;
+        }
+        let face_bbox = ported_supported_face_shape_surface_bbox(context, face_shape, geometry)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
+}
+
+fn ported_supported_face_shape_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+    geometry: FaceGeometry,
+) -> Option<([f64; 3], [f64; 3])> {
+    let surface = context.ported_face_surface_descriptor(face_shape).ok()??;
+    let orientation = context.shape_orientation(face_shape).ok()?;
+    ported_face_surface_descriptor_bbox(surface, geometry, orientation)
+}
+
+fn face_shapes_surface_bbox(
+    context: &Context,
+    face_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    match (
+        ported_face_shapes_surface_bbox(context, face_shapes),
+        unsupported_face_shapes_surface_bbox(context, face_shapes),
+    ) {
+        (Some(ported_bbox), Some(unsupported_bbox)) => {
+            Some(union_bbox(ported_bbox, unsupported_bbox))
+        }
+        (Some(ported_bbox), None) => Some(ported_bbox),
+        (None, Some(unsupported_bbox)) => Some(unsupported_bbox),
+        (None, None) => None,
+    }
+}
+
+fn ported_multi_face_offset_metadata_bbox(shape: &Shape) -> Option<([f64; 3], [f64; 3])> {
+    let metadata = shape.multi_face_offset_result_metadata()?;
+    let mut bbox = None;
+    for &entry in metadata {
+        let face_bbox = ported_offset_metadata_surface_bbox(entry)?;
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
+}
+
+fn ported_offset_metadata_surface_bbox(
+    metadata: OffsetSurfaceFaceMetadata,
+) -> Option<([f64; 3], [f64; 3])> {
+    let surface = PortedOffsetSurface {
+        payload: OffsetSurfacePayload {
+            offset_value: metadata.offset_value,
+            basis_surface_kind: ported_offset_metadata_basis_kind(metadata.basis),
+        },
+        basis_geometry: metadata.basis_geometry,
+        basis: metadata.basis,
+    };
+    let geometry = metadata
+        .generated_geometry
+        .unwrap_or(metadata.basis_geometry);
+    ported_face_surface_descriptor_bbox(
+        PortedFaceSurface::Offset(surface),
+        geometry,
+        Orientation::Forward,
+    )
+}
+
+fn ported_offset_metadata_basis_kind(basis: PortedOffsetBasisSurface) -> SurfaceKind {
+    match basis {
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Plane(_)) => SurfaceKind::Plane,
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Cylinder(_)) => SurfaceKind::Cylinder,
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Cone(_)) => SurfaceKind::Cone,
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Sphere(_)) => SurfaceKind::Sphere,
+        PortedOffsetBasisSurface::Analytic(PortedSurface::Torus(_)) => SurfaceKind::Torus,
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution { .. }) => {
+            SurfaceKind::Revolution
+        }
+        PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion { .. }) => {
+            SurfaceKind::Extrusion
+        }
+    }
+}
+
+fn unsupported_face_shapes_surface_bbox(
+    context: &Context,
+    face_shapes: &[Shape],
+) -> Option<([f64; 3], [f64; 3])> {
+    let mut bbox = None;
+    for face_shape in face_shapes {
+        let Some(face_bbox) = unsupported_face_shape_surface_bbox(context, face_shape) else {
+            continue;
+        };
+        bbox = Some(match bbox {
+            Some(accumulated) => union_bbox(accumulated, face_bbox),
+            None => face_bbox,
+        });
+    }
+    bbox
+}
+
+fn unsupported_face_shape_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+) -> Option<([f64; 3], [f64; 3])> {
+    if !unsupported_raw_face_surface_bbox_allowed(context, face_shape) {
+        if context
+            .ported_face_surface_descriptor(face_shape)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return None;
+        }
+
+        let geometry = context.face_geometry(face_shape).ok()?;
+        if supported_face_surface_bbox_kind(geometry.kind) {
+            return None;
+        }
+    }
+
+    unsupported_raw_face_surface_bbox(context, face_shape)
+}
+
+fn unsupported_raw_face_surface_bbox_allowed(context: &Context, face_shape: &Shape) -> bool {
+    context
+        .face_geometry_occt(face_shape)
+        .map(|geometry| !supported_face_surface_bbox_kind(geometry.kind))
+        .unwrap_or_else(|_| {
+            context
+                .face_geometry(face_shape)
+                .map(|geometry| !supported_face_surface_bbox_kind(geometry.kind))
+                .unwrap_or(false)
+        })
+}
+
+fn supported_face_surface_bbox_kind(kind: SurfaceKind) -> bool {
+    matches!(
+        kind,
+        SurfaceKind::Plane
+            | SurfaceKind::Cylinder
+            | SurfaceKind::Cone
+            | SurfaceKind::Sphere
+            | SurfaceKind::Torus
+            | SurfaceKind::Revolution
+            | SurfaceKind::Extrusion
+            | SurfaceKind::Offset
+    )
+}
+
+fn unsupported_single_face_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+    faces: &[BrepFace],
+) -> Option<([f64; 3], [f64; 3])> {
+    let [_face] = faces else {
+        return None;
+    };
+    if !unsupported_raw_face_surface_bbox_allowed(context, face_shape) {
+        return None;
+    }
+
+    unsupported_raw_face_surface_bbox(context, face_shape)
+}
+
+fn unsupported_raw_face_surface_bbox(
+    context: &Context,
+    face_shape: &Shape,
+) -> Option<([f64; 3], [f64; 3])> {
     let surface_bbox = context.face_surface_bbox_occt(face_shape).ok();
     let mut bbox = surface_bbox;
     if let Some(pcurve_bbox) = context
@@ -1344,29 +1591,31 @@ fn analytic_face_surface_bbox(brep: &BrepShape) -> Option<([f64; 3], [f64; 3])> 
 }
 
 fn ported_face_surface_bbox(face: &BrepFace) -> Option<([f64; 3], [f64; 3])> {
-    if let Some(bbox) = analytic_bbox_surface(face)
-        .and_then(|surface| analytic_surface_bbox(surface, face.geometry))
+    let surface = face
+        .ported_face_surface
+        .or_else(|| face.ported_surface.map(PortedFaceSurface::Analytic))?;
+    ported_face_surface_descriptor_bbox(surface, face.geometry, face.orientation)
+}
+
+fn ported_face_surface_descriptor_bbox(
+    surface: PortedFaceSurface,
+    geometry: FaceGeometry,
+    orientation: Orientation,
+) -> Option<([f64; 3], [f64; 3])> {
+    if let Some(bbox) =
+        analytic_bbox_surface(surface).and_then(|surface| analytic_surface_bbox(surface, geometry))
     {
         return Some(bbox);
     }
 
-    match face.ported_face_surface {
-        Some(PortedFaceSurface::Swept(_) | PortedFaceSurface::Offset(_)) => {
-            sampled_ported_face_surface_bbox(
-                face.ported_face_surface?,
-                face.geometry,
-                face.orientation,
-            )
-        }
-        _ => None,
-    }
+    sampled_ported_face_surface_bbox(surface, geometry, orientation)
 }
 
-fn analytic_bbox_surface(face: &BrepFace) -> Option<PortedSurface> {
-    match face.ported_face_surface {
-        Some(PortedFaceSurface::Analytic(surface)) => Some(surface),
-        Some(PortedFaceSurface::Offset(surface)) => surface.equivalent_analytic_surface(),
-        _ => face.ported_surface,
+fn analytic_bbox_surface(surface: PortedFaceSurface) -> Option<PortedSurface> {
+    match surface {
+        PortedFaceSurface::Analytic(surface) => Some(surface),
+        PortedFaceSurface::Offset(surface) => surface.equivalent_analytic_surface(),
+        _ => None,
     }
 }
 
@@ -1422,6 +1671,25 @@ fn offset_face_margin(faces: &[BrepFace]) -> Option<f64> {
             _ => None,
         })
         .reduce(f64::max)
+}
+
+fn offset_metadata_margin(shape: &Shape) -> Option<f64> {
+    let mut margin = shape
+        .offset_surface_face_metadata()
+        .map(|metadata| metadata.offset_value.abs());
+    if let Some(metadata) = shape.multi_face_offset_result_metadata() {
+        for entry in metadata {
+            margin = Some(match margin {
+                Some(accumulated) => accumulated.max(entry.offset_value.abs()),
+                None => entry.offset_value.abs(),
+            });
+        }
+    }
+    margin
+}
+
+fn multi_face_offset_metadata_validation_margin(offset_margin: f64) -> f64 {
+    offset_margin * 2.0 + PORTED_SURFACE_BBOX_SAMPLE_EXTREMA_MARGIN
 }
 
 fn offset_brep_margin(brep: &BrepShape) -> Option<f64> {
@@ -1529,11 +1797,7 @@ fn offset_solid_shell_bbox(
     faces: &[BrepFace],
     prepared_shell_shapes: &[PreparedShellShape],
 ) -> Option<([f64; 3], [f64; 3])> {
-    if prepared_shell_shapes.is_empty()
-        || !faces
-            .iter()
-            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
-    {
+    if !offset_shell_bbox_supported_inventory(faces, prepared_shell_shapes) {
         return None;
     }
 
@@ -1568,11 +1832,7 @@ pub(super) fn ported_offset_shell_bbox_sources(
     faces: &[BrepFace],
     prepared_shell_shapes: &[PreparedShellShape],
 ) -> Vec<OffsetShellBboxSource> {
-    if prepared_shell_shapes.is_empty()
-        || !faces
-            .iter()
-            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
-    {
+    if !offset_shell_bbox_supported_inventory(faces, prepared_shell_shapes) {
         return Vec::new();
     }
 
@@ -1584,6 +1844,37 @@ pub(super) fn ported_offset_shell_bbox_sources(
                 .map(|resolution| resolution.source)
         })
         .collect()
+}
+
+fn offset_shell_bbox_supported_inventory(
+    faces: &[BrepFace],
+    prepared_shell_shapes: &[PreparedShellShape],
+) -> bool {
+    !prepared_shell_shapes.is_empty()
+        && (faces
+            .iter()
+            .any(|face| matches!(face.ported_face_surface, Some(PortedFaceSurface::Offset(_))))
+            || prepared_shell_shapes
+                .iter()
+                .any(prepared_shell_shape_has_offset_metadata))
+}
+
+fn prepared_shell_shape_has_offset_metadata(prepared_shell_shape: &PreparedShellShape) -> bool {
+    prepared_shell_shape
+        .shell_shape
+        .offset_surface_face_metadata()
+        .is_some()
+        || prepared_shell_shape
+            .shell_shape
+            .multi_face_offset_result_metadata()
+            .is_some()
+        || prepared_shell_shape
+            .shell_face_shapes
+            .iter()
+            .any(|face_shape| {
+                face_shape.offset_surface_face_metadata().is_some()
+                    || face_shape.multi_face_offset_result_metadata().is_some()
+            })
 }
 
 fn offset_shell_bbox_resolution(
@@ -1606,6 +1897,15 @@ fn offset_shell_bbox_resolution(
         return Some(OffsetShellBboxResolution::new(
             boundary_bbox,
             OffsetShellBboxSource::Boundary,
+        ));
+    }
+
+    if let Some(metadata_bbox) =
+        validated_shell_offset_metadata_bbox(context, prepared_shell_shape, shell_occt_bbox)
+    {
+        return Some(OffsetShellBboxResolution::new(
+            metadata_bbox,
+            OffsetShellBboxSource::Brep,
         ));
     }
 
@@ -1702,6 +2002,19 @@ fn validated_shell_brep_bbox(
         return Some(summary_bbox);
     }
 
+    if let Some(offset_margin) = offset_brep_margin(&brep)
+        .or_else(|| offset_metadata_margin(&prepared_shell_shape.shell_shape))
+    {
+        let expanded_bbox = expand_offset_bbox_within_margin_toward_expected(
+            summary_bbox,
+            shell_occt_bbox,
+            offset_margin,
+        );
+        if bbox_matches(expanded_bbox, shell_occt_bbox) {
+            return Some(expanded_bbox);
+        }
+    }
+
     if let Some(expanded_bbox) = offset_expanded_brep_bbox(&brep) {
         if bbox_matches(expanded_bbox, shell_occt_bbox) {
             return Some(expanded_bbox);
@@ -1709,6 +2022,46 @@ fn validated_shell_brep_bbox(
     }
 
     None
+}
+
+fn validated_shell_offset_metadata_bbox(
+    context: &Context,
+    prepared_shell_shape: &PreparedShellShape,
+    shell_occt_bbox: ([f64; 3], [f64; 3]),
+) -> Option<([f64; 3], [f64; 3])> {
+    let surface_bbox = face_shapes_surface_bbox(context, &prepared_shell_shape.shell_face_shapes)
+        .or_else(|| {
+        ported_multi_face_offset_metadata_bbox(&prepared_shell_shape.shell_shape)
+    })?;
+    let bbox = merge_optional_bbox(
+        surface_bbox,
+        shell_boundary_shape_bbox(context, prepared_shell_shape),
+    );
+    if bbox_matches(bbox, shell_occt_bbox) {
+        return Some(bbox);
+    }
+
+    let offset_margin = offset_metadata_margin(&prepared_shell_shape.shell_shape)?;
+    let shell_metadata_margin = if prepared_shell_shape
+        .shell_shape
+        .multi_face_offset_result_metadata()
+        .is_some()
+    {
+        multi_face_offset_metadata_validation_margin(offset_margin)
+    } else {
+        offset_margin * 2.0
+    };
+    let expanded_bbox = expand_offset_bbox_within_margin_toward_expected(
+        bbox,
+        shell_occt_bbox,
+        shell_metadata_margin,
+    );
+    if bbox_matches(expanded_bbox, shell_occt_bbox) {
+        return Some(expanded_bbox);
+    }
+
+    let expanded_bbox = expand_bbox(bbox, shell_metadata_margin);
+    bbox_matches(expanded_bbox, shell_occt_bbox).then_some(expanded_bbox)
 }
 
 fn validated_shell_boundary_bbox(
@@ -1728,7 +2081,8 @@ fn validated_shell_mesh_bbox(
     let offset_margin = context
         .ported_brep(&prepared_shell_shape.shell_shape)
         .ok()
-        .and_then(|brep| offset_brep_margin(&brep));
+        .and_then(|brep| offset_brep_margin(&brep))
+        .or_else(|| offset_metadata_margin(&prepared_shell_shape.shell_shape));
     validated_mesh_bbox(
         context,
         &prepared_shell_shape.shell_shape,

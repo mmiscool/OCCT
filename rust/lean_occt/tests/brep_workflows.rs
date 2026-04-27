@@ -2184,6 +2184,43 @@ fn ported_brep_uses_rust_owned_topology_for_face_free_shapes(
         assert_brep_edge_lengths_match(&kernel, label, shape, &brep)?;
     }
 
+    let sphere = kernel.make_sphere(SphereParams {
+        origin: [5.0, -4.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    })?;
+    let sphere_face = find_first_face_by_kind(&kernel, &sphere, SurfaceKind::Sphere)?;
+    let sphere_brep = kernel.brep(&sphere_face)?;
+    let sphere_face_brep = sphere_brep
+        .faces
+        .first()
+        .ok_or_else(|| std::io::Error::other("missing sphere BRep face"))?;
+    assert!(
+        matches!(
+            sphere_face_brep.ported_face_surface,
+            Some(PortedFaceSurface::Analytic(PortedSurface::Sphere(_)))
+        ) || matches!(
+            sphere_face_brep.ported_surface,
+            Some(PortedSurface::Sphere(_))
+        ),
+        "single sphere face should retain a Rust-owned sphere surface descriptor"
+    );
+    assert_eq!(
+        sphere_brep.summary_bbox_source(),
+        SummaryBboxSource::PortedBrep,
+        "single sphere face bbox should resolve from the Rust-owned analytic surface descriptor"
+    );
+    let sphere_face_occt = kernel.context().describe_shape_occt(&sphere_face)?;
+    assert_bbox_close(
+        "single sphere face brep summary",
+        sphere_brep.summary.bbox_min,
+        sphere_brep.summary.bbox_max,
+        sphere_face_occt.bbox_min,
+        sphere_face_occt.bbox_max,
+        5.0e-7,
+    )?;
+
     assert!(kernel.context().ported_topology(&cut)?.is_some());
 
     Ok(())
@@ -5094,6 +5131,180 @@ fn ported_brep_maps_multi_source_swept_offsets_in_rust() -> Result<(), Box<dyn s
     }
 
     Ok(())
+}
+
+#[test]
+fn single_face_surface_bbox_keeps_supported_faces_on_rust_descriptors() {
+    let source = include_str!("../src/occt_port/ModelingData/TKBRep/BRepTools/brep/summary.rs");
+    let reconstructed = source
+        .split("fn reconstructed_cap_surface_bbox")
+        .nth(1)
+        .expect("reconstructed_cap_surface_bbox source should be present")
+        .split("fn degenerate_plane_cap_surface_bbox")
+        .next()
+        .expect("reconstructed_cap_surface_bbox should end before degenerate helper");
+    let degenerate = source
+        .split("fn degenerate_plane_cap_surface_bbox")
+        .nth(1)
+        .expect("degenerate_plane_cap_surface_bbox source should be present")
+        .split("fn ported_single_face_surface_bbox")
+        .next()
+        .expect("degenerate_plane_cap_surface_bbox should end before ported helper");
+    let ported = source
+        .split("fn ported_single_face_surface_bbox")
+        .nth(1)
+        .expect("ported_single_face_surface_bbox source should be present")
+        .split("fn ported_faces_surface_bbox")
+        .next()
+        .expect("ported helper should end before multi-face helper");
+    let offset_union = source
+        .split("fn offset_face_brep_union_resolution")
+        .nth(1)
+        .expect("offset_face_brep_union_resolution source should be present")
+        .split("fn single_offset_face_surface_resolution")
+        .next()
+        .expect("offset face union helper should end before single-face helper");
+    let offset_shell = source
+        .split("fn offset_shell_bbox_resolution")
+        .nth(1)
+        .expect("offset_shell_bbox_resolution source should be present")
+        .split("fn offset_shell_occt_fallback_resolution")
+        .next()
+        .expect("offset shell helper should end before OCCT fallback helper");
+    let unsupported = source
+        .split("fn unsupported_single_face_surface_bbox")
+        .nth(1)
+        .expect("unsupported_single_face_surface_bbox source should be present")
+        .split("fn validated_face_brep_bbox")
+        .next()
+        .expect("unsupported helper should end before validated face helper");
+    let descriptor_bbox = source
+        .split("fn ported_face_surface_bbox")
+        .nth(1)
+        .expect("ported_face_surface_bbox source should be present")
+        .split("fn analytic_bbox_surface")
+        .next()
+        .expect("ported_face_surface_bbox should end before analytic surface helper");
+    let metadata_bbox = source
+        .split("fn ported_multi_face_offset_metadata_bbox")
+        .nth(1)
+        .expect("ported_multi_face_offset_metadata_bbox source should be present")
+        .split("fn unsupported_single_face_surface_bbox")
+        .next()
+        .expect("metadata bbox helper should end before unsupported helper");
+    let ported_face_shape_union = source
+        .split("fn ported_face_shapes_surface_bbox")
+        .nth(1)
+        .expect("ported_face_shapes_surface_bbox source should be present")
+        .split("fn ported_supported_face_shape_surface_bbox")
+        .next()
+        .expect("ported face-shape union helper should end before supported-face helper");
+    let shell_metadata_bbox = source
+        .split("fn validated_shell_offset_metadata_bbox")
+        .nth(1)
+        .expect("validated_shell_offset_metadata_bbox source should be present")
+        .split("fn validated_shell_boundary_bbox")
+        .next()
+        .expect("shell metadata bbox helper should end before boundary helper");
+    let unsupported_shape = source
+        .split("fn unsupported_face_shape_surface_bbox")
+        .nth(1)
+        .expect("unsupported_face_shape_surface_bbox source should be present")
+        .split("fn supported_face_surface_bbox_kind")
+        .next()
+        .expect("unsupported face-shape helper should end before supported-kind guard");
+    let unsupported_raw_guard = source
+        .split("fn unsupported_raw_face_surface_bbox_allowed")
+        .nth(1)
+        .expect("unsupported raw surface bbox guard should be present")
+        .split("fn supported_face_surface_bbox_kind")
+        .next()
+        .expect("unsupported raw guard should end before supported-kind guard");
+    let shell_inventory_gate = source
+        .split("fn offset_shell_bbox_supported_inventory")
+        .nth(1)
+        .expect("offset shell bbox inventory gate should be present")
+        .split("fn prepared_shell_shape_has_offset_metadata")
+        .next()
+        .expect("offset shell inventory gate should end before metadata helper");
+    let shell_inventory_metadata = source
+        .split("fn prepared_shell_shape_has_offset_metadata")
+        .nth(1)
+        .expect("prepared shell metadata helper should be present")
+        .split("fn offset_shell_bbox_resolution")
+        .next()
+        .expect("prepared shell metadata helper should end before shell resolution");
+
+    for (name, body) in [
+        ("reconstructed_cap_surface_bbox", reconstructed),
+        ("degenerate_plane_cap_surface_bbox", degenerate),
+        ("ported_single_face_surface_bbox", ported),
+    ] {
+        assert!(
+            body.contains("ported_single_face_surface_bbox")
+                || body.contains("ported_face_surface_bbox(face)"),
+            "{name} should resolve supported single-face bbox through Rust descriptors"
+        );
+        assert!(
+            !body.contains("face_surface_bbox_occt")
+                && !body.contains("face_pcurve_control_polygon_bbox_occt")
+                && !body.contains("edge_curve_bbox_occt")
+                && !body.contains("face_geometry_occt")
+                && !body.contains("unsupported_single_face_surface_bbox"),
+            "{name} should not enter the raw OCCT bbox fallback for supported faces"
+        );
+    }
+    assert!(
+        descriptor_bbox.contains("face.ported_surface.map(PortedFaceSurface::Analytic)")
+            && descriptor_bbox.contains("sampled_ported_face_surface_bbox"),
+        "analytic, swept, and offset surface descriptors should share the Rust-owned sampled bbox path"
+    );
+    assert!(
+        offset_union.contains("ported_multi_face_offset_metadata_bbox(shape)")
+            && offset_union.contains("shape.multi_face_offset_result_metadata().is_some()")
+            && offset_shell.contains("validated_shell_offset_metadata_bbox")
+            && shell_metadata_bbox.contains("face_shapes_surface_bbox")
+            && shell_metadata_bbox.contains("prepared_shell_shape.shell_face_shapes")
+            && metadata_bbox.contains("OffsetSurfacePayload")
+            && metadata_bbox.contains("metadata.offset_value")
+            && metadata_bbox.contains("PortedFaceSurface::Offset(surface)"),
+        "multi-face offset shell bbox unions should consume Rust-retained offset metadata before raw face summaries"
+    );
+    assert!(
+        ported_face_shape_union.contains("supported_face_surface_bbox_kind")
+            && ported_face_shape_union
+                .contains("ported_supported_face_shape_surface_bbox(context, face_shape, geometry)?"),
+        "supported face-shape descriptor unions should fail closed instead of silently skipping missing Rust descriptors"
+    );
+    assert!(
+        unsupported.contains("if !unsupported_raw_face_surface_bbox_allowed(context, face_shape)")
+            && !unsupported.contains("face.ported_face_surface.is_some()")
+            && !unsupported.contains("face.ported_surface.is_some()"),
+        "raw single-face bbox fallback should be rejected for supported faces even when descriptor extraction is missing"
+    );
+    assert!(
+        shell_inventory_gate.contains("prepared_shell_shape_has_offset_metadata")
+            && shell_inventory_metadata.contains("multi_face_offset_result_metadata")
+            && shell_inventory_metadata.contains("offset_surface_face_metadata"),
+        "offset solid shell bbox source reporting should enter metadata-backed shell rows even when root faces lack offset descriptors"
+    );
+    assert!(
+        unsupported_shape.contains("ported_face_surface_descriptor")
+            && unsupported_shape.contains("unsupported_raw_face_surface_bbox_allowed")
+            && unsupported_shape.contains("supported_face_surface_bbox_kind"),
+        "raw shell face bbox fallback should reject supported ported descriptor families unless the underlying raw surface kind is unsupported"
+    );
+    assert!(
+        unsupported_raw_guard.contains("face_geometry_occt")
+            && unsupported_raw_guard.contains("!supported_face_surface_bbox_kind"),
+        "raw bbox fallback should be gated by the underlying OCCT surface kind before ported descriptors are bypassed"
+    );
+    assert!(
+        unsupported.contains("face_surface_bbox_occt")
+            && unsupported.contains("face_pcurve_control_polygon_bbox_occt")
+            && unsupported.contains("edge_curve_bbox_occt"),
+        "direct OCCT bbox helpers should remain confined to the unsupported/imported helper"
+    );
 }
 
 #[test]

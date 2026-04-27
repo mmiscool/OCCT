@@ -1,38 +1,62 @@
 # Rust Port Milestones
 
-This file is the control plane for the Codex loop. The goal is to move tested, user-visible capability from OCCT-backed paths to Rust-owned paths in bounded slices.
+This file is the control plane for the Codex loop. The goal is to move tested, user-visible capability from OCCT-backed paths to Rust-owned paths in bounded, vertical shape-family slices. Read `RUST_PORT_STRATEGY.md` before choosing a cut.
 
 ## Working Rules
 
-- A turn only counts as progress if it does at least one of these: deletes or narrows an OCCT fallback, expands a Rust-owned capability, or adds regression coverage for newly Rust-owned behavior.
-- Treat analysis-only, probe-only, formatting-only, and helper-only turns as failed porting turns unless they are paired with a real Rust-owned behavior move in the same turn.
-- Bias toward decisive, coherent cuts: replace an exercised fallback branch or capability family end-to-end instead of making the smallest local edit around it.
-- Multi-file changes are expected when the port requires them. Carry a Rust-owned path through data structures, call sites, C ABI glue, integration tests, examples, and docs rather than stopping at the first seam.
-- If a prerequisite refactor is needed, perform it only as part of the same turn that removes or strictly narrows an OCCT fallback or lands new tested Rust behavior.
+- A turn only counts as progress if it advances a user-visible Rust-owned capability, closes a row in an authored shape-family ownership matrix, or adds regression coverage for newly Rust-owned behavior.
+- Treat analysis-only, probe-only, formatting-only, helper-only, and placeholder-translation turns as failed porting turns unless they are paired with a real Rust-owned behavior move in the same turn.
+- Bias toward decisive, coherent vertical cuts: move one exercised authored family through metadata, snapshot/BRep, query/summary, selector/document, test, and docs layers instead of making the smallest local fallback edit.
+- Fallback narrowing still matters, but only as part of a capability cut. Do not start a new milestone whose main value is deleting an isolated fallback unless it makes a supported shape family more Rust-owned end to end.
+- Multi-file changes are expected when the port requires them. Carry a Rust-owned path through construction metadata, normalized snapshot data, data structures, call sites, C ABI glue, integration tests, examples, and docs rather than stopping at the first seam.
+- If a prerequisite refactor is needed, perform it only as part of the same turn that ports behavior, closes an ownership-matrix gap, or strictly narrows a fallback for a supported family.
 - Use compiler and test failures as the work queue for finishing the chosen porting cut; do not retreat to a tiny safe change solely because the larger Rust replacement touches several modules.
-- Stay on the exercised kernel slice first: `ported_geometry`, `brep`, `document`, `pipeline`, and their integration tests. Do not drift into placeholder `occt_port/DataExchange` files just because they are easy to touch.
+- Stay on the exercised kernel slice first: `ported_geometry`, `brep`, `document`, `pipeline`, construction metadata, normalized snapshots, and their integration tests. Do not drift into placeholder `occt_port` files just because they are easy to touch.
+- Treat OCCT as constructor backend, snapshot producer, and test oracle. Automatic OCCT query fallbacks should be explicit unsupported/imported/raw paths.
 - If a bounded cut stalls for one turn, record the blocker in `nextStep.md` and move to the next task inside the same milestone.
 
 ## Turn Status
 
-- Completed evidence: M49 is complete. `Context::ported_face_geometry()` now strictly excludes metadata-bearing offset, swept, and analytic faces before the remaining `face_uv_bounds_occt(shape)` seed: each metadata family tests for its retained Rust metadata and immediately returns the Rust-owned helper result, so a metadata validation miss becomes an explicit `Ok(None)` instead of silently retrying the raw UV-bounds path. Imported, unsupported, metadata-free, and ambiguous faces still reach the existing raw bounds path. Regression coverage strengthens the constructor metadata source guard to require offset/swept/analytic metadata checks before raw bounds, require immediate helper returns, and block the old `if let Some(...)` fall-through pattern; offset, swept, analytic, public payload, BRep, C ABI, and full-suite verification are green.
-- Active milestone: `M50. Rust-Owned Single-Face Surface Bbox Fallback Narrowing`.
-- Next bounded cut: replace the exercised supported single-face surface bbox fallback in `summary.rs`. Move `reconstructed_cap_surface_bbox()` and `degenerate_plane_cap_surface_bbox()` onto Rust-owned `BrepFace` geometry plus `ported_face_surface_bbox()`/sampled ported descriptors for supported analytic, swept, and offset faces, then keep direct `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` only behind an explicit unsupported/imported/raw guard. Strengthen BRep bbox/source coverage so supported single-face summaries and offset-shell face-union summaries cannot resolve through the direct OCCT surface-bbox branch.
+- Completed evidence: M50 is complete on 2026-04-27. Supported single-face reconstructed and degenerate-cap bbox paths now use Rust-owned `BrepFace` geometry plus `PortedFaceSurface` descriptors through `ported_single_face_surface_bbox()`. Direct `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` reads remain confined to explicitly unsupported/raw bbox helpers, and supported descriptor families fail closed instead of silently entering the raw path. Multi-face offset face/shell unions now consume ported descriptors and retained offset metadata before raw summaries, with shell source reporting entering metadata-backed rows even when root faces do not carry offset descriptors. Regression coverage adds the source guard and a behavioral single-sphere BRep bbox assertion; focused BRep workflows, full `brep_workflows`, full Rust crate tests, C ABI build, and diff checks are green.
+- Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
+- Next bounded cut: start the `box/planar` authored family row. Add a compact ownership matrix in workflow coverage and make the box/planar row prove Rust-owned construction metadata, normalized BRep/snapshot data, summary bbox/area/edge-length behavior, public plane payload queries, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_torus_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_sphere_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_cone_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_cylinder_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_box_plane_faces_use_rust_analytic_seed_metadata -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_face_geometry_classifies_constructor_metadata_before_raw_geometry -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_face_surface_descriptors_cover_supported_faces -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml ported_offset_surface_sampling_matches_occt -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml public_swept_and_offset_payload_queries_match_occt -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows single_face_surface_bbox_keeps_supported_faces_on_rust_descriptors -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_bounding_boxes -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
   - `cmake --build build --target LeanOcctCAPI`
   - `git diff --check`
+
+## Capability-First Pivot
+
+After M50 is completed, do not choose the next task by scanning for the nearest `_occt()` call. Choose the next task by selecting a supported authored shape family and closing one vertical ownership row across Rust construction metadata, normalized snapshot/BRep data, query/summary behavior, selectors/documents, and regression tests.
+
+`RUST_PORT_STRATEGY.md` is the source of truth for the new direction: OCCT remains a constructor backend, snapshot producer, and oracle; Rust owns downstream behavior for supported families.
+
+## V1. Authored Analytic Shape Family Ownership Matrix
+
+Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
+
+Status: active after M50. The first row should target the Rust-authored `box/planar` family because its construction metadata, planar face payloads, topology snapshots, summaries, selectors, and document workflows are already exercised enough to support a vertical ownership check.
+
+Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
+
+Bounded tasks:
+
+- Add a compact ownership matrix in code or tests that names supported authored families and expected Rust-owned behaviors.
+- Pick one family row and add failing coverage for every behavior that should be Rust-owned in that row.
+- Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
+- Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
+- Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.
+
+Verification: the selected focused workflow tests, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, any touched C ABI build/test targets, and `git diff --check`.
 
 ## M1. Rust-Owned Offset Shell Bounding Boxes
 
@@ -628,10 +652,10 @@ Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo test
 
 Outcome: supported single-face BRep summary bbox reconstruction stops using direct OCCT surface/pcurve/edge-curve bbox helpers after Rust-owned `BrepFace` geometry and ported face-surface descriptors are available.
 
-Status: active. The remaining targeted fallback is `summary.rs::single_face_surface_bbox()`, which can call `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` from `reconstructed_cap_surface_bbox()` and `degenerate_plane_cap_surface_bbox()`. That branch is still acceptable for imported BSpline/Bezier/unsupported faces, but supported analytic, swept, and offset faces should resolve their cap/surface bbox contribution from Rust-owned `BrepFace` geometry, boundary topology, mesh validation, or sampled ported descriptors.
+Status: complete on 2026-04-27. `reconstructed_cap_surface_bbox()` and `degenerate_plane_cap_surface_bbox()` no longer receive a `Context` or `Shape`; they resolve supported single-face bbox contributions through loaded `BrepFace` data and `ported_single_face_surface_bbox()`. `ported_face_surface_bbox()` now covers analytic, swept, and offset `PortedFaceSurface` descriptors, while direct OCCT surface/pcurve/edge bbox reads remain isolated in `unsupported_raw_face_surface_bbox()` behind supported-kind guards. Multi-face offset and offset-shell bbox resolution also consume Rust-retained offset metadata and ported descriptor unions before any raw face summary path, and supported descriptor rows fail closed when descriptor extraction is missing.
 
 Definition of done: exercised supported single-face summaries, reconstructed cap summaries, and offset-shell face-union summaries derive bbox contributions from Rust-owned `BrepFace` fields or sampled `PortedFaceSurface` descriptors; direct OCCT surface/pcurve/edge bbox helpers are unreachable for supported analytic, swept, and offset faces and remain only behind an explicit unsupported/imported/raw guard; BRep bbox source regressions, offset-shell bbox source regressions, full Rust tests, and C ABI build stay green.
 
-Bounded tasks: next, replace the `reconstructed_cap_surface_bbox()` and `degenerate_plane_cap_surface_bbox()` calls to `single_face_surface_bbox()` with a Rust-owned supported-face path that consumes the loaded `BrepFace`. Expand `ported_face_surface_bbox()` as needed with sampled analytic/swept/offset descriptor coverage for the exercised supported faces, keep direct surface/pcurve/edge bbox reads only in an explicitly named unsupported raw helper, and add source coverage proving supported `PortedFaceSurface` branches cannot enter that raw helper.
+Bounded tasks: complete. The supported single-face surface bbox path consumes loaded `BrepFace` descriptors, unsupported/imported raw bbox reads are explicitly named and guarded, multi-face offset shell rows use descriptor and metadata-backed bbox unions, and regressions cover the source boundary plus a supported single-sphere face bbox behavior.
 
-Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_bounding_boxes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `git diff --check`.
+Verification: `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows single_face_surface_bbox_keeps_supported_faces_on_rust_descriptors -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_bounding_boxes -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`, `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`, `cargo check --manifest-path rust/lean_occt/Cargo.toml`, `cargo test --manifest-path rust/lean_occt/Cargo.toml`, `cmake --build build --target LeanOcctCAPI`, `git diff --check`.
