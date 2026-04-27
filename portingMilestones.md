@@ -17,18 +17,19 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: V1 `simple shell/solid assembly` row is complete on 2026-04-27. `ownership_matrix_workflows::simple_shell_solid_assembly_authored_family_row_is_rust_owned` promotes the assembly row in the authored-family ownership matrix and proves Rust-retained assembly/source metadata for compound and compsolid construction, normalized topology/BRep snapshots for simple shell and solid assemblies, public face/plane queries, Rust-owned summary bbox/area/edge-length/volume source behavior, document `compound`/`compsolid` construction, selectors, reports, descriptors, and history inspection. The prior `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, `direct offset`, and `generated offset` rows remain green, and the BRep/document workflow suites pass.
+- Completed evidence: V1 `simple face/wire assembly` row is complete on 2026-04-27. `ownership_matrix_workflows::simple_face_wire_assembly_authored_family_row_is_rust_owned` promotes the row in the authored-family ownership matrix and proves Rust-retained compound assembly/source metadata for supported face, wire, edge, and vertex compounds, normalized topology/BRep snapshots, public plane/line/vertex queries, Rust-owned bbox/area/edge-length/zero-volume summary metrics, selectors, named document subshape extraction, document compound construction, descriptors, reports where mesh-backed reports are supported, and history inspection. The turn also fixed Rust-owned boundary bbox summaries so isolated vertex children are unioned with analytic edge bounds in mixed assemblies. The prior `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, `direct offset`, `generated offset`, and `simple shell/solid assembly` rows remain green.
 - Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
-- Next bounded cut: start a `simple face/wire assembly` authored family row for compounds assembled from supported faces, wires, edges, and vertices. Extend the ownership matrix so face-free and face-root assemblies prove retained assembly/source metadata, normalized topology/BRep data, public query behavior, summary metrics, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
+- Next bounded cut: start a `mixed analytic solid assembly` authored family row for compounds/compsolids assembled from multiple already-supported analytic solid families such as box, cylinder, cone, sphere, and torus. Prove retained assembly/source metadata, normalized topology/BRep data for curved child faces, public analytic face/edge queries, Rust-owned summary bbox/area/edge-length/child-solid volume metrics, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows simple_shell_solid_assembly_authored_family_row_is_rust_owned`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows simple_face_wire_assembly_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows simple_shell_solid_assembly_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_root_compound_faces -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_nested_root_compound_face_free_wires -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_root_compound_edges_and_vertices -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows -- --nocapture`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
-  - `cmake --build build --target LeanOcctCAPI`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
   - `git diff --check`
 
 ## Capability-First Pivot
@@ -41,7 +42,7 @@ After M50 is completed, do not choose the next task by scanning for the nearest 
 
 Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
 
-Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, `direct offset`, `generated offset`, and `simple shell/solid assembly` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, generated offset, and simple shell/solid assembly, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, summaries, selectors, and document inspection. The next row should target simple face/wire assembly from completed face and edge families, including retained assembly/source metadata, normalized face/wire/edge topology, Rust BRep summaries, and document/selector inspection.
+Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, `direct offset`, `generated offset`, `simple shell/solid assembly`, and `simple face/wire assembly` rows are complete on 2026-04-27: the compact matrix names those supported authored families, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, summaries, selectors, and document inspection. The next row should target mixed analytic solid assemblies from completed solid families, including retained assembly/source metadata, normalized curved-face topology, Rust BRep summaries, and document/selector inspection.
 
 Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
 
@@ -58,7 +59,8 @@ Bounded tasks:
 - Complete: closed the `direct offset` family row with coverage for retained direct-offset metadata, normalized boundary-free offset face BRep/topology, public offset and offset-basis payloads, Rust sampling parity, ported area/bbox/edge-length metrics, zero non-solid volume, selectors, and document inspection.
 - Complete: closed the `generated offset` family row with coverage for retained multi-source generated-offset metadata, normalized generated-offset topology, generated offset-face BRep snapshots, public offset and offset-basis payloads, Rust sampling parity, Rust-owned offset-face summary metrics, selectors, and document inspection.
 - Complete: closed the `simple shell/solid assembly` family row with coverage for retained compound/compsolid assembly metadata, normalized shell/solid assembly BRep/topology, public planar face queries, Rust-owned assembly summary metrics, selectors, document `compound`/`compsolid` construction, and history inspection.
-- Next: pick a simple face/wire assembly family row and add failing coverage for construction/source metadata, normalized assembly BRep/topology, public query behavior, summary metrics, selectors, and document inspection.
+- Complete: closed the `simple face/wire assembly` family row with coverage for retained compound assembly metadata, normalized face/wire/edge/vertex assembly BRep/topology, public plane/line/vertex queries, Rust-owned mixed boundary bbox summaries, selectors, document subshape extraction, document compound construction, and history inspection.
+- Next: pick a mixed analytic solid assembly family row and add failing coverage for construction/source metadata, normalized curved-face assembly BRep/topology, public analytic query behavior, summary metrics, selectors, and document inspection.
 - Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
 - Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
 - Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.

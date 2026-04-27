@@ -1771,15 +1771,15 @@ fn boundary_shape_bbox(
     vertices: &[BrepVertex],
     edges: &[BrepEdge],
 ) -> Option<([f64; 3], [f64; 3])> {
+    let vertex_bbox = bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect());
     analytic_edges_bbox(edges)
         .or_else(|| line_segment_points_bbox(vertices, edges))
-        .or_else(|| {
-            if edges.is_empty() {
-                bbox_from_points(vertices.iter().map(|vertex| vertex.position).collect())
-            } else {
-                None
-            }
+        .map(|edge_bbox| {
+            vertex_bbox
+                .map(|vertex_bbox| union_bbox(edge_bbox, vertex_bbox))
+                .unwrap_or(edge_bbox)
         })
+        .or(vertex_bbox)
 }
 
 fn faces_use_analytic_edge_bbox(edges: &[BrepEdge], faces: &[BrepFace]) -> bool {

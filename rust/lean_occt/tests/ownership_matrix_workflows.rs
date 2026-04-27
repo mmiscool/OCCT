@@ -3,12 +3,13 @@ mod support;
 use std::f64::consts::PI;
 
 use lean_occt::{
-    BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
-    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, ModelKernel,
-    OffsetFaceBboxSource, OffsetParams, OffsetSurfacePayload, OperationRecord, PlanePayload,
-    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
-    PrismParams, RevolutionParams, RevolutionSurfacePayload, Shape, ShapeKind, SphereParams,
-    SpherePayload, SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
+    BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeGeometry,
+    EdgeSelector, EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, LinePayload,
+    ModelDocument, ModelKernel, OffsetFaceBboxSource, OffsetParams, OffsetSurfacePayload,
+    OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface,
+    PortedSurface, PortedSweptSurface, PrismParams, RevolutionParams, RevolutionSurfacePayload,
+    Shape, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource,
+    SurfaceKind, TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,6 +24,7 @@ enum AuthoredFamily {
     DirectOffset,
     GeneratedOffset,
     SimpleShellSolidAssembly,
+    SimpleFaceWireAssembly,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,13 +118,21 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
         summary_metrics: true,
         selectors_documents: true,
     },
+    OwnershipRow {
+        family: AuthoredFamily::SimpleFaceWireAssembly,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
+    },
 ];
 
 fn require_complete_ownership_row(
     family: AuthoredFamily,
     label: &str,
 ) -> Result<&'static OwnershipRow, Box<dyn std::error::Error>> {
-    assert_eq!(OWNERSHIP_MATRIX.len(), 10);
+    assert_eq!(OWNERSHIP_MATRIX.len(), 11);
     let row = OWNERSHIP_MATRIX
         .iter()
         .find(|row| row.family == family)
@@ -173,6 +183,56 @@ fn assert_vec3_close(
             .into());
         }
     }
+    Ok(())
+}
+
+fn assert_edge_geometry_close(
+    lhs: EdgeGeometry,
+    rhs: EdgeGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind || lhs.is_closed != rhs.is_closed || lhs.is_periodic != rhs.is_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    for (field, lhs, rhs) in [
+        ("start_parameter", lhs.start_parameter, rhs.start_parameter),
+        ("end_parameter", lhs.end_parameter, rhs.end_parameter),
+        ("period", lhs.period, rhs.period),
+    ] {
+        if (lhs - rhs).abs() > tolerance {
+            return Err(std::io::Error::other(format!(
+                "{label} {field} mismatch: lhs={lhs} rhs={rhs} tol={tolerance}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_line_payload_close(
+    lhs: LinePayload,
+    rhs: LinePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.origin,
+        rhs.origin,
+        tolerance,
+        &format!("{label} origin"),
+    )?;
+    assert_vec3_close(
+        lhs.direction,
+        rhs.direction,
+        tolerance,
+        &format!("{label} direction"),
+    )?;
     Ok(())
 }
 
@@ -3444,6 +3504,9 @@ struct AssemblySummaryExpectation {
     solid_count: usize,
     shell_count: usize,
     face_count: usize,
+    wire_count: usize,
+    edge_count: usize,
+    vertex_count: usize,
     summary_bbox_source: SummaryBboxSource,
     summary_volume_source: SummaryVolumeSource,
 }
@@ -3493,7 +3556,11 @@ fn assert_simple_assembly_snapshot(
         .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust topology")))?;
     let brep = kernel.brep(shape)?;
     let summary = kernel.summarize(shape)?;
-    let report = kernel.inspect(shape)?;
+    let report = if expected.face_count > 0 {
+        Some(kernel.inspect(shape)?)
+    } else {
+        None
+    };
     let occt_summary = context.describe_shape_occt(shape)?;
 
     assert_eq!(summary.root_kind, expected.root_kind, "{label} root kind");
@@ -3521,9 +3588,31 @@ fn assert_simple_assembly_snapshot(
         summary.face_count, expected.face_count,
         "{label} face count"
     );
-    assert_eq!(report.summary.face_count, summary.face_count);
-    assert_eq!(report.summary.edge_count, summary.edge_count);
-    assert_eq!(report.topology.faces.len(), public_topology.faces.len());
+    assert_eq!(
+        summary.wire_count, expected.wire_count,
+        "{label} wire count"
+    );
+    assert_eq!(
+        summary.edge_count, expected.edge_count,
+        "{label} edge count"
+    );
+    assert_eq!(
+        summary.vertex_count, expected.vertex_count,
+        "{label} vertex count"
+    );
+    if let Some(report) = report {
+        assert_eq!(report.summary.face_count, summary.face_count);
+        assert_eq!(report.summary.wire_count, summary.wire_count);
+        assert_eq!(report.summary.edge_count, summary.edge_count);
+        assert_eq!(report.summary.vertex_count, summary.vertex_count);
+        assert_eq!(report.topology.faces.len(), public_topology.faces.len());
+        assert_eq!(report.topology.wires.len(), public_topology.wires.len());
+        assert_eq!(report.topology.edges.len(), public_topology.edges.len());
+        assert_eq!(
+            report.topology.vertex_positions.len(),
+            public_topology.vertex_positions.len()
+        );
+    }
 
     assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
     assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
@@ -3540,10 +3629,28 @@ fn assert_simple_assembly_snapshot(
         public_topology.vertex_positions.len()
     );
     assert_eq!(brep.faces.len(), expected.face_count);
-    assert_eq!(brep.edges.len(), summary.edge_count);
+    assert_eq!(brep.wires.len(), expected.wire_count);
+    assert_eq!(brep.edges.len(), expected.edge_count);
+    assert_eq!(
+        brep.topology.vertex_positions.len(),
+        expected.vertex_count,
+        "{label} BRep vertex count"
+    );
     assert_eq!(
         context.subshape_count(shape, ShapeKind::Face)?,
         expected.face_count
+    );
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Wire)?,
+        expected.wire_count
+    );
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Edge)?,
+        expected.edge_count
+    );
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Vertex)?,
+        expected.vertex_count
     );
     assert_eq!(
         context.subshape_count(shape, ShapeKind::Shell)?,
@@ -3643,6 +3750,70 @@ fn assert_simple_assembly_snapshot(
     Ok(())
 }
 
+fn assert_line_edge_queries(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    expected_edge_count: usize,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = kernel.context();
+    let edge_shapes = context.subshapes(shape, ShapeKind::Edge)?;
+    assert_eq!(
+        edge_shapes.len(),
+        expected_edge_count,
+        "{label} edge subshape count"
+    );
+
+    for (edge_index, edge_shape) in edge_shapes.iter().enumerate() {
+        let public_geometry = context.edge_geometry(edge_shape)?;
+        let oracle_geometry = context.edge_geometry_occt(edge_shape)?;
+        assert_eq!(
+            public_geometry.kind,
+            CurveKind::Line,
+            "{label} edge {edge_index} should remain linear"
+        );
+        assert_edge_geometry_close(
+            public_geometry,
+            oracle_geometry,
+            1.0e-8,
+            &format!("{label} edge {edge_index} public geometry vs OCCT oracle"),
+        )?;
+        assert_line_payload_close(
+            context.edge_line_payload(edge_shape)?,
+            context.edge_line_payload_occt(edge_shape)?,
+            1.0e-6,
+            &format!("{label} edge {edge_index} line payload vs OCCT oracle"),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn assert_vertex_queries(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    expected_vertex_count: usize,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = kernel.context();
+    let vertex_shapes = context.subshapes(shape, ShapeKind::Vertex)?;
+    assert_eq!(
+        vertex_shapes.len(),
+        expected_vertex_count,
+        "{label} vertex subshape count"
+    );
+    for (vertex_index, vertex_shape) in vertex_shapes.iter().enumerate() {
+        assert_vec3_close(
+            context.vertex_point(vertex_shape)?,
+            context.vertex_point_occt(vertex_shape)?,
+            1.0e-9,
+            &format!("{label} vertex {vertex_index} point vs OCCT oracle"),
+        )?;
+    }
+
+    Ok(())
+}
+
 #[test]
 fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3684,6 +3855,9 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             solid_count: 2,
             shell_count: 2,
             face_count: 12,
+            wire_count: 12,
+            edge_count: 24,
+            vertex_count: 16,
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::FaceContributions,
         },
@@ -3726,6 +3900,9 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             solid_count: 0,
             shell_count: 2,
             face_count: 12,
+            wire_count: 12,
+            edge_count: 24,
+            vertex_count: 16,
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
@@ -3750,6 +3927,9 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
             solid_count: 0,
             shell_count: 2,
             face_count: 12,
+            wire_count: 12,
+            edge_count: 24,
+            vertex_count: 16,
             summary_bbox_source: SummaryBboxSource::PortedBrep,
             summary_volume_source: SummaryVolumeSource::Zero,
         },
@@ -3842,6 +4022,396 @@ fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddBox + AddBox + CompSolid + Compound history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn simple_face_wire_assembly_authored_family_row_is_rust_owned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(
+        AuthoredFamily::SimpleFaceWireAssembly,
+        "simple face/wire assembly",
+    )?;
+
+    let kernel = ModelKernel::new()?;
+    let context = kernel.context();
+
+    let face_lhs = kernel.make_box(BoxParams {
+        origin: [-36.0, -8.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let face_rhs = kernel.make_box(BoxParams {
+        origin: [-18.0, -8.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let lhs_face = context.subshape(&face_lhs, ShapeKind::Face, 0)?;
+    let rhs_face = context.subshape(&face_rhs, ShapeKind::Face, 0)?;
+    let face_compound = kernel.make_compound(&[lhs_face, rhs_face])?;
+
+    assert_assembly_metadata(
+        &face_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Face, ShapeKind::Face],
+        "face compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &face_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Face,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 0,
+            face_count: 2,
+            wire_count: 2,
+            edge_count: 8,
+            vertex_count: 8,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "face compound assembly",
+    )?;
+    assert_line_edge_queries(&kernel, &face_compound, 8, "face compound assembly")?;
+    assert_vertex_queries(&kernel, &face_compound, 8, "face compound assembly")?;
+
+    let wire_lhs = kernel.make_box(BoxParams {
+        origin: [2.0, -8.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let wire_rhs = kernel.make_box(BoxParams {
+        origin: [20.0, -8.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let lhs_wire_face = context.subshape(&wire_lhs, ShapeKind::Face, 0)?;
+    let rhs_wire_face = context.subshape(&wire_rhs, ShapeKind::Face, 0)?;
+    let lhs_wire = context.subshape(&lhs_wire_face, ShapeKind::Wire, 0)?;
+    let rhs_wire = context.subshape(&rhs_wire_face, ShapeKind::Wire, 0)?;
+    let wire_compound = kernel.make_compound(&[lhs_wire, rhs_wire])?;
+
+    assert_assembly_metadata(
+        &wire_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Wire, ShapeKind::Wire],
+        "wire compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &wire_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Wire,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 0,
+            face_count: 0,
+            wire_count: 2,
+            edge_count: 8,
+            vertex_count: 8,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "wire compound assembly",
+    )?;
+    assert_line_edge_queries(&kernel, &wire_compound, 8, "wire compound assembly")?;
+    assert_vertex_queries(&kernel, &wire_compound, 8, "wire compound assembly")?;
+
+    let edge_lhs = kernel.make_box(BoxParams {
+        origin: [-36.0, 18.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let edge_rhs = kernel.make_box(BoxParams {
+        origin: [-18.0, 18.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let lhs_edge = context.subshape(&edge_lhs, ShapeKind::Edge, 0)?;
+    let rhs_edge = context.subshape(&edge_rhs, ShapeKind::Edge, 0)?;
+    let edge_compound = kernel.make_compound(&[lhs_edge, rhs_edge])?;
+
+    assert_assembly_metadata(
+        &edge_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Edge, ShapeKind::Edge],
+        "edge compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &edge_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Edge,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 0,
+            face_count: 0,
+            wire_count: 0,
+            edge_count: 2,
+            vertex_count: 4,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "edge compound assembly",
+    )?;
+    assert_line_edge_queries(&kernel, &edge_compound, 2, "edge compound assembly")?;
+    assert_vertex_queries(&kernel, &edge_compound, 4, "edge compound assembly")?;
+
+    let vertex_lhs = kernel.make_box(BoxParams {
+        origin: [2.0, 18.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let vertex_rhs = kernel.make_box(BoxParams {
+        origin: [20.0, 18.0, -4.0],
+        size: [8.0, 10.0, 6.0],
+    })?;
+    let lhs_vertex = context.subshape(&vertex_lhs, ShapeKind::Vertex, 0)?;
+    let rhs_vertex = context.subshape(&vertex_rhs, ShapeKind::Vertex, 0)?;
+    let vertex_compound = kernel.make_compound(&[lhs_vertex, rhs_vertex])?;
+
+    assert_assembly_metadata(
+        &vertex_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Vertex, ShapeKind::Vertex],
+        "vertex compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &vertex_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Vertex,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 0,
+            face_count: 0,
+            wire_count: 0,
+            edge_count: 0,
+            vertex_count: 2,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "vertex compound assembly",
+    )?;
+    assert_vertex_queries(&kernel, &vertex_compound, 2, "vertex compound assembly")?;
+
+    let mut document = ModelDocument::new()?;
+    let doc_face_params = BoxParams {
+        origin: [-48.0, 44.0, -3.0],
+        size: [7.0, 9.0, 5.0],
+    };
+    let doc_wire_params = BoxParams {
+        origin: [-28.0, 44.0, -3.0],
+        size: [7.0, 9.0, 5.0],
+    };
+    let doc_edge_params = BoxParams {
+        origin: [-8.0, 44.0, -3.0],
+        size: [7.0, 9.0, 5.0],
+    };
+    let doc_vertex_params = BoxParams {
+        origin: [12.0, 44.0, -3.0],
+        size: [7.0, 9.0, 5.0],
+    };
+    document.insert_box("doc_face_source", doc_face_params)?;
+    document.insert_box("doc_wire_source", doc_wire_params)?;
+    document.insert_box("doc_edge_source", doc_edge_params)?;
+    document.insert_box("doc_vertex_source", doc_vertex_params)?;
+    document.subshape("doc_face", "doc_face_source", ShapeKind::Face, 0)?;
+    document.subshape("doc_wire_face", "doc_wire_source", ShapeKind::Face, 0)?;
+    document.subshape("doc_wire", "doc_wire_face", ShapeKind::Wire, 0)?;
+    document.subshape("doc_edge", "doc_edge_source", ShapeKind::Edge, 0)?;
+    document.subshape("doc_vertex", "doc_vertex_source", ShapeKind::Vertex, 0)?;
+    document.compound(
+        "doc_face_wire_assembly",
+        &["doc_face", "doc_wire", "doc_edge", "doc_vertex"],
+    )?;
+
+    let doc_shape = document.shape("doc_face_wire_assembly")?;
+    assert_assembly_metadata(
+        doc_shape,
+        ShapeKind::Compound,
+        &[
+            ShapeKind::Face,
+            ShapeKind::Wire,
+            ShapeKind::Edge,
+            ShapeKind::Vertex,
+        ],
+        "document face/wire compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        document.kernel(),
+        doc_shape,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Face,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 0,
+            face_count: 1,
+            wire_count: 2,
+            edge_count: 9,
+            vertex_count: 11,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "document face/wire compound assembly",
+    )?;
+    assert_line_edge_queries(
+        document.kernel(),
+        doc_shape,
+        9,
+        "document face/wire compound assembly",
+    )?;
+    assert_vertex_queries(
+        document.kernel(),
+        doc_shape,
+        11,
+        "document face/wire compound assembly",
+    )?;
+
+    let doc_report = document.report("doc_face_wire_assembly")?;
+    let doc_faces = document.faces("doc_face_wire_assembly")?;
+    let doc_edges = document.edges("doc_face_wire_assembly")?;
+    let doc_plane_indices =
+        document.face_indices_by_surface_kind("doc_face_wire_assembly", SurfaceKind::Plane)?;
+    let doc_line_indices =
+        document.edge_indices_by_curve_kind("doc_face_wire_assembly", CurveKind::Line)?;
+    let selected_face = document.select_face(
+        "doc_face_wire_assembly",
+        FaceSelector::FirstBySurfaceKind(SurfaceKind::Plane),
+    )?;
+    let selected_edge = document.select_edge(
+        "doc_face_wire_assembly",
+        EdgeSelector::LongestByCurveKind(CurveKind::Line),
+    )?;
+
+    assert_eq!(doc_report.summary.root_kind, ShapeKind::Compound);
+    assert_eq!(doc_report.summary.primary_kind, ShapeKind::Face);
+    assert_eq!(doc_report.summary.face_count, 1);
+    assert_eq!(doc_report.summary.wire_count, 2);
+    assert_eq!(doc_report.summary.edge_count, 9);
+    assert_eq!(doc_report.summary.vertex_count, 11);
+    assert_eq!(doc_faces.len(), 1);
+    assert_eq!(doc_edges.len(), 9);
+    assert_eq!(doc_plane_indices.len(), 1);
+    assert_eq!(doc_line_indices.len(), 9);
+    assert_eq!(selected_face.geometry.kind, SurfaceKind::Plane);
+    assert_eq!(selected_edge.geometry.kind, CurveKind::Line);
+    assert!(selected_edge.length > 0.0);
+
+    match document.history() {
+        [OperationRecord::AddBox {
+            output: face_source,
+            params: face_params,
+        }, OperationRecord::AddBox {
+            output: wire_source,
+            params: wire_params,
+        }, OperationRecord::AddBox {
+            output: edge_source,
+            params: edge_params,
+        }, OperationRecord::AddBox {
+            output: vertex_source,
+            params: vertex_params,
+        }, OperationRecord::Subshape {
+            output: face_output,
+            input: face_input,
+            kind: face_kind,
+            index: face_index,
+        }, OperationRecord::Subshape {
+            output: wire_face_output,
+            input: wire_face_input,
+            kind: wire_face_kind,
+            index: wire_face_index,
+        }, OperationRecord::Subshape {
+            output: wire_output,
+            input: wire_input,
+            kind: wire_kind,
+            index: wire_index,
+        }, OperationRecord::Subshape {
+            output: edge_output,
+            input: edge_input,
+            kind: edge_kind,
+            index: edge_index,
+        }, OperationRecord::Subshape {
+            output: vertex_output,
+            input: vertex_input,
+            kind: vertex_kind,
+            index: vertex_index,
+        }, OperationRecord::Compound {
+            output: assembly_output,
+            inputs: assembly_inputs,
+        }] => {
+            assert_eq!(face_source, "doc_face_source");
+            assert_eq!(wire_source, "doc_wire_source");
+            assert_eq!(edge_source, "doc_edge_source");
+            assert_eq!(vertex_source, "doc_vertex_source");
+            assert_vec3_close(
+                face_params.origin,
+                doc_face_params.origin,
+                0.0,
+                "document face source history origin",
+            )?;
+            assert_vec3_close(
+                wire_params.origin,
+                doc_wire_params.origin,
+                0.0,
+                "document wire source history origin",
+            )?;
+            assert_vec3_close(
+                edge_params.origin,
+                doc_edge_params.origin,
+                0.0,
+                "document edge source history origin",
+            )?;
+            assert_vec3_close(
+                vertex_params.origin,
+                doc_vertex_params.origin,
+                0.0,
+                "document vertex source history origin",
+            )?;
+            assert_eq!(face_output, "doc_face");
+            assert_eq!(face_input, "doc_face_source");
+            assert_eq!(*face_kind, ShapeKind::Face);
+            assert_eq!(*face_index, 0);
+            assert_eq!(wire_face_output, "doc_wire_face");
+            assert_eq!(wire_face_input, "doc_wire_source");
+            assert_eq!(*wire_face_kind, ShapeKind::Face);
+            assert_eq!(*wire_face_index, 0);
+            assert_eq!(wire_output, "doc_wire");
+            assert_eq!(wire_input, "doc_wire_face");
+            assert_eq!(*wire_kind, ShapeKind::Wire);
+            assert_eq!(*wire_index, 0);
+            assert_eq!(edge_output, "doc_edge");
+            assert_eq!(edge_input, "doc_edge_source");
+            assert_eq!(*edge_kind, ShapeKind::Edge);
+            assert_eq!(*edge_index, 0);
+            assert_eq!(vertex_output, "doc_vertex");
+            assert_eq!(vertex_input, "doc_vertex_source");
+            assert_eq!(*vertex_kind, ShapeKind::Vertex);
+            assert_eq!(*vertex_index, 0);
+            assert_eq!(assembly_output, "doc_face_wire_assembly");
+            assert_eq!(
+                assembly_inputs,
+                &vec![
+                    "doc_face".to_owned(),
+                    "doc_wire".to_owned(),
+                    "doc_edge".to_owned(),
+                    "doc_vertex".to_owned()
+                ]
+            );
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddBox/AddBox/AddBox/AddBox/Subshape/Subshape/Subshape/Subshape/Subshape/Compound history entries, got {history:?}"
             ))
             .into());
         }

@@ -109,6 +109,12 @@ pub enum OperationRecord {
         output: String,
         inputs: Vec<String>,
     },
+    Subshape {
+        output: String,
+        input: String,
+        kind: ShapeKind,
+        index: usize,
+    },
     Fillet {
         output: String,
         input: String,
@@ -374,6 +380,29 @@ impl ModelDocument {
         self.store_shape(output.clone(), result);
         self.history
             .push(OperationRecord::CompSolid { output, inputs });
+        Ok(())
+    }
+
+    pub fn subshape(
+        &mut self,
+        output: impl Into<String>,
+        input: impl AsRef<str>,
+        kind: ShapeKind,
+        index: usize,
+    ) -> Result<(), Error> {
+        let output = output.into();
+        let input = input.as_ref().to_owned();
+        let shape = {
+            let input_shape = self.shape_ref(&input)?;
+            self.kernel.context().subshape(input_shape, kind, index)?
+        };
+        self.store_shape(output.clone(), shape);
+        self.history.push(OperationRecord::Subshape {
+            output,
+            input,
+            kind,
+            index,
+        });
         Ok(())
     }
 
