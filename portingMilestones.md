@@ -17,18 +17,16 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: M50 is complete on 2026-04-27. Supported single-face reconstructed and degenerate-cap bbox paths now use Rust-owned `BrepFace` geometry plus `PortedFaceSurface` descriptors through `ported_single_face_surface_bbox()`. Direct `face_surface_bbox_occt()`, `face_pcurve_control_polygon_bbox_occt()`, and `edge_curve_bbox_occt()` reads remain confined to explicitly unsupported/raw bbox helpers, and supported descriptor families fail closed instead of silently entering the raw path. Multi-face offset face/shell unions now consume ported descriptors and retained offset metadata before raw summaries, with shell source reporting entering metadata-backed rows even when root faces do not carry offset descriptors. Regression coverage adds the source guard and a behavioral single-sphere BRep bbox assertion; focused BRep workflows, full `brep_workflows`, full Rust crate tests, C ABI build, and diff checks are green.
+- Completed evidence: V1 `box/planar` row is complete on 2026-04-27. `ownership_matrix_workflows::box_planar_authored_family_row_is_rust_owned` adds the compact authored-family ownership matrix and proves the `box/planar` row through Rust construction metadata, normalized public topology and BRep snapshots, plane payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume/edge-length summaries, selectors, document descriptors, reports, and history inspection. Existing geometry/BRep/document/selector workflows, full Rust crate tests, and the C ABI build are green.
 - Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
-- Next bounded cut: start the `box/planar` authored family row. Add a compact ownership matrix in workflow coverage and make the box/planar row prove Rust-owned construction metadata, normalized BRep/snapshot data, summary bbox/area/edge-length behavior, public plane payload queries, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
+- Next bounded cut: start the `cylinder` authored family row. Extend the ownership matrix so the cylinder side/cap family proves Rust-owned construction metadata, normalized BRep/snapshot data, summary bbox/area/edge-length behavior, public cylinder and cap-plane payload queries, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows single_face_surface_bbox_keeps_supported_faces_on_rust_descriptors -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_face_free_shapes -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows box_planar_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_box_plane_faces_use_rust_analytic_seed_metadata -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_topology_for_simple_single_face_shapes -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_bounding_boxes -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_volume_for_offset_solids -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
   - `cmake --build build --target LeanOcctCAPI`
@@ -44,14 +42,15 @@ After M50 is completed, do not choose the next task by scanning for the nearest 
 
 Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
 
-Status: active after M50. The first row should target the Rust-authored `box/planar` family because its construction metadata, planar face payloads, topology snapshots, summaries, selectors, and document workflows are already exercised enough to support a vertical ownership check.
+Status: active. The Rust-authored `box/planar` row is complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the box/planar behavioral row proves construction metadata, normalized topology/BRep, public plane payload queries, exact summaries, selectors, and document inspection. The next row should target the Rust-authored `cylinder` family, including the cylindrical side face and planar caps.
 
 Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
 
 Bounded tasks:
 
-- Add a compact ownership matrix in code or tests that names supported authored families and expected Rust-owned behaviors.
-- Pick one family row and add failing coverage for every behavior that should be Rust-owned in that row.
+- Complete: added a compact ownership matrix in `rust/lean_occt/tests/ownership_matrix_workflows.rs` that names supported authored families and expected Rust-owned behaviors.
+- Complete: closed the `box/planar` family row with coverage for every behavior that should be Rust-owned in that row.
+- Next: pick the `cylinder` family row and add failing coverage for construction metadata, side/cap normalized BRep/topology, public cylinder and cap-plane payloads, exact summary metrics, selectors, and document inspection.
 - Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
 - Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
 - Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.
