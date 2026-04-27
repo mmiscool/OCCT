@@ -11,14 +11,14 @@ Current milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
 
 ## Last Completed Cut
 
-V1 `sphere` row is complete on 2026-04-27. `ownership_matrix_workflows::sphere_authored_family_row_is_rust_owned` promotes the sphere row in the authored-family ownership matrix and proves the single spherical face family through Rust construction metadata, normalized boundary-free topology/BRep snapshots, public sphere payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume and zero-edge-length summaries, selectors, document descriptors, reports, and history inspection. The previous `box/planar`, `cylinder`, and `cone` rows remain green.
+V1 `torus` row is complete on 2026-04-27. `ownership_matrix_workflows::torus_authored_family_row_is_rust_owned` promotes the torus row in the authored-family ownership matrix and proves the single toroidal face family through Rust construction metadata, normalized boundary-free periodic topology/BRep snapshots, public torus payload queries with OCCT only as an explicit oracle, exact bbox/surface-area/volume and zero-edge-length summaries, selectors, document descriptors, reports, and history inspection. The previous `box/planar`, `cylinder`, `cone`, and `sphere` rows remain green.
 
-V1 sphere verification:
+V1 torus verification:
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows sphere_authored_family_row_is_rust_owned -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows torus_authored_family_row_is_rust_owned -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_sphere_faces_use_rust_analytic_seed_metadata -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_torus_faces_use_rust_analytic_seed_metadata -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
@@ -29,22 +29,23 @@ V1 sphere verification:
 
 ## Active V1 Cut
 
-Start the `torus` authored family row. The row should prove the supported torus family is Rust-owned across construction metadata, normalized snapshot/BRep data, public queries, summary metrics, selectors, documents, tests, and docs.
+Start the `prism/extrusion` authored family row. The row should prove the supported prism/extrusion family is Rust-owned across construction metadata, normalized snapshot/BRep data, public queries, summary metrics, selectors, documents, tests, and docs.
 
-Bounded V1 torus cut:
+Bounded V1 prism/extrusion cut:
 
-1. Promote the `torus` row in `ownership_matrix_workflows` from pending to tested behavior, keeping the existing `box/planar`, `cylinder`, `cone`, and `sphere` rows green.
-2. Make the torus row assert Rust-owned construction metadata for the toroidal face, torus payload descriptors, normalized BRep/topology snapshots, exact bbox/surface-area/volume metrics, public torus payload queries, selectors, and document inspection.
+1. Promote the `prism/extrusion` row in `ownership_matrix_workflows` from pending to tested behavior, keeping the existing `box/planar`, `cylinder`, `cone`, `sphere`, and `torus` rows green.
+2. Make the prism/extrusion row assert Rust-owned construction metadata for generated extrusion faces, extrusion payload descriptors, normalized BRep/topology snapshots, exact or explicitly Rust-owned summary metrics, public extrusion payload queries, selectors, and document inspection.
 3. Fill any missing metadata/snapshot/BRep/query paths needed to make that row green without automatic OCCT query fallback.
 4. Keep explicit OCCT raw APIs only as oracle or unsupported/imported paths.
-5. Update `portingMilestones.md` and this file with the next family row after the `torus` row is green.
+5. Update `portingMilestones.md` and this file with the next family row after the `prism/extrusion` row is green.
 
-Verification for the V1 torus row:
+Verification for the V1 prism/extrusion row:
 
 - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows torus_authored_family_row_is_rust_owned -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_torus_faces_use_rust_analytic_seed_metadata -- --nocapture`
-- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_exact_primitive_surface_and_volume_formulas -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows prism_extrusion_authored_family_row_is_rust_owned -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_swept_surface_sampling_matches_occt -- --nocapture`
+- `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
 - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
 - `cargo check --manifest-path rust/lean_occt/Cargo.toml`

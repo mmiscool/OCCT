@@ -6,7 +6,7 @@ use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
     FaceSelector, ModelDocument, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface,
     PortedSurface, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource,
-    SurfaceKind,
+    SurfaceKind, TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,11 +67,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::Torus,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::PrismExtrusion,
@@ -307,6 +307,46 @@ fn assert_sphere_payload_close(
         rhs.radius,
         tolerance,
         &format!("{label} radius"),
+    )?;
+    Ok(())
+}
+
+fn assert_torus_payload_close(
+    lhs: TorusPayload,
+    rhs: TorusPayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(lhs.axis, rhs.axis, tolerance, &format!("{label} axis"))?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.major_radius,
+        rhs.major_radius,
+        tolerance,
+        &format!("{label} major_radius"),
+    )?;
+    assert_scalar_close(
+        lhs.minor_radius,
+        rhs.minor_radius,
+        tolerance,
+        &format!("{label} minor_radius"),
     )?;
     Ok(())
 }
@@ -1566,6 +1606,268 @@ fn sphere_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::
         history => {
             return Err(std::io::Error::other(format!(
                 "expected single AddSphere history entry, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn torus_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::Torus, "torus")?;
+
+    let params = TorusParams {
+        origin: [-5.0, 8.0, 2.5],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 11.0,
+        minor_radius: 3.0,
+    };
+    let radial_extent = params.major_radius + params.minor_radius;
+    let expected_bbox_min = [
+        params.origin[0] - radial_extent,
+        params.origin[1] - radial_extent,
+        params.origin[2] - params.minor_radius,
+    ];
+    let expected_bbox_max = [
+        params.origin[0] + radial_extent,
+        params.origin[1] + radial_extent,
+        params.origin[2] + params.minor_radius,
+    ];
+    let expected_surface_area = 4.0 * PI * PI * params.major_radius * params.minor_radius;
+    let expected_volume =
+        2.0 * PI * PI * params.major_radius * params.minor_radius * params.minor_radius;
+
+    let mut document = ModelDocument::new()?;
+    document.insert_torus("torus", params)?;
+
+    let torus_shape = document.shape("torus")?;
+    assert_eq!(torus_shape.rust_multi_face_analytic_source_count(), Some(1));
+    let context = document.kernel().context();
+    let face_shapes = context.subshapes(torus_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(torus_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 1);
+    assert_eq!(edge_shapes.len(), 0);
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_analytic_surface_face_metadata()),
+        "all authored torus faces should retain Rust analytic metadata"
+    );
+
+    let ported_topology = context
+        .ported_topology(torus_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned torus topology snapshot"))?;
+    let public_topology = context.topology(torus_shape)?;
+    let brep = document.brep("torus")?;
+
+    assert_eq!(ported_topology.faces.len(), 1);
+    assert_eq!(ported_topology.wires.len(), 0);
+    assert_eq!(ported_topology.edges.len(), 0);
+    assert_eq!(ported_topology.vertex_positions.len(), 0);
+    assert_eq!(ported_topology.wire_edge_indices.len(), 0);
+    assert_eq!(ported_topology.face_wire_indices.len(), 0);
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), 1);
+    assert_eq!(brep.wires.len(), 0);
+    assert_eq!(brep.edges.len(), 0);
+    assert_eq!(brep.vertices.len(), 0);
+    assert!(brep.faces.iter().all(|face| {
+        face.geometry.kind == SurfaceKind::Torus
+            && matches!(
+                face.ported_face_surface,
+                Some(PortedFaceSurface::Analytic(PortedSurface::Torus(_)))
+            )
+    }));
+    assert!(brep.edges.is_empty());
+
+    let torus_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Torus)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored torus face"))?;
+
+    let public_torus_payload = context.face_torus_payload(torus_face)?;
+    let descriptor = context
+        .ported_face_surface_descriptor(torus_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust torus face descriptor"))?;
+    let descriptor_payload = match descriptor {
+        PortedFaceSurface::Analytic(PortedSurface::Torus(payload)) => payload,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust torus descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_torus_payload_close(
+        public_torus_payload,
+        descriptor_payload,
+        1.0e-12,
+        "public torus payload vs Rust descriptor",
+    )?;
+    let occt_torus_payload = context.face_torus_payload_occt(torus_face)?;
+    assert_torus_payload_close(
+        public_torus_payload,
+        occt_torus_payload,
+        1.0e-6,
+        "Rust torus payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_sphere_payload(torus_face).is_err(),
+        "ported torus faces should reject mismatched sphere payload queries"
+    );
+
+    let summary = document.summary("torus")?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        expected_surface_area,
+        1.0e-8,
+        "document torus surface area",
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        expected_volume,
+        1.0e-8,
+        "document torus volume",
+    )?;
+    assert_scalar_close(
+        summary.linear_length,
+        0.0,
+        1.0e-12,
+        "document torus edge length",
+    )?;
+    assert_scalar_close(
+        brep.summary.surface_area,
+        expected_surface_area,
+        1.0e-8,
+        "BRep torus surface area",
+    )?;
+    assert_scalar_close(
+        brep.summary.volume,
+        expected_volume,
+        1.0e-8,
+        "BRep torus volume",
+    )?;
+    assert_scalar_close(
+        unique_edge_length,
+        0.0,
+        1.0e-12,
+        "unique BRep torus edge length",
+    )?;
+    let brep_torus_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Torus)
+        .ok_or_else(|| std::io::Error::other("expected BRep torus face"))?;
+    assert_scalar_close(
+        brep_torus_face.area,
+        expected_surface_area,
+        1.0e-8,
+        "BRep torus face area",
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        expected_bbox_min,
+        1.0e-12,
+        "torus bbox min",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        expected_bbox_max,
+        1.0e-12,
+        "torus bbox max",
+    )?;
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::ExactPrimitive
+    );
+    assert_eq!(
+        brep.summary_volume_source(),
+        SummaryVolumeSource::ExactPrimitive
+    );
+
+    let selected_torus = document.select_face(
+        "torus",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Torus),
+    )?;
+    let faces = document.faces("torus")?;
+    let edges = document.edges("torus")?;
+    let report = document.report("torus")?;
+
+    assert_eq!(faces.len(), 1);
+    assert_eq!(edges.len(), 0);
+    assert_eq!(
+        document
+            .face_indices_by_surface_kind("torus", SurfaceKind::Torus)?
+            .len(),
+        1
+    );
+    assert!(document
+        .face_indices_by_surface_kind("torus", SurfaceKind::Plane)?
+        .is_empty());
+    assert!(document
+        .edge_indices_by_curve_kind("torus", CurveKind::Line)?
+        .is_empty());
+    assert!(document
+        .edge_indices_by_curve_kind("torus", CurveKind::Circle)?
+        .is_empty());
+    assert_eq!(selected_torus.geometry.kind, SurfaceKind::Torus);
+    assert_scalar_close(
+        selected_torus.area,
+        expected_surface_area,
+        1.0e-8,
+        "selected torus face area",
+    )?;
+    assert!(
+        document
+            .select_edge("torus", EdgeSelector::LongestByCurveKind(CurveKind::Line),)
+            .is_err(),
+        "edge-free torus should reject line edge selectors"
+    );
+    assert!(
+        document
+            .select_edge(
+                "torus",
+                EdgeSelector::ShortestByCurveKind(CurveKind::Circle),
+            )
+            .is_err(),
+        "edge-free torus should reject circle edge selectors"
+    );
+    assert_eq!(report.summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(report.summary.face_count, 1);
+    assert_eq!(report.summary.edge_count, 0);
+    assert_eq!(report.summary.vertex_count, 0);
+    match document.history() {
+        [OperationRecord::AddTorus { output, params }] => {
+            assert_eq!(output, "torus");
+            assert_vec3_close(params.origin, [-5.0, 8.0, 2.5], 0.0, "history origin")?;
+            assert_vec3_close(params.axis, [0.0, 0.0, 1.0], 0.0, "history axis")?;
+            assert_vec3_close(
+                params.x_direction,
+                [1.0, 0.0, 0.0],
+                0.0,
+                "history x_direction",
+            )?;
+            assert_scalar_close(params.major_radius, 11.0, 0.0, "history major_radius")?;
+            assert_scalar_close(params.minor_radius, 3.0, 0.0, "history minor_radius")?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected single AddTorus history entry, got {history:?}"
             ))
             .into());
         }

@@ -43,7 +43,7 @@ struct TopologySnapshotRootFields {
     wire_vertex_indices: Vec<usize>,
 }
 
-enum BoundaryFreeSphereSolidTopology {
+enum BoundaryFreeAnalyticSolidTopology {
     Supported(TopologySnapshotRootFields),
     Unsupported {
         solid_shape: Shape,
@@ -785,14 +785,14 @@ fn load_root_solid_topology_snapshot(
     if face_shapes.is_empty() {
         return Ok(None);
     }
-    let (solid_shape, face_shapes) = match load_boundary_free_sphere_solid_topology_snapshot(
+    let (solid_shape, face_shapes) = match load_boundary_free_analytic_solid_topology_snapshot(
         context,
         shape,
         solid_shape,
         face_shapes,
     )? {
-        BoundaryFreeSphereSolidTopology::Supported(snapshot) => return Ok(Some(snapshot)),
-        BoundaryFreeSphereSolidTopology::Unsupported {
+        BoundaryFreeAnalyticSolidTopology::Supported(snapshot) => return Ok(Some(snapshot)),
+        BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         } => (solid_shape, face_shapes),
@@ -929,38 +929,38 @@ fn load_root_solid_topology_snapshot(
     }))
 }
 
-fn load_boundary_free_sphere_solid_topology_snapshot(
+fn load_boundary_free_analytic_solid_topology_snapshot(
     context: &Context,
     shape: &Shape,
     solid_shape: Shape,
     face_shapes: Vec<Shape>,
-) -> Result<BoundaryFreeSphereSolidTopology, Error> {
+) -> Result<BoundaryFreeAnalyticSolidTopology, Error> {
     let Some([result_metadata]) = shape.multi_face_analytic_result_metadata() else {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     };
-    if result_metadata.geometry_seed.kind != SurfaceKind::Sphere {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+    if !supports_boundary_free_single_face_analytic_kind(result_metadata.geometry_seed.kind) {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     }
     let [face_shape] = face_shapes.as_slice() else {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     };
     let Some(face_metadata) = face_shape.analytic_surface_face_metadata() else {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     };
-    if face_metadata.geometry_seed.kind != SurfaceKind::Sphere {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+    if face_metadata.geometry_seed.kind != result_metadata.geometry_seed.kind {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
@@ -968,13 +968,13 @@ fn load_boundary_free_sphere_solid_topology_snapshot(
     let Some(geometry) =
         context.ported_analytic_face_geometry_from_metadata(face_shape, face_metadata)?
     else {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     };
-    if geometry.kind != SurfaceKind::Sphere {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+    if geometry.kind != result_metadata.geometry_seed.kind {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
@@ -983,41 +983,41 @@ fn load_boundary_free_sphere_solid_topology_snapshot(
     let mut shell_shapes = match context.root_solid_shell_shapes_occt(&solid_shape) {
         Ok(shell_shapes) => shell_shapes,
         Err(_) => {
-            return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+            return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
                 solid_shape,
                 face_shapes,
             });
         }
     };
     if shell_shapes.len() != 1 {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     }
     let shell_shape = shell_shapes
         .pop()
-        .expect("length was checked before popping single sphere shell")
+        .expect("length was checked before popping single boundary-free analytic shell")
         .with_multi_face_analytic_result_metadata(vec![*result_metadata]);
     let shell_face_shapes = match context.root_shell_face_shapes_occt(&shell_shape) {
         Ok(shell_face_shapes) => {
             attach_offset_result_face_metadata(context, shape, shell_face_shapes)?
         }
         Err(_) => {
-            return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+            return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
                 solid_shape,
                 face_shapes,
             });
         }
     };
     if shell_face_shapes.len() != 1 {
-        return Ok(BoundaryFreeSphereSolidTopology::Unsupported {
+        return Ok(BoundaryFreeAnalyticSolidTopology::Unsupported {
             solid_shape,
             face_shapes,
         });
     }
 
-    Ok(BoundaryFreeSphereSolidTopology::Supported(
+    Ok(BoundaryFreeAnalyticSolidTopology::Supported(
         TopologySnapshotRootFields {
             vertex_shapes: Vec::new(),
             vertex_positions: Vec::new(),
@@ -1045,6 +1045,10 @@ fn load_boundary_free_sphere_solid_topology_snapshot(
             wire_vertex_indices: Vec::new(),
         },
     ))
+}
+
+fn supports_boundary_free_single_face_analytic_kind(kind: SurfaceKind) -> bool {
+    matches!(kind, SurfaceKind::Sphere | SurfaceKind::Torus)
 }
 
 fn root_assembly_topology_inventory_required(
