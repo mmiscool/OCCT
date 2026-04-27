@@ -17,22 +17,21 @@ This file is the control plane for the Codex loop. The goal is to move tested, u
 
 ## Turn Status
 
-- Completed evidence: V1 `direct offset` row is complete on 2026-04-27. `ownership_matrix_workflows::direct_offset_authored_family_row_is_rust_owned` promotes the direct-offset row in the authored-family ownership matrix and proves a document-selected box face direct offset through Rust construction metadata, retained offset and basis descriptors, boundary-free normalized topology and BRep snapshots, public offset payload and offset-basis payload queries with OCCT only as an explicit oracle, Rust normalized face sampling, ported bbox/area/edge-length summaries, explicit zero volume for the non-solid face result, selectors, document descriptors, and history inspection. The prior `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, and `revolution` rows remain green, and the existing offset geometry/BRep/document/selector workflows pass.
+- Completed evidence: V1 `generated offset` row is complete on 2026-04-27. `ownership_matrix_workflows::generated_offset_authored_family_row_is_rust_owned` promotes the generated-offset row in the authored-family ownership matrix and proves a multi-source swept generated offset through retained Rust source-face metadata, generated offset-face metadata, normalized root topology, generated offset face BRep snapshots, public offset payload and offset-basis payload queries, Rust normalized sampling with OCCT only as explicit oracle, Rust-owned face summary area/edge-length/bbox data, and document `Offset` construction with selectors, descriptors, report counts, and history inspection. The prior `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, and `direct offset` rows remain green, and the existing offset geometry/BRep/document/selector workflows pass.
 - Active milestone: `V1. Authored Analytic Shape Family Ownership Matrix`.
-- Next bounded cut: start the `generated offset` authored family row. Extend the ownership matrix so supported Rust-authored generated offset output proves construction metadata, normalized BRep/snapshot data, public offset and basis payload queries, summary behavior, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
+- Next bounded cut: start a `simple shell/solid assembly` authored family row for shells and solids assembled from the completed analytic, swept, and offset families. Extend the ownership matrix so assembled supported outputs prove construction metadata or retained assembly/source metadata, normalized topology/BRep data, public queries, summary behavior, selectors, and document inspection without automatic OCCT query fallback. Keep raw OCCT APIs available only as explicit oracle/unsupported/imported calls.
 - Verification:
   - `cargo fmt --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows direct_offset_authored_family_row_is_rust_owned -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows generated_offset_authored_family_row_is_rust_owned -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ownership_matrix_workflows -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_swept_and_offset_payload_queries_match_occt -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows public_offset_basis_queries_match_occt -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test ported_geometry_workflows ported_offset_surface_sampling_matches_occt -- --nocapture`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows supported_brep_materialization_requires_ported_topology -- --nocapture`
+  - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_maps_multi_source_swept_offsets_in_rust -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test brep_workflows ported_brep_uses_rust_owned_area_for_offset_faces -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test document_workflows document_runs_analytic_shape_pipeline -- --nocapture`
   - `cargo test --manifest-path rust/lean_occt/Cargo.toml --test selector_workflows selectors_choose_expected_faces_and_edges -- --nocapture`
   - `cargo check --manifest-path rust/lean_occt/Cargo.toml`
-  - `cargo test --manifest-path rust/lean_occt/Cargo.toml`
   - `cmake --build build --target LeanOcctCAPI`
   - `git diff --check`
 
@@ -46,7 +45,7 @@ After M50 is completed, do not choose the next task by scanning for the nearest 
 
 Outcome: the project has an explicit tested matrix for Rust-authored supported shape families showing which user-visible behaviors are Rust-owned and which remain raw/unsupported/imported.
 
-Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, and `direct offset` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, summaries, selectors, and document inspection. The next row should target the Rust-authored `generated offset` family, including retained generated-offset construction metadata, basis descriptors, and normalized offset-face topology.
+Status: active. The Rust-authored `box/planar`, `cylinder`, `cone`, `sphere`, `torus`, `prism/extrusion`, `revolution`, `direct offset`, and `generated offset` rows are complete on 2026-04-27: the compact matrix names box/planar, cylinder, cone, sphere, torus, prism/extrusion, revolution, direct offset, and generated offset, and the completed behavioral rows prove construction metadata, normalized topology/BRep, public payload queries, summaries, selectors, and document inspection. The next row should target simple shell/solid assembly from completed analytic, swept, and offset families, including retained assembly/source metadata, normalized shell/solid topology, Rust BRep summaries, and document/selector inspection.
 
 Definition of done: at least one authored family row, starting with the smallest useful family such as box/planar or sphere/torus single-face extraction, has regression coverage proving Rust-owned construction metadata or normalized snapshot data drives BRep materialization, summary bbox/area/edge length, public queries, selectors, and document inspection without automatic OCCT query fallback. Raw OCCT APIs remain available only as explicit oracle/unsupported paths.
 
@@ -61,7 +60,8 @@ Bounded tasks:
 - Complete: closed the `prism/extrusion` family row with coverage for retained prism metadata, normalized extrusion face BRep/topology, public extrusion payloads, Rust sampling parity, ported area/bbox/edge-length metrics, zero non-solid volume, selectors, and document inspection.
 - Complete: closed the `revolution` family row with coverage for retained revolution metadata, normalized revolution face BRep/topology, public revolution payloads, Rust sampling parity, ported area/bbox/edge-length metrics, zero non-solid volume, selectors, and document inspection.
 - Complete: closed the `direct offset` family row with coverage for retained direct-offset metadata, normalized boundary-free offset face BRep/topology, public offset and offset-basis payloads, Rust sampling parity, ported area/bbox/edge-length metrics, zero non-solid volume, selectors, and document inspection.
-- Next: pick the `generated offset` family row and add failing coverage for construction metadata, normalized generated offset BRep/topology, public offset and offset-basis payloads, summary metrics, selectors, and document inspection.
+- Complete: closed the `generated offset` family row with coverage for retained multi-source generated-offset metadata, normalized generated-offset topology, generated offset-face BRep snapshots, public offset and offset-basis payloads, Rust sampling parity, Rust-owned offset-face summary metrics, selectors, and document inspection.
+- Next: pick a simple shell/solid assembly family row and add failing coverage for construction/source metadata, normalized assembly BRep/topology, public query behavior, summary metrics, selectors, and document inspection.
 - Fill missing metadata/snapshot fields and BRep/query call sites until that row is green.
 - Replace source-grep-only assertions with behavioral assertions wherever practical; keep source guards only for high-risk fallback regressions.
 - Update this control file and `nextStep.md` with the next family row instead of the next isolated fallback call.

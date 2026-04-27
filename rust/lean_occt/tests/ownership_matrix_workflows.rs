@@ -4,11 +4,11 @@ use std::f64::consts::PI;
 
 use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
-    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, OffsetFaceBboxSource,
-    OffsetParams, OffsetSurfacePayload, OperationRecord, PlanePayload, PortedCurve,
-    PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface, PrismParams,
-    RevolutionParams, RevolutionSurfacePayload, ShapeKind, SphereParams, SpherePayload,
-    SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
+    EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, ModelKernel,
+    OffsetFaceBboxSource, OffsetParams, OffsetSurfacePayload, OperationRecord, PlanePayload,
+    PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
+    PrismParams, RevolutionParams, RevolutionSurfacePayload, ShapeKind, SphereParams,
+    SpherePayload, SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,11 +101,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::GeneratedOffset,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
 ];
 
@@ -419,6 +419,37 @@ fn assert_offset_payload_close(
         lhs.basis_surface_kind, rhs.basis_surface_kind,
         "{label} basis_surface_kind mismatch"
     );
+    Ok(())
+}
+
+fn assert_face_geometry_close(
+    lhs: lean_occt::FaceGeometry,
+    rhs: lean_occt::FaceGeometry,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if lhs.kind != rhs.kind
+        || lhs.is_u_closed != rhs.is_u_closed
+        || lhs.is_v_closed != rhs.is_v_closed
+        || lhs.is_u_periodic != rhs.is_u_periodic
+        || lhs.is_v_periodic != rhs.is_v_periodic
+    {
+        return Err(
+            std::io::Error::other(format!("{label} mismatch: lhs={lhs:?} rhs={rhs:?}")).into(),
+        );
+    }
+
+    for (field, lhs, rhs) in [
+        ("u_min", lhs.u_min, rhs.u_min),
+        ("u_max", lhs.u_max, rhs.u_max),
+        ("v_min", lhs.v_min, rhs.v_min),
+        ("v_max", lhs.v_max, rhs.v_max),
+        ("u_period", lhs.u_period, rhs.u_period),
+        ("v_period", lhs.v_period, rhs.v_period),
+    ] {
+        assert_scalar_close(lhs, rhs, tolerance, &format!("{label} {field}"))?;
+    }
+
     Ok(())
 }
 
@@ -2930,6 +2961,463 @@ fn direct_offset_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddBox + DirectOffsetSurfaceFace history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn generated_offset_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::GeneratedOffset, "generated offset")?;
+
+    let profile_params = EllipseEdgeParams {
+        origin: [30.0, 0.0, 0.0],
+        axis: [0.0, 1.0, 0.0],
+        x_direction: [1.0, 0.0, 0.0],
+        major_radius: 10.0,
+        minor_radius: 6.0,
+    };
+    let prism_params = PrismParams {
+        direction: [0.0, 24.0, 0.0],
+    };
+    let revolution_params = RevolutionParams {
+        origin: [0.0, 0.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        angle_radians: PI,
+    };
+    let offset_params = OffsetParams {
+        offset: 2.5,
+        tolerance: 1.0e-4,
+    };
+
+    let kernel = ModelKernel::new()?;
+    let context = kernel.context();
+    let profile = kernel.make_ellipse_edge(profile_params)?;
+    let prism = kernel.make_prism(&profile, prism_params)?;
+    let extrusion_face = context
+        .subshapes(&prism, ShapeKind::Face)?
+        .into_iter()
+        .find_map(|face_shape| match context.face_geometry(&face_shape) {
+            Ok(geometry) if geometry.kind == SurfaceKind::Extrusion => Some(Ok(face_shape)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .transpose()?
+        .ok_or_else(|| std::io::Error::other("expected prism extrusion face"))?;
+    let revolved = kernel.make_revolution(&extrusion_face, revolution_params)?;
+    let offset_shape = kernel.make_offset(&revolved, offset_params)?;
+
+    assert_eq!(
+        offset_shape.rust_multi_face_offset_source_count(),
+        Some(4),
+        "generated offset root should retain the Rust source-face metadata inventory"
+    );
+    assert!(
+        !offset_shape.has_rust_offset_surface_face_metadata(),
+        "generated multi-face offset roots should not masquerade as direct offset faces"
+    );
+
+    let face_shapes = context.subshapes(&offset_shape, ShapeKind::Face)?;
+    let shell_shapes = context.subshapes(&offset_shape, ShapeKind::Shell)?;
+    let offset_face_shapes = face_shapes
+        .iter()
+        .filter_map(|face_shape| match context.face_geometry(face_shape) {
+            Ok(geometry) if geometry.kind == SurfaceKind::Offset => Some(Ok(face_shape)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        offset_face_shapes.len(),
+        4,
+        "generated offset should expose the mapped OFFSET_SURFACE faces"
+    );
+    assert!(
+        offset_face_shapes
+            .iter()
+            .all(|face| face.has_rust_offset_surface_face_metadata()),
+        "generated offset faces should carry resolved Rust offset metadata"
+    );
+    for (shell_index, shell_shape) in shell_shapes.iter().enumerate() {
+        assert_eq!(
+            shell_shape.rust_multi_face_offset_source_count(),
+            Some(4),
+            "generated offset shell {shell_index} should retain the multi-face metadata inventory"
+        );
+    }
+
+    let ported_topology = context
+        .ported_topology(&offset_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned generated offset topology"))?;
+    let public_topology = context.topology(&offset_shape)?;
+
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+
+    let mut saw_revolution_basis = false;
+    let mut saw_extrusion_basis = false;
+    for (face_index, face_shape) in offset_face_shapes.iter().enumerate() {
+        let public_geometry = context.face_geometry(face_shape)?;
+        let ported_geometry = context.ported_face_geometry(face_shape)?.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "generated offset face {face_index} should expose Rust geometry"
+            ))
+        })?;
+        assert_eq!(public_geometry.kind, SurfaceKind::Offset);
+        assert_face_geometry_close(
+            public_geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("generated offset face {face_index} public vs Rust geometry"),
+        )?;
+
+        let descriptor = match context.ported_face_surface_descriptor(face_shape)? {
+            Some(PortedFaceSurface::Offset(surface)) => surface,
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "generated offset face {face_index} did not expose a Rust offset descriptor: {other:?}"
+                ))
+                .into());
+            }
+        };
+        let public_payload = context.face_offset_payload(face_shape)?;
+        assert_offset_payload_close(
+            public_payload,
+            descriptor.payload,
+            1.0e-12,
+            &format!("generated offset face {face_index} public payload vs Rust descriptor"),
+        )?;
+        let occt_payload = context.face_offset_payload_occt(face_shape)?;
+        assert_eq!(
+            public_payload.basis_surface_kind, occt_payload.basis_surface_kind,
+            "generated offset face {face_index} basis kind drifted from OCCT oracle"
+        );
+        assert_scalar_close(
+            public_payload.offset_value.abs(),
+            occt_payload.offset_value.abs(),
+            1.0e-9,
+            &format!("generated offset face {face_index} offset magnitude vs OCCT oracle"),
+        )?;
+        assert_scalar_close(
+            public_payload.offset_value.abs(),
+            offset_params.offset,
+            1.0e-9,
+            &format!("generated offset face {face_index} offset magnitude"),
+        )?;
+        assert_eq!(
+            context.face_offset_basis_geometry(face_shape)?.kind,
+            public_payload.basis_surface_kind,
+            "generated offset face {face_index} public basis geometry kind drifted"
+        );
+
+        match descriptor.basis {
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Revolution {
+                payload,
+                basis_curve,
+                basis_geometry,
+            }) => {
+                saw_revolution_basis = true;
+                assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+                assert_eq!(basis_geometry.kind, CurveKind::Ellipse);
+                assert_revolution_payload_close(
+                    context.face_offset_basis_revolution_payload(face_shape)?,
+                    payload,
+                    1.0e-12,
+                    &format!("generated offset face {face_index} revolution basis payload"),
+                )?;
+                assert_revolution_payload_close(
+                    context.face_offset_basis_revolution_payload(face_shape)?,
+                    context.face_offset_basis_revolution_payload_occt(face_shape)?,
+                    1.0e-12,
+                    &format!("generated offset face {face_index} revolution basis vs OCCT oracle"),
+                )?;
+                assert!(
+                    context
+                        .face_offset_basis_extrusion_payload(face_shape)
+                        .is_err(),
+                    "generated revolution-offset faces should reject extrusion basis payloads"
+                );
+            }
+            PortedOffsetBasisSurface::Swept(PortedSweptSurface::Extrusion {
+                payload,
+                basis_curve,
+                basis_geometry,
+            }) => {
+                saw_extrusion_basis = true;
+                assert!(matches!(basis_curve, PortedCurve::Ellipse(_)));
+                assert_eq!(basis_geometry.kind, CurveKind::Ellipse);
+                assert_extrusion_payload_close(
+                    context.face_offset_basis_extrusion_payload(face_shape)?,
+                    payload,
+                    1.0e-12,
+                    &format!("generated offset face {face_index} extrusion basis payload"),
+                )?;
+                assert_extrusion_payload_close(
+                    context.face_offset_basis_extrusion_payload(face_shape)?,
+                    context.face_offset_basis_extrusion_payload_occt(face_shape)?,
+                    1.0e-12,
+                    &format!("generated offset face {face_index} extrusion basis vs OCCT oracle"),
+                )?;
+                assert!(
+                    context
+                        .face_offset_basis_revolution_payload(face_shape)
+                        .is_err(),
+                    "generated extrusion-offset faces should reject revolution basis payloads"
+                );
+            }
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "generated offset face {face_index} should keep a swept basis descriptor, got {other:?}"
+                ))
+                .into());
+            }
+        }
+        assert_eq!(
+            context.face_offset_basis_curve_geometry(face_shape)?.kind,
+            CurveKind::Ellipse,
+            "generated offset face {face_index} swept basis curve should remain ellipse-backed"
+        );
+        assert!(
+            context
+                .face_offset_basis_curve_ellipse_payload(face_shape)
+                .is_ok(),
+            "generated offset face {face_index} should expose the swept ellipse basis payload"
+        );
+        assert!(
+            context.face_revolution_payload(face_shape).is_err(),
+            "offset faces should reject top-level revolution payload requests"
+        );
+        assert!(
+            context.face_extrusion_payload(face_shape).is_err(),
+            "offset faces should reject top-level extrusion payload requests"
+        );
+
+        let rust_sample = context
+            .ported_face_sample_normalized(face_shape, [0.37, 0.61])?
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "expected Rust sample for generated offset face {face_index}"
+                ))
+            })?;
+        let public_sample = context.face_sample_normalized(face_shape, [0.37, 0.61])?;
+        let occt_sample = context.face_sample_normalized_occt(face_shape, [0.37, 0.61])?;
+        assert_vec3_close(
+            public_sample.position,
+            rust_sample.position,
+            1.0e-12,
+            &format!("generated offset face {face_index} public sample position"),
+        )?;
+        assert_vec3_close(
+            public_sample.normal,
+            rust_sample.normal,
+            1.0e-12,
+            &format!("generated offset face {face_index} public sample normal"),
+        )?;
+        assert_vec3_close(
+            rust_sample.position,
+            occt_sample.position,
+            1.0e-6,
+            &format!("generated offset face {face_index} sample position vs OCCT oracle"),
+        )?;
+        assert_vec3_close(
+            rust_sample.normal,
+            occt_sample.normal,
+            1.0e-6,
+            &format!("generated offset face {face_index} sample normal vs OCCT oracle"),
+        )?;
+
+        let face_brep = kernel.brep(face_shape)?;
+        assert_eq!(
+            face_brep.faces.len(),
+            1,
+            "generated offset face {face_index} BRep should materialize the selected face only"
+        );
+        let brep_face = &face_brep.faces[0];
+        assert_eq!(brep_face.geometry.kind, SurfaceKind::Offset);
+        assert!(matches!(
+            brep_face.ported_face_surface,
+            Some(PortedFaceSurface::Offset(_))
+        ));
+        assert_eq!(face_brep.topology.faces.len(), 1);
+        assert_eq!(face_brep.wires.len(), face_brep.topology.wires.len());
+        assert_eq!(face_brep.edges.len(), face_brep.topology.edges.len());
+        assert_eq!(
+            face_brep.vertices.len(),
+            face_brep.topology.vertex_positions.len()
+        );
+
+        let face_summary = kernel.summarize(face_shape)?;
+        let face_wire_length = if face_brep.topology.wire_edge_indices.is_empty() {
+            face_brep.edges.iter().map(|edge| edge.length).sum()
+        } else {
+            face_brep
+                .topology
+                .wire_edge_indices
+                .iter()
+                .filter_map(|&edge_index| face_brep.edges.get(edge_index))
+                .map(|edge| edge.length)
+                .sum()
+        };
+        assert_eq!(face_summary.primary_kind, ShapeKind::Face);
+        assert_scalar_close(
+            face_summary.surface_area,
+            brep_face.area,
+            1.0e-9,
+            &format!("generated offset face {face_index} summary surface area"),
+        )?;
+        assert_scalar_close(
+            face_summary.linear_length,
+            face_wire_length,
+            1.0e-9,
+            &format!("generated offset face {face_index} summary wire length"),
+        )?;
+        assert_vec3_close(
+            face_summary.bbox_min,
+            face_brep.summary.bbox_min,
+            1.0e-12,
+            &format!("generated offset face {face_index} public vs BRep bbox min"),
+        )?;
+        assert_vec3_close(
+            face_summary.bbox_max,
+            face_brep.summary.bbox_max,
+            1.0e-12,
+            &format!("generated offset face {face_index} public vs BRep bbox max"),
+        )?;
+        assert!(
+            matches!(
+                face_brep.summary_bbox_source(),
+                SummaryBboxSource::PortedBrep | SummaryBboxSource::OffsetFaceUnion
+            ),
+            "generated offset face {face_index} summary bbox should stay Rust-owned, got {:?}",
+            face_brep.summary_bbox_source()
+        );
+    }
+    assert!(
+        saw_revolution_basis && saw_extrusion_basis,
+        "generated offset row should cover both revolution and extrusion swept bases"
+    );
+
+    let mut document = ModelDocument::new()?;
+    document.insert_ellipse_edge("doc_profile", profile_params)?;
+    document.revolution("doc_revolution", "doc_profile", revolution_params)?;
+    document.offset("doc_generated_offset", "doc_revolution", offset_params)?;
+
+    let selected_offset = document.select_face(
+        "doc_generated_offset",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Offset),
+    )?;
+    let document_topology = document.topology("doc_generated_offset")?;
+    let faces = document.faces("doc_generated_offset")?;
+    let edges = document.edges("doc_generated_offset")?;
+    let report = document.report("doc_generated_offset")?;
+    let offset_indices =
+        document.face_indices_by_surface_kind("doc_generated_offset", SurfaceKind::Offset)?;
+
+    assert!(!document_topology.faces.is_empty());
+    assert_eq!(faces.len(), document_topology.faces.len());
+    assert_eq!(edges.len(), document_topology.edges.len());
+    assert_eq!(
+        offset_indices.len(),
+        faces
+            .iter()
+            .filter(|face| face.geometry.kind == SurfaceKind::Offset)
+            .count()
+    );
+    assert_eq!(selected_offset.geometry.kind, SurfaceKind::Offset);
+    assert!(matches!(
+        selected_offset.ported_face_surface,
+        Some(PortedFaceSurface::Offset(_))
+    ));
+    assert_eq!(report.summary.face_count, faces.len());
+    assert_eq!(report.summary.edge_count, edges.len());
+    match document.history() {
+        [OperationRecord::AddEllipseEdge { output, params }, OperationRecord::Revolution {
+            output: revolution_output,
+            input: revolution_input,
+            params: revolution_history,
+        }, OperationRecord::Offset {
+            output: offset_output,
+            input: offset_input,
+            params: offset_history,
+        }] => {
+            assert_eq!(output, "doc_profile");
+            assert_vec3_close(
+                params.origin,
+                profile_params.origin,
+                0.0,
+                "history ellipse origin",
+            )?;
+            assert_vec3_close(
+                params.axis,
+                profile_params.axis,
+                0.0,
+                "history ellipse axis",
+            )?;
+            assert_vec3_close(
+                params.x_direction,
+                profile_params.x_direction,
+                0.0,
+                "history ellipse x_direction",
+            )?;
+            assert_scalar_close(
+                params.major_radius,
+                profile_params.major_radius,
+                0.0,
+                "history ellipse major_radius",
+            )?;
+            assert_scalar_close(
+                params.minor_radius,
+                profile_params.minor_radius,
+                0.0,
+                "history ellipse minor_radius",
+            )?;
+            assert_eq!(revolution_output, "doc_revolution");
+            assert_eq!(revolution_input, "doc_profile");
+            assert_vec3_close(
+                revolution_history.origin,
+                revolution_params.origin,
+                0.0,
+                "history revolution origin",
+            )?;
+            assert_vec3_close(
+                revolution_history.axis,
+                revolution_params.axis,
+                0.0,
+                "history revolution axis",
+            )?;
+            assert_scalar_close(
+                revolution_history.angle_radians,
+                revolution_params.angle_radians,
+                0.0,
+                "history revolution angle",
+            )?;
+            assert_eq!(offset_output, "doc_generated_offset");
+            assert_eq!(offset_input, "doc_revolution");
+            assert_scalar_close(
+                offset_history.offset,
+                offset_params.offset,
+                0.0,
+                "history generated offset value",
+            )?;
+            assert_scalar_close(
+                offset_history.tolerance,
+                offset_params.tolerance,
+                0.0,
+                "history generated offset tolerance",
+            )?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddEllipseEdge + Revolution + Offset history entries, got {history:?}"
             ))
             .into());
         }
