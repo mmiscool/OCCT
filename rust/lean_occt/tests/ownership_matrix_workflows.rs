@@ -5,7 +5,8 @@ use std::f64::consts::PI;
 use lean_occt::{
     BoxParams, ConeParams, ConePayload, CurveKind, CylinderParams, CylinderPayload, EdgeSelector,
     FaceSelector, ModelDocument, OperationRecord, PlanePayload, PortedCurve, PortedFaceSurface,
-    PortedSurface, ShapeKind, SummaryBboxSource, SummaryVolumeSource, SurfaceKind,
+    PortedSurface, ShapeKind, SphereParams, SpherePayload, SummaryBboxSource, SummaryVolumeSource,
+    SurfaceKind,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,11 +59,11 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
     },
     OwnershipRow {
         family: AuthoredFamily::Sphere,
-        construction_metadata: false,
-        normalized_snapshot_brep: false,
-        public_queries: false,
-        summary_metrics: false,
-        selectors_documents: false,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
     },
     OwnershipRow {
         family: AuthoredFamily::Torus,
@@ -267,6 +268,45 @@ fn assert_cone_payload_close(
         rhs.semi_angle,
         tolerance,
         &format!("{label} semi_angle"),
+    )?;
+    Ok(())
+}
+
+fn assert_sphere_payload_close(
+    lhs: SpherePayload,
+    rhs: SpherePayload,
+    tolerance: f64,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_vec3_close(
+        lhs.center,
+        rhs.center,
+        tolerance,
+        &format!("{label} center"),
+    )?;
+    assert_vec3_close(
+        lhs.normal,
+        rhs.normal,
+        tolerance,
+        &format!("{label} normal"),
+    )?;
+    assert_vec3_close(
+        lhs.x_direction,
+        rhs.x_direction,
+        tolerance,
+        &format!("{label} x_direction"),
+    )?;
+    assert_vec3_close(
+        lhs.y_direction,
+        rhs.y_direction,
+        tolerance,
+        &format!("{label} y_direction"),
+    )?;
+    assert_scalar_close(
+        lhs.radius,
+        rhs.radius,
+        tolerance,
+        &format!("{label} radius"),
     )?;
     Ok(())
 }
@@ -1265,6 +1305,267 @@ fn cone_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Er
         history => {
             return Err(std::io::Error::other(format!(
                 "expected single AddCone history entry, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn sphere_authored_family_row_is_rust_owned() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(AuthoredFamily::Sphere, "sphere")?;
+
+    let params = SphereParams {
+        origin: [4.0, -6.0, 3.0],
+        axis: [0.0, 0.0, 1.0],
+        x_direction: [1.0, 0.0, 0.0],
+        radius: 7.0,
+    };
+    let expected_bbox_min = [
+        params.origin[0] - params.radius,
+        params.origin[1] - params.radius,
+        params.origin[2] - params.radius,
+    ];
+    let expected_bbox_max = [
+        params.origin[0] + params.radius,
+        params.origin[1] + params.radius,
+        params.origin[2] + params.radius,
+    ];
+    let expected_surface_area = 4.0 * PI * params.radius * params.radius;
+    let expected_volume = 4.0 * PI * params.radius * params.radius * params.radius / 3.0;
+
+    let mut document = ModelDocument::new()?;
+    document.insert_sphere("sphere", params)?;
+
+    let sphere_shape = document.shape("sphere")?;
+    assert_eq!(
+        sphere_shape.rust_multi_face_analytic_source_count(),
+        Some(1)
+    );
+    let context = document.kernel().context();
+    let face_shapes = context.subshapes(sphere_shape, ShapeKind::Face)?;
+    let edge_shapes = context.subshapes(sphere_shape, ShapeKind::Edge)?;
+    assert_eq!(face_shapes.len(), 1);
+    assert_eq!(edge_shapes.len(), 0);
+    assert!(
+        face_shapes
+            .iter()
+            .all(|face| face.has_rust_analytic_surface_face_metadata()),
+        "all authored sphere faces should retain Rust analytic metadata"
+    );
+
+    let ported_topology = context
+        .ported_topology(sphere_shape)?
+        .ok_or_else(|| std::io::Error::other("expected Rust-owned sphere topology snapshot"))?;
+    let public_topology = context.topology(sphere_shape)?;
+    let brep = document.brep("sphere")?;
+
+    assert_eq!(ported_topology.faces.len(), 1);
+    assert_eq!(ported_topology.wires.len(), 0);
+    assert_eq!(ported_topology.edges.len(), 0);
+    assert_eq!(ported_topology.vertex_positions.len(), 0);
+    assert_eq!(ported_topology.wire_edge_indices.len(), 0);
+    assert_eq!(ported_topology.face_wire_indices.len(), 0);
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), 1);
+    assert_eq!(brep.wires.len(), 0);
+    assert_eq!(brep.edges.len(), 0);
+    assert_eq!(brep.vertices.len(), 0);
+    assert!(brep.faces.iter().all(|face| {
+        face.geometry.kind == SurfaceKind::Sphere
+            && matches!(
+                face.ported_face_surface,
+                Some(PortedFaceSurface::Analytic(PortedSurface::Sphere(_)))
+            )
+    }));
+    assert!(brep.edges.is_empty());
+
+    let sphere_face = face_shapes
+        .iter()
+        .find(|face| {
+            context
+                .face_geometry(face)
+                .is_ok_and(|geometry| geometry.kind == SurfaceKind::Sphere)
+        })
+        .ok_or_else(|| std::io::Error::other("expected an authored sphere face"))?;
+
+    let public_sphere_payload = context.face_sphere_payload(sphere_face)?;
+    let descriptor = context
+        .ported_face_surface_descriptor(sphere_face)?
+        .ok_or_else(|| std::io::Error::other("expected Rust sphere face descriptor"))?;
+    let descriptor_payload = match descriptor {
+        PortedFaceSurface::Analytic(PortedSurface::Sphere(payload)) => payload,
+        other => {
+            return Err(std::io::Error::other(format!(
+                "expected Rust sphere descriptor, got {other:?}"
+            ))
+            .into());
+        }
+    };
+    assert_sphere_payload_close(
+        public_sphere_payload,
+        descriptor_payload,
+        1.0e-12,
+        "public sphere payload vs Rust descriptor",
+    )?;
+    let occt_sphere_payload = context.face_sphere_payload_occt(sphere_face)?;
+    assert_sphere_payload_close(
+        public_sphere_payload,
+        occt_sphere_payload,
+        1.0e-6,
+        "Rust sphere payload vs OCCT oracle",
+    )?;
+    assert!(
+        context.face_plane_payload(sphere_face).is_err(),
+        "ported sphere faces should reject mismatched plane payload queries"
+    );
+
+    let summary = document.summary("sphere")?;
+    let unique_edge_length = brep.edges.iter().map(|edge| edge.length).sum::<f64>();
+    assert_scalar_close(
+        summary.surface_area,
+        expected_surface_area,
+        1.0e-9,
+        "document sphere surface area",
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        expected_volume,
+        1.0e-9,
+        "document sphere volume",
+    )?;
+    assert_scalar_close(
+        summary.linear_length,
+        0.0,
+        1.0e-12,
+        "document sphere edge length",
+    )?;
+    assert_scalar_close(
+        brep.summary.surface_area,
+        expected_surface_area,
+        1.0e-9,
+        "BRep sphere surface area",
+    )?;
+    assert_scalar_close(
+        brep.summary.volume,
+        expected_volume,
+        1.0e-9,
+        "BRep sphere volume",
+    )?;
+    assert_scalar_close(
+        unique_edge_length,
+        0.0,
+        1.0e-12,
+        "unique BRep sphere edge length",
+    )?;
+    let brep_sphere_face = brep
+        .faces
+        .iter()
+        .find(|face| face.geometry.kind == SurfaceKind::Sphere)
+        .ok_or_else(|| std::io::Error::other("expected BRep sphere face"))?;
+    assert_scalar_close(
+        brep_sphere_face.area,
+        expected_surface_area,
+        1.0e-9,
+        "BRep sphere face area",
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        expected_bbox_min,
+        1.0e-12,
+        "sphere bbox min",
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        expected_bbox_max,
+        1.0e-12,
+        "sphere bbox max",
+    )?;
+    assert_eq!(
+        brep.summary_bbox_source(),
+        SummaryBboxSource::ExactPrimitive
+    );
+    assert_eq!(
+        brep.summary_volume_source(),
+        SummaryVolumeSource::ExactPrimitive
+    );
+
+    let selected_sphere = document.select_face(
+        "sphere",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Sphere),
+    )?;
+    let faces = document.faces("sphere")?;
+    let edges = document.edges("sphere")?;
+    let report = document.report("sphere")?;
+
+    assert_eq!(faces.len(), 1);
+    assert_eq!(edges.len(), 0);
+    assert_eq!(
+        document
+            .face_indices_by_surface_kind("sphere", SurfaceKind::Sphere)?
+            .len(),
+        1
+    );
+    assert!(document
+        .face_indices_by_surface_kind("sphere", SurfaceKind::Plane)?
+        .is_empty());
+    assert!(document
+        .edge_indices_by_curve_kind("sphere", CurveKind::Line)?
+        .is_empty());
+    assert!(document
+        .edge_indices_by_curve_kind("sphere", CurveKind::Circle)?
+        .is_empty());
+    assert_eq!(selected_sphere.geometry.kind, SurfaceKind::Sphere);
+    assert_scalar_close(
+        selected_sphere.area,
+        expected_surface_area,
+        1.0e-9,
+        "selected sphere face area",
+    )?;
+    assert!(
+        document
+            .select_edge("sphere", EdgeSelector::LongestByCurveKind(CurveKind::Line),)
+            .is_err(),
+        "edge-free sphere should reject line edge selectors"
+    );
+    assert!(
+        document
+            .select_edge(
+                "sphere",
+                EdgeSelector::ShortestByCurveKind(CurveKind::Circle),
+            )
+            .is_err(),
+        "edge-free sphere should reject circle edge selectors"
+    );
+    assert_eq!(report.summary.primary_kind, ShapeKind::Solid);
+    assert_eq!(report.summary.face_count, 1);
+    assert_eq!(report.summary.edge_count, 0);
+    assert_eq!(report.summary.vertex_count, 0);
+    match document.history() {
+        [OperationRecord::AddSphere { output, params }] => {
+            assert_eq!(output, "sphere");
+            assert_vec3_close(params.origin, [4.0, -6.0, 3.0], 0.0, "history origin")?;
+            assert_vec3_close(params.axis, [0.0, 0.0, 1.0], 0.0, "history axis")?;
+            assert_vec3_close(
+                params.x_direction,
+                [1.0, 0.0, 0.0],
+                0.0,
+                "history x_direction",
+            )?;
+            assert_scalar_close(params.radius, 7.0, 0.0, "history radius")?;
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected single AddSphere history entry, got {history:?}"
             ))
             .into());
         }
