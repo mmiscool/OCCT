@@ -7,7 +7,7 @@ use lean_occt::{
     EllipseEdgeParams, ExtrusionSurfacePayload, FaceSelector, ModelDocument, ModelKernel,
     OffsetFaceBboxSource, OffsetParams, OffsetSurfacePayload, OperationRecord, PlanePayload,
     PortedCurve, PortedFaceSurface, PortedOffsetBasisSurface, PortedSurface, PortedSweptSurface,
-    PrismParams, RevolutionParams, RevolutionSurfacePayload, ShapeKind, SphereParams,
+    PrismParams, RevolutionParams, RevolutionSurfacePayload, Shape, ShapeKind, SphereParams,
     SpherePayload, SummaryBboxSource, SummaryVolumeSource, SurfaceKind, TorusParams, TorusPayload,
 };
 
@@ -22,6 +22,7 @@ enum AuthoredFamily {
     Revolution,
     DirectOffset,
     GeneratedOffset,
+    SimpleShellSolidAssembly,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -107,13 +108,21 @@ const OWNERSHIP_MATRIX: &[OwnershipRow] = &[
         summary_metrics: true,
         selectors_documents: true,
     },
+    OwnershipRow {
+        family: AuthoredFamily::SimpleShellSolidAssembly,
+        construction_metadata: true,
+        normalized_snapshot_brep: true,
+        public_queries: true,
+        summary_metrics: true,
+        selectors_documents: true,
+    },
 ];
 
 fn require_complete_ownership_row(
     family: AuthoredFamily,
     label: &str,
 ) -> Result<&'static OwnershipRow, Box<dyn std::error::Error>> {
-    assert_eq!(OWNERSHIP_MATRIX.len(), 9);
+    assert_eq!(OWNERSHIP_MATRIX.len(), 10);
     let row = OWNERSHIP_MATRIX
         .iter()
         .find(|row| row.family == family)
@@ -3418,6 +3427,421 @@ fn generated_offset_authored_family_row_is_rust_owned() -> Result<(), Box<dyn st
         history => {
             return Err(std::io::Error::other(format!(
                 "expected AddEllipseEdge + Revolution + Offset history entries, got {history:?}"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AssemblySummaryExpectation {
+    root_kind: ShapeKind,
+    primary_kind: ShapeKind,
+    compound_count: usize,
+    compsolid_count: usize,
+    solid_count: usize,
+    shell_count: usize,
+    face_count: usize,
+    summary_bbox_source: SummaryBboxSource,
+    summary_volume_source: SummaryVolumeSource,
+}
+
+fn assert_assembly_metadata(
+    shape: &Shape,
+    assembly_kind: ShapeKind,
+    child_root_kinds: &[ShapeKind],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert!(
+        shape.has_rust_assembly_metadata(),
+        "{label} should carry Rust assembly construction metadata"
+    );
+    assert_eq!(
+        shape.rust_assembly_kind(),
+        Some(assembly_kind),
+        "{label} Rust assembly kind"
+    );
+    assert_eq!(
+        shape.rust_assembly_source_count(),
+        Some(child_root_kinds.len()),
+        "{label} Rust assembly source count"
+    );
+    let observed_child_kinds = shape.rust_assembly_child_root_kinds().ok_or_else(|| {
+        std::io::Error::other(format!(
+            "{label} missing Rust assembly child root kind inventory"
+        ))
+    })?;
+    assert_eq!(
+        observed_child_kinds, child_root_kinds,
+        "{label} Rust assembly child root kinds"
+    );
+    Ok(())
+}
+
+fn assert_simple_assembly_snapshot(
+    kernel: &ModelKernel,
+    shape: &Shape,
+    expected: AssemblySummaryExpectation,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = kernel.context();
+    let public_topology = kernel.topology(shape)?;
+    let ported_topology = context
+        .ported_topology(shape)?
+        .ok_or_else(|| std::io::Error::other(format!("{label} missing Rust topology")))?;
+    let brep = kernel.brep(shape)?;
+    let summary = kernel.summarize(shape)?;
+    let report = kernel.inspect(shape)?;
+    let occt_summary = context.describe_shape_occt(shape)?;
+
+    assert_eq!(summary.root_kind, expected.root_kind, "{label} root kind");
+    assert_eq!(
+        summary.primary_kind, expected.primary_kind,
+        "{label} primary kind"
+    );
+    assert_eq!(
+        summary.compound_count, expected.compound_count,
+        "{label} compound count"
+    );
+    assert_eq!(
+        summary.compsolid_count, expected.compsolid_count,
+        "{label} compsolid count"
+    );
+    assert_eq!(
+        summary.solid_count, expected.solid_count,
+        "{label} solid count"
+    );
+    assert_eq!(
+        summary.shell_count, expected.shell_count,
+        "{label} shell count"
+    );
+    assert_eq!(
+        summary.face_count, expected.face_count,
+        "{label} face count"
+    );
+    assert_eq!(report.summary.face_count, summary.face_count);
+    assert_eq!(report.summary.edge_count, summary.edge_count);
+    assert_eq!(report.topology.faces.len(), public_topology.faces.len());
+
+    assert_eq!(public_topology.faces.len(), ported_topology.faces.len());
+    assert_eq!(public_topology.wires.len(), ported_topology.wires.len());
+    assert_eq!(public_topology.edges.len(), ported_topology.edges.len());
+    assert_eq!(
+        public_topology.vertex_positions.len(),
+        ported_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.topology.faces.len(), public_topology.faces.len());
+    assert_eq!(brep.topology.wires.len(), public_topology.wires.len());
+    assert_eq!(brep.topology.edges.len(), public_topology.edges.len());
+    assert_eq!(
+        brep.topology.vertex_positions.len(),
+        public_topology.vertex_positions.len()
+    );
+    assert_eq!(brep.faces.len(), expected.face_count);
+    assert_eq!(brep.edges.len(), summary.edge_count);
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Face)?,
+        expected.face_count
+    );
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Shell)?,
+        expected.shell_count
+    );
+    assert_eq!(
+        context.subshape_count(shape, ShapeKind::Solid)?,
+        expected.solid_count
+    );
+
+    let face_area_sum = brep.faces.iter().map(|face| face.area).sum::<f64>();
+    let wire_occurrence_length = if brep.topology.wire_edge_indices.is_empty() {
+        brep.edges.iter().map(|edge| edge.length).sum()
+    } else {
+        brep.topology
+            .wire_edge_indices
+            .iter()
+            .filter_map(|&edge_index| brep.edges.get(edge_index))
+            .map(|edge| edge.length)
+            .sum()
+    };
+    assert_scalar_close(
+        summary.surface_area,
+        face_area_sum,
+        1.0e-9,
+        &format!("{label} summary surface area from BRep faces"),
+    )?;
+    assert_scalar_close(
+        summary.linear_length,
+        wire_occurrence_length,
+        1.0e-9,
+        &format!("{label} summary wire-occurrence edge length"),
+    )?;
+    assert_scalar_close(
+        summary.surface_area,
+        occt_summary.surface_area,
+        1.0e-7,
+        &format!("{label} surface area vs OCCT oracle"),
+    )?;
+    assert_scalar_close(
+        summary.volume,
+        occt_summary.volume,
+        1.0e-7,
+        &format!("{label} volume vs OCCT oracle"),
+    )?;
+    assert_vec3_close(
+        summary.bbox_min,
+        occt_summary.bbox_min,
+        1.0e-6,
+        &format!("{label} bbox min vs OCCT oracle"),
+    )?;
+    assert_vec3_close(
+        summary.bbox_max,
+        occt_summary.bbox_max,
+        1.0e-6,
+        &format!("{label} bbox max vs OCCT oracle"),
+    )?;
+    assert_eq!(
+        brep.summary_bbox_source(),
+        expected.summary_bbox_source,
+        "{label} summary bbox source"
+    );
+    assert_eq!(
+        brep.summary_volume_source(),
+        expected.summary_volume_source,
+        "{label} summary volume source"
+    );
+
+    let face_shapes = context.subshapes(shape, ShapeKind::Face)?;
+    assert_eq!(face_shapes.len(), expected.face_count);
+    for (face_index, face_shape) in face_shapes.iter().enumerate() {
+        let public_geometry = context.face_geometry(face_shape)?;
+        let ported_geometry = context.ported_face_geometry(face_shape)?.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{label} face {face_index} missing Rust face geometry"
+            ))
+        })?;
+        assert_eq!(
+            public_geometry.kind,
+            SurfaceKind::Plane,
+            "{label} face {face_index} should remain planar"
+        );
+        assert_face_geometry_close(
+            public_geometry,
+            ported_geometry,
+            1.0e-12,
+            &format!("{label} face {face_index} public vs Rust geometry"),
+        )?;
+        assert_plane_payload_close(
+            context.face_plane_payload(face_shape)?,
+            context.face_plane_payload_occt(face_shape)?,
+            1.0e-6,
+            &format!("{label} face {face_index} plane payload vs OCCT oracle"),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn simple_shell_solid_assembly_authored_family_row_is_rust_owned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = support::test_guard();
+    require_complete_ownership_row(
+        AuthoredFamily::SimpleShellSolidAssembly,
+        "simple shell/solid assembly",
+    )?;
+
+    let kernel = ModelKernel::new()?;
+    let left_box_params = BoxParams {
+        origin: [-18.0, -6.0, -5.0],
+        size: [10.0, 12.0, 8.0],
+    };
+    let right_box_params = BoxParams {
+        origin: [8.0, -6.0, -5.0],
+        size: [10.0, 12.0, 8.0],
+    };
+    let left_box = kernel.make_box(left_box_params)?;
+    let right_box = kernel.make_box(right_box_params)?;
+    let expected_solid_volume =
+        kernel.summarize(&left_box)?.volume + kernel.summarize(&right_box)?.volume;
+    let solid_assembly = kernel.make_compsolid(&[left_box, right_box])?;
+
+    assert_assembly_metadata(
+        &solid_assembly,
+        ShapeKind::CompSolid,
+        &[ShapeKind::Solid, ShapeKind::Solid],
+        "solid compsolid assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &solid_assembly,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::CompSolid,
+            primary_kind: ShapeKind::Solid,
+            compound_count: 0,
+            compsolid_count: 1,
+            solid_count: 2,
+            shell_count: 2,
+            face_count: 12,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::FaceContributions,
+        },
+        "solid compsolid assembly",
+    )?;
+    assert_scalar_close(
+        kernel.summarize(&solid_assembly)?.volume,
+        expected_solid_volume,
+        1.0e-8,
+        "solid assembly volume from child solids",
+    )?;
+
+    let context = kernel.context();
+    let shell_left_box = kernel.make_box(BoxParams {
+        origin: [-18.0, 18.0, -5.0],
+        size: [10.0, 12.0, 8.0],
+    })?;
+    let shell_right_box = kernel.make_box(BoxParams {
+        origin: [8.0, 18.0, -5.0],
+        size: [10.0, 12.0, 8.0],
+    })?;
+    let left_shell = context.subshape(&shell_left_box, ShapeKind::Shell, 0)?;
+    let right_shell = context.subshape(&shell_right_box, ShapeKind::Shell, 0)?;
+    let shell_compound = kernel.make_compound(&[left_shell, right_shell])?;
+
+    assert_assembly_metadata(
+        &shell_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Shell, ShapeKind::Shell],
+        "shell compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &shell_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Shell,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 2,
+            face_count: 12,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "shell compound assembly",
+    )?;
+
+    let nested_shell_compound = kernel.make_compound(&[shell_compound])?;
+    assert_assembly_metadata(
+        &nested_shell_compound,
+        ShapeKind::Compound,
+        &[ShapeKind::Compound],
+        "nested shell compound assembly",
+    )?;
+    assert_simple_assembly_snapshot(
+        &kernel,
+        &nested_shell_compound,
+        AssemblySummaryExpectation {
+            root_kind: ShapeKind::Compound,
+            primary_kind: ShapeKind::Shell,
+            compound_count: 1,
+            compsolid_count: 0,
+            solid_count: 0,
+            shell_count: 2,
+            face_count: 12,
+            summary_bbox_source: SummaryBboxSource::PortedBrep,
+            summary_volume_source: SummaryVolumeSource::Zero,
+        },
+        "nested shell compound assembly",
+    )?;
+
+    let mut document = ModelDocument::new()?;
+    document.insert_box("doc_left", left_box_params)?;
+    document.insert_box("doc_right", right_box_params)?;
+    document.compsolid("doc_solid_assembly", &["doc_left", "doc_right"])?;
+    document.compound("doc_compound_assembly", &["doc_left", "doc_right"])?;
+
+    let doc_solid = document.shape("doc_solid_assembly")?;
+    assert_assembly_metadata(
+        doc_solid,
+        ShapeKind::CompSolid,
+        &[ShapeKind::Solid, ShapeKind::Solid],
+        "document solid assembly",
+    )?;
+    let doc_report = document.report("doc_solid_assembly")?;
+    let doc_faces = document.faces("doc_solid_assembly")?;
+    let doc_edges = document.edges("doc_solid_assembly")?;
+    let doc_plane_indices =
+        document.face_indices_by_surface_kind("doc_solid_assembly", SurfaceKind::Plane)?;
+    let selected_face = document.select_face(
+        "doc_solid_assembly",
+        FaceSelector::LargestBySurfaceKind(SurfaceKind::Plane),
+    )?;
+    let selected_edge = document.select_edge(
+        "doc_solid_assembly",
+        EdgeSelector::LongestByCurveKind(CurveKind::Line),
+    )?;
+
+    assert_eq!(doc_report.summary.root_kind, ShapeKind::CompSolid);
+    assert_eq!(doc_report.summary.solid_count, 2);
+    assert_eq!(doc_report.summary.shell_count, 2);
+    assert_eq!(doc_report.summary.face_count, 12);
+    assert_eq!(doc_faces.len(), 12);
+    assert_eq!(doc_plane_indices.len(), 12);
+    assert_eq!(selected_face.geometry.kind, SurfaceKind::Plane);
+    assert_eq!(selected_edge.geometry.kind, CurveKind::Line);
+    assert!(selected_edge.length > 0.0);
+    assert_eq!(doc_edges.len(), doc_report.summary.edge_count);
+    assert_assembly_metadata(
+        document.shape("doc_compound_assembly")?,
+        ShapeKind::Compound,
+        &[ShapeKind::Solid, ShapeKind::Solid],
+        "document compound assembly",
+    )?;
+
+    match document.history() {
+        [OperationRecord::AddBox {
+            output: left_output,
+            params: left_params,
+        }, OperationRecord::AddBox {
+            output: right_output,
+            params: right_params,
+        }, OperationRecord::CompSolid {
+            output: compsolid_output,
+            inputs: compsolid_inputs,
+        }, OperationRecord::Compound {
+            output: compound_output,
+            inputs: compound_inputs,
+        }] => {
+            assert_eq!(left_output, "doc_left");
+            assert_eq!(right_output, "doc_right");
+            assert_vec3_close(
+                left_params.origin,
+                left_box_params.origin,
+                0.0,
+                "document left box history origin",
+            )?;
+            assert_vec3_close(
+                right_params.origin,
+                right_box_params.origin,
+                0.0,
+                "document right box history origin",
+            )?;
+            assert_eq!(compsolid_output, "doc_solid_assembly");
+            assert_eq!(
+                compsolid_inputs,
+                &vec!["doc_left".to_owned(), "doc_right".to_owned()]
+            );
+            assert_eq!(compound_output, "doc_compound_assembly");
+            assert_eq!(
+                compound_inputs,
+                &vec!["doc_left".to_owned(), "doc_right".to_owned()]
+            );
+        }
+        history => {
+            return Err(std::io::Error::other(format!(
+                "expected AddBox + AddBox + CompSolid + Compound history entries, got {history:?}"
             ))
             .into());
         }

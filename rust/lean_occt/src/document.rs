@@ -101,6 +101,14 @@ pub enum OperationRecord {
         lhs: String,
         rhs: String,
     },
+    Compound {
+        output: String,
+        inputs: Vec<String>,
+    },
+    CompSolid {
+        output: String,
+        inputs: Vec<String>,
+    },
     Fillet {
         output: String,
         input: String,
@@ -333,6 +341,40 @@ impl ModelDocument {
             |kernel, lhs_shape, rhs_shape| kernel.common(lhs_shape, rhs_shape),
             |output, lhs, rhs| OperationRecord::Common { output, lhs, rhs },
         )
+    }
+
+    pub fn compound<S: AsRef<str>>(
+        &mut self,
+        output: impl Into<String>,
+        inputs: &[S],
+    ) -> Result<(), Error> {
+        let output = output.into();
+        let inputs = assembly_input_names("compound", inputs)?;
+        let result = {
+            let shape_refs = self.shape_refs(&inputs)?;
+            self.kernel.context().make_compound_refs(&shape_refs)?
+        };
+        self.store_shape(output.clone(), result);
+        self.history
+            .push(OperationRecord::Compound { output, inputs });
+        Ok(())
+    }
+
+    pub fn compsolid<S: AsRef<str>>(
+        &mut self,
+        output: impl Into<String>,
+        inputs: &[S],
+    ) -> Result<(), Error> {
+        let output = output.into();
+        let inputs = assembly_input_names("compsolid", inputs)?;
+        let result = {
+            let shape_refs = self.shape_refs(&inputs)?;
+            self.kernel.context().make_compsolid_refs(&shape_refs)?
+        };
+        self.store_shape(output.clone(), result);
+        self.history
+            .push(OperationRecord::CompSolid { output, inputs });
+        Ok(())
     }
 
     pub fn fillet(
@@ -746,6 +788,13 @@ impl ModelDocument {
         Ok(&self.shapes[index].shape)
     }
 
+    fn shape_refs<'a>(&'a self, names: &[String]) -> Result<Vec<&'a Shape>, Error> {
+        names
+            .iter()
+            .map(|name| self.shape_ref(name))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
     fn shape_pair(&self, lhs: &str, rhs: &str) -> Result<(&Shape, &Shape), Error> {
         let lhs_index = self
             .position_of(lhs)
@@ -776,6 +825,21 @@ impl ModelDocument {
             self.shapes.push(ShapeEntry { name, shape });
         }
     }
+}
+
+fn assembly_input_names<S: AsRef<str>>(
+    operation: &str,
+    inputs: &[S],
+) -> Result<Vec<String>, Error> {
+    if inputs.is_empty() {
+        return Err(Error::new(format!(
+            "{operation} operation requires at least one input shape"
+        )));
+    }
+    Ok(inputs
+        .iter()
+        .map(|input| input.as_ref().to_owned())
+        .collect())
 }
 
 fn dot(lhs: [f64; 3], rhs: [f64; 3]) -> f64 {

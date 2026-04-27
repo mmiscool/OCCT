@@ -1496,6 +1496,12 @@ pub(crate) struct AnalyticSurfaceFaceMetadata {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct AssemblyResultMetadata {
+    pub(crate) kind: ShapeKind,
+    pub(crate) child_root_kinds: Vec<ShapeKind>,
+}
+
+#[derive(Clone, Debug)]
 enum ShapeRustMetadata {
     None,
     OffsetSurfaceFace(OffsetSurfaceFaceMetadata),
@@ -1506,6 +1512,7 @@ enum ShapeRustMetadata {
     SweptSurfaceFace(SweptSurfaceFaceMetadata),
     SingleFaceSweptResult(SweptSurfaceFaceMetadata),
     MultiFaceSweptResult(Vec<SweptSurfaceFaceMetadata>),
+    AssemblyResult(AssemblyResultMetadata),
 }
 
 struct MeshHandle {
@@ -1810,11 +1817,12 @@ impl Context {
         self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
-    pub fn make_compound(&self, shapes: &[Shape]) -> Result<Shape, Error> {
+    pub(crate) fn make_compound_refs(&self, shapes: &[&Shape]) -> Result<Shape, Error> {
         let raw_shapes = shapes
             .iter()
             .map(|shape| shape.raw.as_ptr() as *const ffi::LeanOcctShape)
             .collect::<Vec<_>>();
+        let rust_metadata = self.assembly_result_metadata(ShapeKind::Compound, shapes)?;
         let raw = unsafe {
             ffi::lean_occt_shape_make_compound(
                 self.raw.as_ptr(),
@@ -1822,14 +1830,20 @@ impl Context {
                 raw_shapes.len(),
             )
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
     }
 
-    pub fn make_compsolid(&self, solids: &[Shape]) -> Result<Shape, Error> {
+    pub fn make_compound(&self, shapes: &[Shape]) -> Result<Shape, Error> {
+        let shape_refs = shapes.iter().collect::<Vec<_>>();
+        self.make_compound_refs(&shape_refs)
+    }
+
+    pub(crate) fn make_compsolid_refs(&self, solids: &[&Shape]) -> Result<Shape, Error> {
         let raw_solids = solids
             .iter()
             .map(|solid| solid.raw.as_ptr() as *const ffi::LeanOcctShape)
             .collect::<Vec<_>>();
+        let rust_metadata = self.assembly_result_metadata(ShapeKind::CompSolid, solids)?;
         let raw = unsafe {
             ffi::lean_occt_shape_make_compsolid(
                 self.raw.as_ptr(),
@@ -1837,7 +1851,12 @@ impl Context {
                 raw_solids.len(),
             )
         };
-        self.wrap_shape(raw)
+        self.wrap_shape_with_metadata(raw, rust_metadata)
+    }
+
+    pub fn make_compsolid(&self, solids: &[Shape]) -> Result<Shape, Error> {
+        let solid_refs = solids.iter().collect::<Vec<_>>();
+        self.make_compsolid_refs(&solid_refs)
     }
 
     pub fn cut(&self, lhs: &Shape, rhs: &Shape) -> Result<Shape, Error> {
@@ -4579,6 +4598,24 @@ impl Context {
         self.wrap_shape_with_metadata(raw, ShapeRustMetadata::None)
     }
 
+    fn assembly_result_metadata(
+        &self,
+        kind: ShapeKind,
+        children: &[&Shape],
+    ) -> Result<ShapeRustMetadata, Error> {
+        let child_root_kinds = children
+            .iter()
+            .map(|child| {
+                self.describe_shape_occt(child)
+                    .map(|summary| summary.root_kind)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ShapeRustMetadata::AssemblyResult(AssemblyResultMetadata {
+            kind,
+            child_root_kinds,
+        }))
+    }
+
     fn wrap_shape_with_metadata(
         &self,
         raw: *mut ffi::LeanOcctShape,
@@ -5271,7 +5308,8 @@ impl Shape {
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
-            | ShapeRustMetadata::MultiFaceSweptResult(_) => None,
+            | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_) => None,
         }
         .copied()
     }
@@ -5286,7 +5324,8 @@ impl Shape {
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
-            | ShapeRustMetadata::MultiFaceSweptResult(_) => None,
+            | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_) => None,
         }
         .copied()
     }
@@ -5301,6 +5340,7 @@ impl Shape {
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -5315,6 +5355,7 @@ impl Shape {
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
         .copied()
@@ -5332,6 +5373,7 @@ impl Shape {
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -5346,6 +5388,7 @@ impl Shape {
             | ShapeRustMetadata::AnalyticSurfaceFace(_)
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
         .copied()
@@ -5361,6 +5404,7 @@ impl Shape {
             | ShapeRustMetadata::AnalyticSurfaceFace(_)
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
         .copied()
@@ -5376,6 +5420,7 @@ impl Shape {
             | ShapeRustMetadata::MultiFaceOffsetResult(_)
             | ShapeRustMetadata::AnalyticSurfaceFace(_)
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -5415,6 +5460,7 @@ impl Shape {
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -5430,6 +5476,7 @@ impl Shape {
             | ShapeRustMetadata::MultiFaceAnalyticResult(_)
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
         }
     }
@@ -5445,7 +5492,39 @@ impl Shape {
             | ShapeRustMetadata::SweptSurfaceFace(_)
             | ShapeRustMetadata::SingleFaceSweptResult(_)
             | ShapeRustMetadata::MultiFaceSweptResult(_)
+            | ShapeRustMetadata::AssemblyResult(_)
             | ShapeRustMetadata::None => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn has_rust_assembly_metadata(&self) -> bool {
+        matches!(self.rust_metadata, ShapeRustMetadata::AssemblyResult(_))
+    }
+
+    #[doc(hidden)]
+    pub fn rust_assembly_kind(&self) -> Option<ShapeKind> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::AssemblyResult(metadata) => Some(metadata.kind),
+            _ => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn rust_assembly_source_count(&self) -> Option<usize> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::AssemblyResult(metadata) => Some(metadata.child_root_kinds.len()),
+            _ => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn rust_assembly_child_root_kinds(&self) -> Option<&[ShapeKind]> {
+        match &self.rust_metadata {
+            ShapeRustMetadata::AssemblyResult(metadata) => {
+                Some(metadata.child_root_kinds.as_slice())
+            }
+            _ => None,
         }
     }
 
